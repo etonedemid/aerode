@@ -1,5 +1,7 @@
 //! Aero7 – a Windows 7 style desktop environment for Linux (X11 + Openbox).
+pub mod cmdshell;
 pub mod config;
+pub mod console;
 pub mod desktop;
 pub mod dialogs;
 pub mod flyouts;

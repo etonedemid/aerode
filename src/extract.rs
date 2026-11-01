@@ -40,6 +40,7 @@ const WANTED: &[&str] = &[
     "Windows/Fonts/consola.ttf", "Windows/Fonts/consolab.ttf", "Windows/Fonts/calibri.ttf",
     "Windows/Fonts/tahoma.ttf", "Windows/Fonts/lucon.ttf", "Windows/Fonts/segoesc.ttf",
     "Windows/Fonts/seguisym.ttf", "Windows/Fonts/marlett.ttf",
+    "Windows/Fonts/vgaoem.fon", "Windows/Fonts/dosapp.fon", "Windows/Fonts/vga850.fon",
     "ProgramData/Microsoft/User Account Pictures",
 ];
 
