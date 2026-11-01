@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Aerode
+Comment=Windows 7 style desktop
+Exec=aerode-session
+TryExec=aerode-session
+Type=Application
+DesktopNames=Aerode

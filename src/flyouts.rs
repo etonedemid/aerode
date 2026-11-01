@@ -26,7 +26,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     w.set_keep_above(true);
     w.set_app_paintable(true);
     crate::glass::enable_rgba(&w);
-    w.style_context().add_class("aero7");
+    w.style_context().add_class("aerode");
     let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
     frame.set_margin_start(7);
     frame.set_margin_end(7);
@@ -87,7 +87,7 @@ fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
 }
 
 fn control(page: &str) {
-    if !util::spawn(&["aero7-control", page]) {
+    if !util::spawn(&["aerode-control", page]) {
         util::error("Control Panel is not installed.", "");
     }
 }

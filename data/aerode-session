@@ -1,19 +1,19 @@
 #!/bin/sh
-# Aero7 X session entry point (selected from your display manager).
-export XDG_CURRENT_DESKTOP=Aero7
-export XDG_SESSION_DESKTOP=aero7
-export DESKTOP_SESSION=aero7
-export GTK_THEME=Aero7
+# Aerode X session entry point (selected from your display manager).
+export XDG_CURRENT_DESKTOP=Aerode
+export XDG_SESSION_DESKTOP=aerode
+export DESKTOP_SESSION=aerode
+export GTK_THEME=Aerode
 export QT_QPA_PLATFORMTHEME=gtk3
-[ -d "$HOME/.local/share/icons/Aero7-cursors" ] && export XCURSOR_THEME=Aero7-cursors
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aero7"
+[ -d "$HOME/.local/share/icons/Aerode-cursors" ] && export XCURSOR_THEME=Aerode-cursors
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 mkdir -p "$CONF"
-SHARE=/usr/share/aero7
+SHARE=/usr/share/aerode
 
 # GTK/Xsettings for the session only (icons, cursors, fonts)
-ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aero7/index.theme" ] && ICONS=Aero7
+ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aerode/index.theme" ] && ICONS=Aerode
 cat > "$CONF/xsettingsd.conf" <<EOT
-Net/ThemeName "Aero7"
+Net/ThemeName "Aerode"
 Net/IconThemeName "$ICONS"
 Gtk/CursorThemeName "${XCURSOR_THEME:-Adwaita}"
 Gtk/FontName "Segoe UI 9"
@@ -30,14 +30,15 @@ xsetroot -cursor_name left_ptr 2>/dev/null
 dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP 2>/dev/null
 # helpers Plasma would provide (all optional)
 # UAC-style polkit agent (falls back to other agents if ours is missing)
-if command -v aero7-polkit >/dev/null; then aero7-polkit &
+if command -v aerode-polkit >/dev/null; then aerode-polkit &
 else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent; do
   [ -x "$agent" ] && { "$agent" & break; }; done; fi
-command -v xss-lock >/dev/null && xss-lock -- aero7 lock &
-command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$SHARE/picom.conf" -b
+command -v xss-lock >/dev/null && xss-lock -- aerode lock &
+PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/picom.conf"
+command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$PICOM_CONF" -b
 command -v udiskie >/dev/null && udiskie --no-tray &
 command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
 
-aero7 shell &
+aerode shell &
 # the window manager is the session leader: logging off ends it
-exec aero7-wm
+exec aerode-wm

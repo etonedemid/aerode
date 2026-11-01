@@ -46,21 +46,21 @@ fn bindings() -> Vec<(u16, u32, Action)> {
         (SUPER, 'd' as u32, ShowDesktop), (SUPER, 'm' as u32, ShowDesktop), (SUPER, XK_HOME, MinimizeOthers),
         (SUPER | CTRL, XK_LEFT, DesktopLeft), (SUPER | CTRL, XK_RIGHT, DesktopRight),
         (SUPER | CTRL, 'd' as u32, DesktopAdd), (SUPER | CTRL, XK_F4, DesktopRemove),
-        (SUPER, 'e' as u32, s("aero7-explorer")), (SUPER, 'r' as u32, s("aero7 run")),
-        (SUPER, 'l' as u32, s("aero7 lock")), (SUPER, 'p' as u32, s("aero7-control display")),
-        (SUPER, 'f' as u32, s("aero7 start")), (SUPER, XK_PAUSE, s("aero7-control system")),
-        (SUPER | SHIFT, 's' as u32, s("aero7-snip")), (0, XK_PRINT, s("aero7-snip --full")),
-        (CTRL | SHIFT, XK_ESCAPE, s("aero7-taskmgr")), (CTRL | ALT, XK_DELETE, s("aero7-taskmgr")),
-        (CTRL, XK_ESCAPE, s("aero7 start")),
+        (SUPER, 'e' as u32, s("aerode-explorer")), (SUPER, 'r' as u32, s("aerode run")),
+        (SUPER, 'l' as u32, s("aerode lock")), (SUPER, 'p' as u32, s("aerode-control display")),
+        (SUPER, 'f' as u32, s("aerode start")), (SUPER, XK_PAUSE, s("aerode-control system")),
+        (SUPER | SHIFT, 's' as u32, s("aerode-snip")), (0, XK_PRINT, s("aerode-snip --full")),
+        (CTRL | SHIFT, XK_ESCAPE, s("aerode-taskmgr")), (CTRL | ALT, XK_DELETE, s("aerode-taskmgr")),
+        (CTRL, XK_ESCAPE, s("aerode start")),
         (0, 0x1008ff13, s("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 2%+ || pactl set-sink-volume @DEFAULT_SINK@ +2%")),
         (0, 0x1008ff11, s("wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%- || pactl set-sink-volume @DEFAULT_SINK@ -2%")),
         (0, 0x1008ff12, s("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle || pactl set-sink-mute @DEFAULT_SINK@ toggle")),
         (0, 0x1008ff14, s("playerctl play-pause")), (0, 0x1008ff17, s("playerctl next")), (0, 0x1008ff16, s("playerctl previous")),
         (0, 0x1008ff02, s("brightnessctl set 5%+")), (0, 0x1008ff03, s("brightnessctl set 5%-")),
-        (0, 0x1008ff1d, s("aero7-calc")), (0, 0x1008ff5d, s("aero7-explorer")),
+        (0, 0x1008ff1d, s("aerode-calc")), (0, 0x1008ff5d, s("aerode-explorer")),
     ];
     // Win+1..9 handled by the shell (taskbar launch); register them as commands
-    for i in 1..=9u32 { v.push((SUPER, '0' as u32 + i, s(&format!("aero7 taskbar-launch {i}")))); }
+    for i in 1..=9u32 { v.push((SUPER, '0' as u32 + i, s(&format!("aerode taskbar-launch {i}")))); }
     v
 }
 
@@ -111,7 +111,7 @@ impl Keys {
             if press { self.super_down_alone = true; let _ = conn.allow_events(Allow::ASYNC_KEYBOARD, x11rb::CURRENT_TIME); return None; }
             let fire = self.super_down_alone && mods & !SUPER == 0;
             self.super_down_alone = false;
-            return fire.then(|| Action::Spawn("aero7 start".into()));
+            return fire.then(|| Action::Spawn("aerode start".into()));
         }
         self.super_down_alone = false;
         let sym = self.sym_of.get(&code).copied().unwrap_or(0);

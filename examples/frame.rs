@@ -1,4 +1,4 @@
-use aero7::wm::decor::*;
+use aerode::wm::decor::*;
 fn main() {
     let d = Decor::load();
     println!("themed: {}", d.themed());
@@ -6,7 +6,7 @@ fn main() {
     let s = cairo::ImageSurface::create(cairo::Format::ARgb32, 1100, 340).unwrap();
     let cr = cairo::Context::new(&s).unwrap();
     // fake desktop background
-    let bg = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(aero7::config::data_dir().join("wallpaper.jpg"), 1100, 620, false).unwrap();
+    let bg = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(aerode::config::data_dir().join("wallpaper.jpg"), 1100, 620, false).unwrap();
     gtk::gdk::prelude::GdkContextExt::set_source_pixbuf(&cr, &bg, 0.0, -150.0);
     cr.paint().unwrap();
     for (i, (active, st)) in [(true, BState::Hot), (false, BState::Normal)].iter().enumerate() {

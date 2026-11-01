@@ -1,4 +1,4 @@
-//! aero7-polkit – polkit authentication agent styled like the Windows 7
+//! aerode-polkit – polkit authentication agent styled like the Windows 7
 //! User Account Control credential prompt (dimmed "secure desktop").
 //!
 //! Registration and the agent interface are plain D-Bus (zbus).  The actual
@@ -12,9 +12,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use zbus::zvariant::{OwnedValue, Value};
 
-use aero7::{config, sounds, theme, util};
+use aerode::{config, sounds, theme, util};
 
-const OBJ: &str = "/org/aero7/PolicyKit1/AuthenticationAgent";
+const OBJ: &str = "/org/aerode/PolicyKit1/AuthenticationAgent";
 
 struct Request {
     action_id: String,
@@ -163,13 +163,13 @@ fn show(req: Request, cancel_rx: async_channel::Receiver<String>) {
     // caption
     let cap = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     cap.style_context().add_class("uac-caption");
-    cap.pack_start(&util::image(util::first_icon(&["aero7-uac-shield", "security-high", "dialog-password"]), 16), false, false, 0);
+    cap.pack_start(&util::image(util::first_icon(&["aerode-uac-shield", "security-high", "dialog-password"]), 16), false, false, 0);
     cap.pack_start(&gtk::Label::new(Some("User Account Control")), false, false, 0);
     dlg.pack_start(&cap, false, false, 0);
     // banner
     let banner = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     banner.style_context().add_class("uac-banner");
-    banner.pack_start(&util::image(util::first_icon(&["aero7-uac-shield", "security-high", "dialog-password"]), 32), false, false, 0);
+    banner.pack_start(&util::image(util::first_icon(&["aerode-uac-shield", "security-high", "dialog-password"]), 32), false, false, 0);
     let q = gtk::Label::new(Some("Do you want to allow the following program to make changes to this computer?"));
     q.set_line_wrap(true);
     q.set_xalign(0.0);
@@ -378,10 +378,10 @@ fn main() {
             subj.insert("session-id", Value::from(session.as_str()));
             let proxy = zbus::blocking::Proxy::new(&conn, "org.freedesktop.PolicyKit1", "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.PolicyKit1.Authority")?;
             proxy.call_method("RegisterAuthenticationAgent", &(("unix-session", subj), "en_US.UTF-8", OBJ))?;
-            eprintln!("aero7-polkit: registered for session {session}");
+            eprintln!("aerode-polkit: registered for session {session}");
             loop { std::thread::park(); }
         };
-        if let Err(e) = run() { eprintln!("aero7-polkit: {e}"); std::process::exit(1); }
+        if let Err(e) = run() { eprintln!("aerode-polkit: {e}"); std::process::exit(1); }
     });
     // UI loop: one prompt at a time
     let busy = std::rc::Rc::new(std::cell::Cell::new(false));

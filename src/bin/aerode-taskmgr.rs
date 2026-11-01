@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use aero7::{config, theme, util, x11::Wm};
+use aerode::{config, theme, util, x11::Wm};
 
 const HIST: usize = 120;
 
@@ -291,7 +291,7 @@ impl Tm {
         }
         let mut seen = std::collections::HashSet::new();
         for c in clients {
-            if c.class.eq_ignore_ascii_case("aero7-taskmgr") && c.title == "Windows Task Manager" { /* still list ourselves like Win7 */ }
+            if c.class.eq_ignore_ascii_case("aerode-taskmgr") && c.title == "Windows Task Manager" { /* still list ourselves like Win7 */ }
             seen.insert(c.id);
             let it = have.get(&c.id).cloned().unwrap_or_else(|| self.apps.append());
             // Win7 shows "Not Responding" for hung apps; we can't know cheaply → Running
@@ -343,7 +343,7 @@ impl Tm {
         d.set_secondary_text(Some("If an open program is associated with this process, it will close and you will lose any unsaved data. If you end a system process, it might result in system instability. Are you sure you want to continue?"));
         d.add_button("End process", gtk::ResponseType::Ok);
         d.add_button("Cancel", gtk::ResponseType::Cancel);
-        aero7::sounds::play(aero7::sounds::Event::Exclamation);
+        aerode::sounds::play(aerode::sounds::Event::Exclamation);
         let r = d.run();
         d.close();
         if r == gtk::ResponseType::Ok {
@@ -604,8 +604,8 @@ fn build(app: &gtk::Application) {
     { let w = win.clone(); newt.connect_clicked(move |_| new_task(w.upcast_ref())); }
     { let t = tm.clone(); endp.connect_clicked(move |_| t.end_process()); }
     { let t = tm.clone(); show_all.connect_toggled(move |c| { t.all_users.set(c.is_active()); t.procs.clear(); t.tick(); }); }
-    svcb.connect_clicked(|_| { util::spawn(&["aero7-control", "services"]); });
-    logoff.connect_clicked(|_| aero7::sys::log_off());
+    svcb.connect_clicked(|_| { util::spawn(&["aerode-control", "services"]); });
+    logoff.connect_clicked(|_| aerode::sys::log_off());
     {
         let t = tm.clone();
         nb.connect_switch_page(move |_, _, n| match n { 2 => t.refresh_services(), 5 => t.refresh_users(), _ => {} });
@@ -682,7 +682,7 @@ fn build(app: &gtk::Application) {
     let m = gtk::Menu::new();
     { let w = win.clone(); item(&m, "_About Task Manager", Box::new(move || {
         let d = gtk::AboutDialog::new(); d.set_transient_for(Some(&w)); d.set_program_name("Windows Task Manager");
-        d.set_comments(Some("Aero7 Task Manager – a Windows 7 style task manager for Linux")); d.set_logo_icon_name(Some(util::first_icon(&["utilities-system-monitor"])));
+        d.set_comments(Some("Aerode Task Manager – a Windows 7 style task manager for Linux")); d.set_logo_icon_name(Some(util::first_icon(&["utilities-system-monitor"])));
         d.run(); d.close();
     })); }
     let top = gtk::MenuItem::with_mnemonic("_Help"); top.set_submenu(Some(&m)); menubar.append(&top);
@@ -703,7 +703,7 @@ fn build(app: &gtk::Application) {
 }
 
 fn main() -> glib::ExitCode {
-    let app = gtk::Application::new(Some("org.aero7.TaskManager"), gio::ApplicationFlags::empty());
+    let app = gtk::Application::new(Some("org.aerode.TaskManager"), gio::ApplicationFlags::empty());
     app.connect_activate(|app| {
         if let Some(w) = app.windows().first() { w.present(); return; }
         build(app);

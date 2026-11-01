@@ -1,4 +1,4 @@
-//! User configuration (~/.config/aero7/config.json) and well-known paths.
+//! User configuration (~/.config/aerode/config.json) and well-known paths.
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -46,10 +46,10 @@ thread_local! {
 }
 
 pub fn data_dir() -> PathBuf {
-    gtk::glib::user_data_dir().join("aero7")
+    gtk::glib::user_data_dir().join("aerode")
 }
 pub fn conf_dir() -> PathBuf {
-    gtk::glib::user_config_dir().join("aero7")
+    gtk::glib::user_config_dir().join("aerode")
 }
 pub fn home() -> PathBuf {
     gtk::glib::home_dir()

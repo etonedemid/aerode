@@ -1,7 +1,7 @@
 //! Snipping Tool – Windows 7 Snipping Tool remake.
-//!   aero7-snip           open the tool
-//!   aero7-snip --full    Print Screen: copy the whole screen to the clipboard (and save a copy)
-//!   aero7-snip --rect    start a rectangular snip immediately (Win+Shift+S)
+//!   aerode-snip           open the tool
+//!   aerode-snip --full    Print Screen: copy the whole screen to the clipboard (and save a copy)
+//!   aerode-snip --rect    start a rectangular snip immediately (Win+Shift+S)
 use gtk::gdk::prelude::GdkContextExt;
 use gtk::gdk_pixbuf::Pixbuf;
 use gtk::prelude::*;
@@ -9,7 +9,7 @@ use gtk::{cairo, gdk, gio, glib};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use aero7::{config, theme, util, x11::Wm};
+use aerode::{config, theme, util, x11::Wm};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind { Free, Rect, Window, Full }
@@ -410,7 +410,7 @@ fn open_editor(app: &gtk::Application, shot: Pixbuf, main: Option<gtk::Window>) 
     let m = gtk::Menu::new();
     { let w = win.clone(); add(&m, "_About Snipping Tool", "", Box::new(move || {
         let d = gtk::AboutDialog::new(); d.set_transient_for(Some(&w)); d.set_program_name("Snipping Tool");
-        d.set_comments(Some("Aero7 Snipping Tool – capture and annotate screen snips"));
+        d.set_comments(Some("Aerode Snipping Tool – capture and annotate screen snips"));
         d.set_logo_icon_name(Some(util::first_icon(&["accessories-screenshot"]))); d.run(); d.close();
     })); }
     let top = gtk::MenuItem::with_mnemonic("_Help"); top.set_submenu(Some(&m)); menubar.append(&top);
@@ -538,7 +538,7 @@ fn main() -> glib::ExitCode {
         return glib::ExitCode::SUCCESS;
     }
     let quick = args.iter().any(|a| a == "--rect");
-    let app = gtk::Application::new(Some("org.aero7.SnippingTool"), gio::ApplicationFlags::NON_UNIQUE);
+    let app = gtk::Application::new(Some("org.aerode.SnippingTool"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(move |app| {
         theme::init_app();
         if quick { let h = app.hold(); start(app, Kind::Rect, None); std::mem::forget(h); } else { main_window(app); }

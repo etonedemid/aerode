@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use aero7::{config, sounds, theme, util};
+use aerode::{config, sounds, theme, util};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Enc { Utf8, Utf8Bom, Utf16Le, Utf16Be, Ansi }
@@ -513,7 +513,7 @@ fn build(app: &gtk::Application, file: Option<PathBuf>) {
             let d = gtk::AboutDialog::new();
             d.set_transient_for(Some(&w));
             d.set_program_name("Notepad");
-            d.set_comments(Some("Aero7 Notepad – a Windows 7 style text editor for Linux"));
+            d.set_comments(Some("Aerode Notepad – a Windows 7 style text editor for Linux"));
             d.set_logo_icon_name(Some(util::first_icon(&["accessories-text-editor"])));
             d.run();
             d.close();
@@ -561,7 +561,7 @@ fn set_flag(name: &str, on: bool) {
 }
 
 fn main() -> glib::ExitCode {
-    let app = gtk::Application::new(Some("org.aero7.Notepad"), gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE);
+    let app = gtk::Application::new(Some("org.aerode.Notepad"), gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(|app| build(app, None));
     app.connect_open(|app, files, _| { for f in files { build(app, f.path()); } });
     app.run()

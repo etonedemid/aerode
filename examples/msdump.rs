@@ -1,4 +1,4 @@
-use aero7::msstyles::*;
+use aerode::msstyles::*;
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let t = Theme::open(std::path::Path::new(&a[1])).unwrap();

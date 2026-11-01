@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Aero7 window manager configuration (Openbox) -->
+<!-- Aerode window manager configuration (Openbox) -->
 <openbox_config xmlns="http://openbox.org/3.4/rc">
   <resistance><strength>10</strength><screen_edge_strength>20</screen_edge_strength></resistance>
   <focus><focusNew>yes</focusNew><followMouse>no</followMouse><focusLast>yes</focusLast><underMouse>no</underMouse><focusDelay>200</focusDelay><raiseOnFocus>no</raiseOnFocus></focus>
   <placement><policy>Smart</policy><center>yes</center><monitor>Primary</monitor><primaryMonitor>1</primaryMonitor></placement>
   <theme>
-    <name>Aero7</name>
+    <name>Aerode</name>
     <titleLayout>NLIMC</titleLayout>
     <keepBorder>yes</keepBorder>
     <animateIconify>yes</animateIconify>
@@ -22,19 +22,19 @@
 
   <keyboard>
     <chainQuitKey>C-g</chainQuitKey>
-    <keybind key="Super_L"><action name="Execute"><command>aero7 start</command></action></keybind>
-    <keybind key="C-Escape"><action name="Execute"><command>aero7 start</command></action></keybind>
-    <keybind key="W-e"><action name="Execute"><command>aero7-explorer</command></action></keybind>
-    <keybind key="W-r"><action name="Execute"><command>aero7 run</command></action></keybind>
-    <keybind key="W-l"><action name="Execute"><command>aero7 lock</command></action></keybind>
+    <keybind key="Super_L"><action name="Execute"><command>aerode start</command></action></keybind>
+    <keybind key="C-Escape"><action name="Execute"><command>aerode start</command></action></keybind>
+    <keybind key="W-e"><action name="Execute"><command>aerode-explorer</command></action></keybind>
+    <keybind key="W-r"><action name="Execute"><command>aerode run</command></action></keybind>
+    <keybind key="W-l"><action name="Execute"><command>aerode lock</command></action></keybind>
     <keybind key="W-d"><action name="ToggleShowDesktop"/></keybind>
     <keybind key="W-m"><action name="ToggleShowDesktop"/></keybind>
-    <keybind key="W-p"><action name="Execute"><command>aero7-control display</command></action></keybind>
-    <keybind key="W-Pause"><action name="Execute"><command>aero7-control system</command></action></keybind>
-    <keybind key="W-S-s"><action name="Execute"><command>aero7-snip</command></action></keybind>
-    <keybind key="Print"><action name="Execute"><command>aero7-snip --full</command></action></keybind>
-    <keybind key="C-S-Escape"><action name="Execute"><command>aero7-taskmgr</command></action></keybind>
-    <keybind key="C-A-Delete"><action name="Execute"><command>aero7-taskmgr</command></action></keybind>
+    <keybind key="W-p"><action name="Execute"><command>aerode-control display</command></action></keybind>
+    <keybind key="W-Pause"><action name="Execute"><command>aerode-control system</command></action></keybind>
+    <keybind key="W-S-s"><action name="Execute"><command>aerode-snip</command></action></keybind>
+    <keybind key="Print"><action name="Execute"><command>aerode-snip --full</command></action></keybind>
+    <keybind key="C-S-Escape"><action name="Execute"><command>aerode-taskmgr</command></action></keybind>
+    <keybind key="C-A-Delete"><action name="Execute"><command>aerode-taskmgr</command></action></keybind>
     <keybind key="A-F4"><action name="Close"/></keybind>
     <keybind key="A-space"><action name="ShowMenu"><menu>client-menu</menu></action></keybind>
     <keybind key="A-Tab"><action name="NextWindow"><finalactions><action name="Focus"/><action name="Raise"/><action name="Unshade"/></finalactions></action></keybind>
@@ -62,8 +62,8 @@
     <keybind key="XF86AudioPrev"><action name="Execute"><command>playerctl previous</command></action></keybind>
     <keybind key="XF86MonBrightnessUp"><action name="Execute"><command>brightnessctl set 5%+</command></action></keybind>
     <keybind key="XF86MonBrightnessDown"><action name="Execute"><command>brightnessctl set 5%-</command></action></keybind>
-    <keybind key="XF86Calculator"><action name="Execute"><command>aero7-calc</command></action></keybind>
-    <keybind key="XF86Explorer"><action name="Execute"><command>aero7-explorer</command></action></keybind>
+    <keybind key="XF86Calculator"><action name="Execute"><command>aerode-calc</command></action></keybind>
+    <keybind key="XF86Explorer"><action name="Execute"><command>aerode-explorer</command></action></keybind>
     <keybind key="XF86Sleep"><action name="Execute"><command>systemctl suspend</command></action></keybind>
   </keyboard>
 
@@ -113,6 +113,6 @@
 
   <applications>
     <application type="normal"><decor>yes</decor></application>
-    <application class="Aero7-*" type="dialog"><position force="no"><x>center</x><y>center</y></position></application>
+    <application class="Aerode-*" type="dialog"><position force="no"><x>center</x><y>center</y></position></application>
   </applications>
 </openbox_config>

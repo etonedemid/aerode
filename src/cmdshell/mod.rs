@@ -1,4 +1,4 @@
-//! The Windows Command Processor (cmd.exe) for Aero7.
+//! The Windows Command Processor (cmd.exe) for Aerode.
 //! Paths are shown Windows-style: C:\ = /, C:\Users\<name> = /home/<name>.
 pub mod line;
 
@@ -583,7 +583,7 @@ impl Shell {
                 if it.peek().map(|x| x.starts_with('"')).unwrap_or(false) { it.next(); }
                 let mut wait = false;
                 let rest: Vec<String> = it.filter(|x| { if x.eq_ignore_ascii_case("/wait") { wait = true; false } else { !x.starts_with('/') } }).cloned().collect();
-                if rest.is_empty() { crate::util::spawn(&["aero7-cmd"]); return; }
+                if rest.is_empty() { crate::util::spawn(&["aerode-cmd"]); return; }
                 let target = unquote(&rest[0]);
                 let p = to_linux(&self.cwd, &target);
                 if p.exists() && !is_exec(&p) { crate::util::open_path(&p); }
@@ -1246,13 +1246,13 @@ fn eval_arith(e: &str) -> Option<i64> {
 
 fn is_exec(p: &Path) -> bool { use std::os::unix::fs::PermissionsExt; p.metadata().map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false) }
 
-/// Windows program names → Aero7/Linux programs.
+/// Windows program names → Aerode/Linux programs.
 fn map_windows_program(n: &str) -> Option<String> {
     let l = n.to_lowercase();
     let l = l.trim_end_matches(".exe");
     Some(match l {
-        "notepad" => "aero7-notepad", "calc" => "aero7-calc", "explorer" => "aero7-explorer", "taskmgr" => "aero7-taskmgr",
-        "control" => "aero7-control", "snippingtool" => "aero7-snip", "cmd" => "aero7-cmd", "mspaint" => "kolourpaint",
+        "notepad" => "aerode-notepad", "calc" => "aerode-calc", "explorer" => "aerode-explorer", "taskmgr" => "aerode-taskmgr",
+        "control" => "aerode-control", "snippingtool" => "aerode-snip", "cmd" => "aerode-cmd", "mspaint" => "kolourpaint",
         "write" | "wordpad" => "libreoffice", "iexplore" => "xdg-open", "regedit" => return None,
         _ => return None,
     }.to_string())
@@ -1262,9 +1262,9 @@ pub fn version() -> String {
     std::fs::read_to_string(crate::config::conf_dir().join("cmd-version.txt")).ok().and_then(|s| s.lines().next().map(String::from)).unwrap_or_else(|| "Microsoft Windows [Version 6.1.7601]".into())
 }
 
-/// Text shown when cmd starts (customise in ~/.config/aero7/cmd-banner.txt).
+/// Text shown when cmd starts (customise in ~/.config/aerode/cmd-banner.txt).
 pub fn banner() -> String {
-    std::fs::read_to_string(crate::config::conf_dir().join("cmd-banner.txt")).unwrap_or_else(|_| format!("{}\nAero7 Command Processor. Type HELP for a list of commands.\n", version()))
+    std::fs::read_to_string(crate::config::conf_dir().join("cmd-banner.txt")).unwrap_or_else(|_| format!("{}\nAerode Command Processor. Type HELP for a list of commands.\n", version()))
 }
 
 fn serial(p: &Path) -> String {

@@ -44,7 +44,7 @@ pub fn lock() {
             cr.show_text(text).ok();
         }
     }
-    let cache = glib::user_cache_dir().join("aero7");
+    let cache = glib::user_cache_dir().join("aerode");
     let _ = std::fs::create_dir_all(&cache);
     let png = cache.join("lock.png");
     if let Ok(mut f) = std::fs::File::create(&png) { let _ = surf.write_to_png(&mut f); }
