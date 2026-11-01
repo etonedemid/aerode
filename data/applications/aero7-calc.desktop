@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Perform basic arithmetic tasks with an on-screen calculator
+Exec=aero7-calc
+Icon=accessories-calculator
+Categories=Utility;Calculator;
+StartupWMClass=aero7-calc
