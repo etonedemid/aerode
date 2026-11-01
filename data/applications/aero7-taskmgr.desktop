@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Windows Task Manager
+GenericName=Task Manager
+Comment=Shows the programs, processes and performance of your computer
+Exec=aero7-taskmgr
+Icon=utilities-system-monitor
+Categories=System;Monitor;
+StartupWMClass=aero7-taskmgr
