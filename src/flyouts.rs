@@ -97,6 +97,7 @@ pub fn build_tray(tb: &Rc<Taskbar>) {
     if sys::battery().is_some() {
         battery(tb);
     }
+    brightness(tb);
     volume(tb);
     network(tb);
     crate::tray::attach(tb);
@@ -389,14 +390,88 @@ fn battery(tb: &Rc<Taskbar>) {
                 body.pack_start(&r, false, false, 0);
             }
         }
-        if let Some(br) = sys::brightness() {
+        if let Some(br) = sys::backlight() {
             let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
             s.set_value(br as f64);
-            s.connect_value_changed(|s| sys::set_brightness(s.value() as u32));
+            s.connect_value_changed(|s| { util::spawn(&["brightnessctl", "set", &format!("{}%", s.value() as u32)]); });
             body.pack_start(&gtk::Label::new(Some("Screen brightness")), false, false, 0);
             body.pack_start(&s, false, false, 0);
         }
         let foot = link("More power options", || control("power"));
         popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+    });
+}
+
+// ---------------------------------------------------------------- brightness (DDC/CI)
+/// Tray button for external-monitor brightness over DDC/CI (ddcutil).
+/// Detection is slow, so it runs in the background and the button appears when ready.
+fn brightness(tb: &Rc<Taskbar>) {
+    let tray = tb.tray.clone();
+    let tb2 = tb.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { let _ = tx.send(sys::ddc_displays()); });
+    glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+        let displays = match rx.try_recv() { Ok(d) => d, Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue, Err(_) => return glib::ControlFlow::Break };
+        if displays.is_empty() { return glib::ControlFlow::Break; }
+        let (b, _img) = tray_button(&tb2, util::first_icon(&["display-brightness", "display-brightness-symbolic", "preferences-desktop-display"]), "Screen brightness");
+        // keep it to the left of the volume/network icons
+        tray.reorder_child(&b, 0);
+        b.show_all();
+        let displays = Rc::new(displays);
+        b.connect_clicked(move |b| {
+            if close_open() { return; }
+            let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            body.set_size_request(260, -1);
+            let h = gtk::Label::new(Some("Adjust screen brightness"));
+            h.style_context().add_class("fly-link");
+            h.set_halign(gtk::Align::Start);
+            body.pack_start(&h, false, false, 0);
+            for (n, model) in displays.iter() {
+                let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                let l = gtk::Label::new(Some(&format!("{n}. {model}")));
+                l.set_xalign(0.0);
+                row.pack_start(&l, false, false, 0);
+                let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+                s.set_sensitive(false);
+                s.set_value_pos(gtk::PositionType::Right);
+                row.pack_start(&s, false, false, 0);
+                body.pack_start(&row, false, false, 0);
+                // read the current value in the background
+                let (tx, rx) = std::sync::mpsc::channel();
+                let n = *n;
+                std::thread::spawn(move || { let _ = tx.send(sys::ddc_get(n)); });
+                let s2 = s.clone();
+                glib::timeout_add_local(std::time::Duration::from_millis(100), move || match rx.try_recv() {
+                    Ok(v) => { if let Some((cur, max)) = v { s2.set_value((cur * 100 / max.max(1)) as f64); s2.set_sensitive(true); } glib::ControlFlow::Break }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(_) => glib::ControlFlow::Break,
+                });
+                // debounce: DDC is slow, only send the value once the slider rests
+                let pending: Rc<std::cell::Cell<Option<glib::SourceId>>> = Rc::new(std::cell::Cell::new(None));
+                s.connect_value_changed(move |s| {
+                    if let Some(id) = pending.take() { id.remove(); }
+                    let v = s.value() as u32;
+                    let p2 = pending.clone();
+                    pending.set(Some(glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || { p2.set(None); sys::ddc_set(n, v); })));
+                });
+            }
+            if displays.len() > 1 {
+                let all = gtk::Button::with_label("Set all monitors to the same level");
+                all.style_context().add_class("link");
+                let body2 = body.clone();
+                all.connect_clicked(move |_| {
+                    let mut first: Option<f64> = None;
+                    for row in body2.children() {
+                        if let Some(sc) = row.downcast_ref::<gtk::Box>().and_then(|r| r.children().into_iter().find_map(|c| c.downcast::<gtk::Scale>().ok())) {
+                            match first { None => first = Some(sc.value()), Some(v) => sc.set_value(v) }
+                        }
+                    }
+                });
+                body.pack_start(&all, false, false, 0);
+            }
+            let foot = link("Adjust display settings", || control("display"));
+            popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+        });
+        glib::ControlFlow::Break
     });
 }
