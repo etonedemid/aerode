@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="Aero7">
+    <item label="Personalize"><action name="Execute"><command>aero7 personalize</command></action></item>
+    <item label="Control Panel"><action name="Execute"><command>aero7-control</command></action></item>
+    <separator/>
+    <item label="Log off"><action name="Exit"><prompt>no</prompt></action></item>
+  </menu>
+</openbox_menu>

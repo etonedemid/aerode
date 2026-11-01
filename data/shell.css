@@ -1,0 +1,101 @@
+/* Aero7 shell styling (taskbar, start menu, desktop, flyouts) */
+.aero7, .aero7 * { font-family: "Segoe UI", "Noto Sans", sans-serif; font-size: 9pt; }
+.aero7 { background: transparent; }
+
+/* ---------- taskbar ---------- */
+.taskbar button {
+  background: none; border: 1px solid transparent; border-radius: 3px;
+  box-shadow: none; padding: 0; margin: 0 1px; color: white;
+  min-height: 0; min-width: 0; text-shadow: none; -gtk-icon-shadow: none;
+}
+.taskbar button.task { min-width: 60px; }
+.taskbar button.task.running {
+  background-image: linear-gradient(to bottom, rgba(255,255,255,0.20), rgba(255,255,255,0.07) 49%,
+                    rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.10));
+  border-color: rgba(255,255,255,0.30) rgba(0,0,0,0.45) rgba(0,0,0,0.5) rgba(0,0,0,0.45);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+}
+.taskbar button.task.active {
+  background-image: linear-gradient(to bottom, rgba(255,255,255,0.38), rgba(255,255,255,0.16) 49%,
+                    rgba(255,255,255,0.08) 50%, rgba(200,230,255,0.25));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
+}
+.taskbar button.task.urgent {
+  background-image: linear-gradient(to bottom, rgba(255,200,90,0.75), rgba(255,140,0,0.55));
+}
+.taskbar button:hover {
+  background-image: radial-gradient(ellipse at center bottom, rgba(150,210,255,0.70), rgba(80,160,230,0.25) 60%, rgba(255,255,255,0.10)),
+                    linear-gradient(to bottom, rgba(255,255,255,0.28), rgba(255,255,255,0.05));
+  border-color: rgba(255,255,255,0.45) rgba(0,0,0,0.5) rgba(0,0,0,0.5) rgba(0,0,0,0.5);
+}
+.taskbar button:active { background-image: linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(255,255,255,0.12)); }
+.taskbar .clock { color: white; padding: 0 6px; }
+.taskbar .clock label { color: white; }
+.taskbar button.tray { padding: 0 3px; min-width: 22px; }
+.taskbar button.showdesk {
+  min-width: 13px; margin: 0 0 0 4px; border-radius: 0;
+  border-color: transparent transparent transparent rgba(255,255,255,0.35);
+  background-image: linear-gradient(to right, rgba(0,0,0,0.35), rgba(255,255,255,0.10) 1px, rgba(255,255,255,0.05));
+}
+.taskbar button.showdesk:hover { background-image: linear-gradient(to bottom, rgba(255,255,255,0.45), rgba(255,255,255,0.15)); }
+
+/* ---------- tooltips / menus on the shell ---------- */
+tooltip.background { background-color: #f9fbfd; border: 1px solid #767676; border-radius: 3px; }
+tooltip label { color: #575757; }
+
+/* ---------- start menu ---------- */
+.sm-left { background-color: white; border: 1px solid rgba(0,0,0,0.55); border-radius: 4px;
+           box-shadow: inset 0 0 0 1px rgba(255,255,255,0.8); }
+.sm-left label { color: black; }
+.sm-left separator { background: linear-gradient(to right, rgba(0,0,0,0), #d6e5f5 20%, #d6e5f5 80%, rgba(0,0,0,0)); min-height: 1px; margin: 4px 8px; }
+button.sm-item { background: none; border: 1px solid transparent; border-radius: 3px; box-shadow: none; padding: 3px 4px; margin: 0 4px; }
+button.sm-item:hover, button.sm-item.selected {
+  background-image: linear-gradient(to bottom, #f1f8fd, #d5e9f9);
+  border-color: #7da2ce; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+}
+button.sm-item .sub { color: #6d6d6d; }
+.sm-search { background-color: white; border: 1px solid #a8b7c8; border-radius: 2px; color: black;
+             min-height: 22px; padding: 0 6px; box-shadow: none; }
+.sm-search:focus { border-color: #5794bf; }
+button.sm-link { background: none; border: 1px solid transparent; border-radius: 3px; box-shadow: none; padding: 5px 10px; margin: 0 6px; }
+button.sm-link label { color: white; text-shadow: 0 0 6px rgba(0,0,0,0.9); }
+button.sm-link:hover {
+  background-image: linear-gradient(to bottom, rgba(255,255,255,0.35), rgba(255,255,255,0.10) 50%, rgba(255,255,255,0.02) 51%, rgba(255,255,255,0.12));
+  border-color: rgba(255,255,255,0.55) rgba(0,0,0,0.5) rgba(0,0,0,0.5) rgba(0,0,0,0.5);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25);
+}
+.sm-right separator { background: linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,0.4), rgba(0,0,0,0)); min-height: 1px; margin: 3px 14px; }
+button.sm-power {
+  background-image: linear-gradient(to bottom, rgba(255,255,255,0.30), rgba(255,255,255,0.08) 50%, rgba(0,0,0,0.12) 51%, rgba(255,255,255,0.10));
+  border: 1px solid rgba(0,0,0,0.65); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+  border-radius: 3px 0 0 3px; padding: 2px 12px; color: white; min-height: 0;
+}
+button.sm-power.arrow { border-radius: 0 3px 3px 0; padding: 2px 5px; border-left-width: 0; }
+button.sm-power label { color: white; text-shadow: 0 1px 2px black; }
+button.sm-power:hover { background-image: linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(160,210,255,0.35) 50%, rgba(60,140,220,0.4) 51%, rgba(140,210,255,0.5)); }
+.sm-allprogs label { color: black; }
+.sm-heading { color: #1e3287; padding: 4px 10px; }
+
+/* ---------- desktop ---------- */
+.desk-icon { background: none; border: 1px solid transparent; border-radius: 3px; padding: 2px; }
+.desk-icon label { color: white; text-shadow: 1px 1px 2px black, 0 0 3px black; }
+.desk-icon:hover { background-color: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }
+.desk-icon.selected { background-color: rgba(85,160,240,0.38); border-color: rgba(150,205,255,0.85); }
+
+/* ---------- flyouts (clock, volume, network, battery) ---------- */
+.flyout { background-color: #f4f8fc; border: 1px solid #5f7491; border-radius: 4px; }
+.flyout-body { background: linear-gradient(to bottom, #ffffff, #eef4fb); padding: 10px; }
+.flyout-foot { background-color: #f0f0f0; border-top: 1px solid #dfdfdf; padding: 8px 10px; }
+.flyout .big { font-size: 17pt; color: #1e395b; }
+.flyout .link { color: #0066cc; }
+.flyout .link:hover { text-decoration: underline; }
+.flyout label { color: #1e1e1e; }
+.flyout button.link { background: none; border: none; box-shadow: none; padding: 0; }
+
+/* ---------- notifications (Win7 balloon) ---------- */
+.balloon { background: linear-gradient(to bottom, #ffffff, #e7eef7); border: 1px solid #76797c; border-radius: 5px; }
+.balloon .title { font-weight: bold; color: #000; }
+.balloon label { color: #1e1e1e; }
+button.desk-icon { background: none; border: 1px solid transparent; border-radius: 3px; box-shadow: none; padding: 2px; }
+button.desk-icon:hover { background-color: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.40); }
+button.desk-icon.selected { background-color: rgba(85,160,240,0.40); border-color: rgba(150,205,255,0.9); }

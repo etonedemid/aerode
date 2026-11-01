@@ -1,0 +1,345 @@
+//! Tray buttons with Win7-style flyouts: network, volume, battery, clock.
+use gtk::prelude::*;
+use gtk::{gdk, glib};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::taskbar::Taskbar;
+use crate::{config, sys, util};
+
+thread_local! {
+    static OPEN: RefCell<Option<gtk::Window>> = RefCell::new(None);
+}
+
+pub fn close_open() -> bool {
+    OPEN.with(|o| o.borrow_mut().take()).map(|w| { w.close(); true }).unwrap_or(false)
+}
+
+/// A popup anchored above `anchor`, closed on focus loss.
+pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget>) -> gtk::Window {
+    close_open();
+    let w = gtk::Window::new(gtk::WindowType::Toplevel);
+    w.set_decorated(false);
+    w.set_type_hint(gdk::WindowTypeHint::Utility);
+    w.set_skip_taskbar_hint(true);
+    w.set_keep_above(true);
+    w.style_context().add_class("aero7");
+    let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    frame.style_context().add_class("flyout");
+    body.style_context().add_class("flyout-body");
+    frame.pack_start(body, true, true, 0);
+    if let Some(f) = foot {
+        f.style_context().add_class("flyout-foot");
+        frame.pack_start(f, false, false, 0);
+    }
+    w.add(&frame);
+    w.connect_focus_out_event(|w, _| { w.close(); glib::Propagation::Proceed });
+    w.connect_key_press_event(|w, e| {
+        if e.keyval() == gdk::keys::constants::Escape { w.close(); }
+        glib::Propagation::Proceed
+    });
+    frame.show_all();
+    let (_, nat) = w.preferred_size();
+    let geo = util::primary_geometry();
+    let (ax, _) = anchor
+        .window()
+        .map(|gw| { let (_, x, y) = gw.origin(); (x, y) })
+        .unwrap_or((0, 0));
+    let alloc = anchor.allocation();
+    let x = (ax + alloc.x() + alloc.width() / 2 - nat.width / 2).clamp(geo.x() + 4, geo.x() + geo.width() - nat.width - 4);
+    let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 6;
+    w.move_(x, y);
+    w.show_all();
+    w.present();
+    OPEN.with(|o| *o.borrow_mut() = Some(w.clone()));
+    w
+}
+
+fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Image) {
+    let b = gtk::Button::new();
+    b.style_context().add_class("tray");
+    let img = util::image(icon, 16);
+    b.add(&img);
+    b.set_tooltip_text(Some(tip));
+    tb.tray.pack_end(&b, false, false, 0);
+    (b, img)
+}
+
+fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
+    let b = gtk::Button::with_label(text);
+    b.style_context().add_class("link");
+    b.set_halign(gtk::Align::Start);
+    b.connect_clicked(move |_| { close_open(); f(); });
+    b
+}
+
+fn control(page: &str) {
+    if !util::spawn(&["aero7-control", page]) {
+        util::error("Control Panel is not installed.", "");
+    }
+}
+
+pub fn build_tray(tb: &Rc<Taskbar>) {
+    clock(tb);
+    if sys::battery().is_some() {
+        battery(tb);
+    }
+    volume(tb);
+    network(tb);
+    crate::tray::attach(tb);
+}
+
+// ---------------------------------------------------------------- clock
+fn clock(tb: &Rc<Taskbar>) {
+    let b = gtk::Button::new();
+    b.style_context().add_class("clock");
+    let v = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    v.set_valign(gtk::Align::Center);
+    let t = gtk::Label::new(None);
+    let d = gtk::Label::new(None);
+    v.pack_start(&t, false, false, 0);
+    v.pack_start(&d, false, false, 0);
+    b.add(&v);
+    tb.tray.pack_end(&b, false, false, 0);
+    let update = {
+        let (t, d, b) = (t.clone(), d.clone(), b.clone());
+        move || {
+            let now = chrono::Local::now();
+            t.set_text(&if config::get().clock_24h { now.format("%H:%M").to_string() } else { now.format("%-I:%M %p").to_string() });
+            d.set_text(&now.format("%-m/%-d/%Y").to_string());
+            b.set_tooltip_text(Some(&now.format("%A, %B %-d, %Y").to_string()));
+        }
+    };
+    update();
+    glib::timeout_add_seconds_local(1, move || { update(); glib::ControlFlow::Continue });
+    b.connect_clicked(|b| {
+        if close_open() { return; }
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let now = chrono::Local::now();
+        let big = gtk::Label::new(Some(&now.format("%-I:%M:%S %p").to_string()));
+        big.style_context().add_class("big");
+        let date = gtk::Label::new(Some(&now.format("%A, %B %-d, %Y").to_string()));
+        date.style_context().add_class("link");
+        body.pack_start(&date, false, false, 0);
+        let cal = gtk::Calendar::new();
+        body.pack_start(&cal, false, false, 0);
+        body.pack_start(&big, false, false, 0);
+        {
+            let big = big.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+                if !big.is_mapped() { return glib::ControlFlow::Break; }
+                big.set_text(&chrono::Local::now().format("%-I:%M:%S %p").to_string());
+                glib::ControlFlow::Continue
+            });
+        }
+        let foot = link("Change date and time settings...", || control("datetime"));
+        popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+    });
+}
+
+// ---------------------------------------------------------------- volume
+fn volume(tb: &Rc<Taskbar>) {
+    let (b, img) = tray_button(tb, "audio-volume-high", "Speakers");
+    let refresh = {
+        let (img, b) = (img.clone(), b.clone());
+        move || {
+            let (img, b) = (img.clone(), b.clone());
+            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            // run the query off-thread through our own binary to avoid blocking
+            util::output_async(vec![exe, "query-volume".into()], move |s| {
+                let v = s.and_then(|s| { let mut it = s.split_whitespace(); Some((it.next()?.parse().ok()?, it.next()? == "1")) });
+                if let Some(p) = util::pixbuf(sys::volume_icon(v), 16) { img.set_from_pixbuf(Some(&p)); }
+                b.set_tooltip_text(Some(&match v { Some((p, m)) => format!("Speakers: {p}%{}", if m { " (muted)" } else { "" }), None => "No audio device".into() }));
+            });
+        }
+    };
+    refresh();
+    { let r = refresh.clone(); glib::timeout_add_seconds_local(3, move || { r(); glib::ControlFlow::Continue }); }
+    b.connect_clicked(move |b| {
+        if close_open() { return; }
+        let (pct, muted) = sys::volume().unwrap_or((0, false));
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let scale = gtk::Scale::with_range(gtk::Orientation::Vertical, 0.0, 100.0, 1.0);
+        scale.set_inverted(true);
+        scale.set_value(pct as f64);
+        scale.set_size_request(-1, 140);
+        scale.set_draw_value(false);
+        let lbl = gtk::Label::new(Some(&pct.to_string()));
+        { let l = lbl.clone(); scale.connect_value_changed(move |s| { let v = s.value() as u32; sys::set_volume(v); l.set_text(&v.to_string()); }); }
+        let mute = gtk::Button::new();
+        mute.add(&util::image(sys::volume_icon(Some((pct, muted))), 32));
+        mute.set_relief(gtk::ReliefStyle::None);
+        mute.set_tooltip_text(Some("Mute Speakers"));
+        { let r = refresh.clone(); mute.connect_clicked(move |m| {
+            sys::toggle_mute();
+            let v = sys::volume();
+            if let Some(img) = m.child().and_then(|c| c.downcast::<gtk::Image>().ok()) {
+                if let Some(p) = util::pixbuf(sys::volume_icon(v), 32) { img.set_from_pixbuf(Some(&p)); }
+            }
+            r();
+        }); }
+        let title = gtk::Label::new(Some("Speakers"));
+        title.style_context().add_class("link");
+        body.pack_start(&title, false, false, 0);
+        body.pack_start(&scale, true, true, 0);
+        body.pack_start(&lbl, false, false, 0);
+        body.pack_start(&mute, false, false, 0);
+        let foot = link("Mixer", || { if !util::spawn(&["pavucontrol"]) { control("sound"); } });
+        popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+    });
+}
+
+// ---------------------------------------------------------------- network
+fn network(tb: &Rc<Taskbar>) {
+    let (b, img) = tray_button(tb, "network-wired", "Network");
+    let refresh = {
+        let (img, b) = (img.clone(), b.clone());
+        move || {
+            let (img, b) = (img.clone(), b.clone());
+            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            util::output_async(vec![exe, "query-network".into()], move |s| {
+                let s = s.unwrap_or_default();
+                let mut it = s.trim().splitn(3, '\t');
+                let n = sys::NetStatus { kind: it.next().unwrap_or("none").into(), signal: it.next().and_then(|x| x.parse().ok()).unwrap_or(0), name: it.next().unwrap_or("").into() };
+                if let Some(p) = util::pixbuf(sys::net_icon(&n), 16) { img.set_from_pixbuf(Some(&p)); }
+                b.set_tooltip_text(Some(&if n.kind == "none" { "Not connected".to_string() } else { format!("{}\nInternet access", n.name) }));
+            });
+        }
+    };
+    refresh();
+    { let r = refresh.clone(); glib::timeout_add_seconds_local(5, move || { r(); glib::ControlFlow::Continue }); }
+    b.connect_clicked(move |b| {
+        if close_open() { return; }
+        let st = sys::net_status();
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        body.set_size_request(260, -1);
+        let h = gtk::Label::new(Some("Currently connected to:"));
+        h.set_halign(gtk::Align::Start);
+        body.pack_start(&h, false, false, 0);
+        let cur = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        cur.pack_start(&util::image(sys::net_icon(&st), 32), false, false, 0);
+        let cl = gtk::Label::new(Some(&if st.kind == "none" { "Not connected".to_string() } else { format!("{}\nInternet access", st.name) }));
+        cl.set_xalign(0.0);
+        cur.pack_start(&cl, false, false, 0);
+        body.pack_start(&cur, false, false, 4);
+        let wifis = sys::wifi_list();
+        if !wifis.is_empty() {
+            body.pack_start(&gtk::Separator::new(gtk::Orientation::Horizontal), false, false, 2);
+            let h = gtk::Label::new(Some("Wireless Network Connection"));
+            h.set_halign(gtk::Align::Start);
+            h.style_context().add_class("link");
+            body.pack_start(&h, false, false, 0);
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            for w in wifis.into_iter().take(12) {
+                let row = gtk::Button::new();
+                row.set_relief(gtk::ReliefStyle::None);
+                let hb = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let l = gtk::Label::new(Some(&format!("{}{}", w.ssid, if w.active { "   Connected" } else { "" })));
+                l.set_xalign(0.0);
+                hb.pack_start(&l, true, true, 0);
+                if w.secure { hb.pack_start(&util::image("channel-secure-symbolic", 16), false, false, 0); }
+                hb.pack_start(&util::image(sys::net_icon(&sys::NetStatus { kind: "wifi".into(), name: String::new(), signal: w.signal }), 16), false, false, 0);
+                row.add(&hb);
+                let r = refresh.clone();
+                row.connect_clicked(move |_| { close_open(); connect_wifi(&w); r(); });
+                list.pack_start(&row, false, false, 0);
+            }
+            let sw = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+            sw.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            sw.set_min_content_height(160);
+            sw.set_max_content_height(260);
+            sw.set_propagate_natural_height(true);
+            sw.add(&list);
+            body.pack_start(&sw, true, true, 0);
+        }
+        let foot = link("Open Network and Sharing Center", || {
+            if !util::spawn(&["nm-connection-editor"]) { control("network"); }
+        });
+        popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+    });
+}
+
+fn connect_wifi(w: &sys::Wifi) {
+    if w.active {
+        util::spawn(&["nmcli", "connection", "down", "id", &w.ssid]);
+        return;
+    }
+    if !w.secure || sys::known_connections().contains(&w.ssid) {
+        util::spawn(&["nmcli", "device", "wifi", "connect", &w.ssid]);
+        return;
+    }
+    let d = gtk::Dialog::with_buttons(Some("Connect to a Network"), None::<&gtk::Window>, gtk::DialogFlags::MODAL,
+        &[("OK", gtk::ResponseType::Ok), ("Cancel", gtk::ResponseType::Cancel)]);
+    let c = d.content_area();
+    c.set_spacing(8);
+    c.set_border_width(12);
+    let l = gtk::Label::new(Some(&format!("Type the network security key for \"{}\"", w.ssid)));
+    l.set_xalign(0.0);
+    let e = gtk::Entry::new();
+    e.set_visibility(false);
+    e.set_activates_default(true);
+    let show = gtk::CheckButton::with_label("Hide characters");
+    show.set_active(true);
+    { let e = e.clone(); show.connect_toggled(move |s| e.set_visibility(!s.is_active())); }
+    c.pack_start(&l, false, false, 0);
+    c.pack_start(&e, false, false, 0);
+    c.pack_start(&show, false, false, 0);
+    d.set_default_response(gtk::ResponseType::Ok);
+    let ssid = w.ssid.clone();
+    d.connect_response(move |d, r| {
+        if r == gtk::ResponseType::Ok {
+            util::spawn(&["nmcli", "device", "wifi", "connect", &ssid, "password", &e.text()]);
+        }
+        d.close();
+    });
+    d.set_keep_above(true);
+    d.show_all();
+}
+
+// ---------------------------------------------------------------- battery
+fn battery(tb: &Rc<Taskbar>) {
+    let (b, img) = tray_button(tb, "battery-good", "Battery");
+    let refresh = {
+        let (img, b) = (img.clone(), b.clone());
+        move || {
+            if let Some(bt) = sys::battery() {
+                if let Some(p) = util::pixbuf(&sys::battery_icon(&bt), 16) { img.set_from_pixbuf(Some(&p)); }
+                b.set_tooltip_text(Some(&format!("{}% {}", bt.percent, if bt.status == "Charging" { "available (plugged in, charging)" } else { "remaining" })));
+            }
+        }
+    };
+    refresh();
+    glib::timeout_add_seconds_local(20, move || { refresh(); glib::ControlFlow::Continue });
+    b.connect_clicked(|b| {
+        if close_open() { return; }
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        if let Some(bt) = sys::battery() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.pack_start(&util::image(&sys::battery_icon(&bt), 32), false, false, 0);
+            row.pack_start(&gtk::Label::new(Some(&format!("{}% {}", bt.percent, bt.status.to_lowercase()))), false, false, 0);
+            body.pack_start(&row, false, false, 0);
+        }
+        if let Some(cur) = sys::power_profile() {
+            let h = gtk::Label::new(Some("Select a power plan:"));
+            h.set_halign(gtk::Align::Start);
+            body.pack_start(&h, false, false, 0);
+            let mut group: Option<gtk::RadioButton> = None;
+            for (id, name) in [("balanced", "Balanced"), ("power-saver", "Power saver"), ("performance", "High performance")] {
+                let r = gtk::RadioButton::with_label(name);
+                if let Some(g) = &group { r.join_group(Some(g)); } else { group = Some(r.clone()); }
+                r.set_active(cur == id);
+                r.connect_toggled(move |r| if r.is_active() { sys::set_power_profile(id) });
+                body.pack_start(&r, false, false, 0);
+            }
+        }
+        if let Some(br) = sys::brightness() {
+            let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
+            s.set_value(br as f64);
+            s.connect_value_changed(|s| sys::set_brightness(s.value() as u32));
+            body.pack_start(&gtk::Label::new(Some("Screen brightness")), false, false, 0);
+            body.pack_start(&s, false, false, 0);
+        }
+        let foot = link("More power options", || control("power"));
+        popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+    });
+}

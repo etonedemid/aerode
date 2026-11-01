@@ -1,0 +1,42 @@
+#!/bin/sh
+# Aero7 X session entry point (selected from your display manager).
+export XDG_CURRENT_DESKTOP=Aero7
+export XDG_SESSION_DESKTOP=aero7
+export DESKTOP_SESSION=aero7
+export GTK_THEME=Aero7
+export QT_QPA_PLATFORMTHEME=gtk3
+[ -d "$HOME/.local/share/icons/Aero7-cursors" ] && export XCURSOR_THEME=Aero7-cursors
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aero7"
+mkdir -p "$CONF"
+SHARE=/usr/share/aero7
+[ -f "$CONF/rc.xml" ] || cp "$SHARE/openbox/rc.xml" "$CONF/rc.xml"
+[ -f "$CONF/menu.xml" ] || cp "$SHARE/openbox/menu.xml" "$CONF/menu.xml"
+
+# GTK/Xsettings for the session only (icons, cursors, fonts)
+ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aero7/index.theme" ] && ICONS=Aero7
+cat > "$CONF/xsettingsd.conf" <<EOT
+Net/ThemeName "Aero7"
+Net/IconThemeName "$ICONS"
+Gtk/CursorThemeName "${XCURSOR_THEME:-Adwaita}"
+Gtk/FontName "Segoe UI 9"
+Gtk/MenuImages 1
+Gtk/ButtonImages 1
+Xft/Antialias 1
+Xft/Hinting 1
+Xft/HintStyle "hintfull"
+Xft/RGBA "rgb"
+EOT
+command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
+xsetroot -cursor_name left_ptr 2>/dev/null
+
+dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP 2>/dev/null
+# helpers Plasma would provide (all optional)
+for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent /usr/bin/lxpolkit; do
+  [ -x "$agent" ] && { "$agent" & break; }
+done
+command -v xss-lock >/dev/null && xss-lock -- aero7 lock &
+command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$SHARE/picom.conf" -b
+command -v udiskie >/dev/null && udiskie --no-tray &
+command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
+
+exec openbox --config-file "$CONF/rc.xml" --startup "aero7 shell"

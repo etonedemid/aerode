@@ -1,0 +1,255 @@
+{
+ "_comment": "icon-name -> PE file + RT_GROUP_ICON resource id (omit id = first icon). Run the extractor with --sheet to browse all ids.",
+ "icons": {
+  "computer": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 109,
+   "aliases": [
+    "user-desktop-computer",
+    "computer-symbolic"
+   ]
+  },
+  "user-trash": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 55,
+   "aliases": [
+    "trashcan_empty"
+   ]
+  },
+  "user-trash-full": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 54
+  },
+  "user-home": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 123,
+   "aliases": [
+    "folder-home"
+   ]
+  },
+  "folder": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 3,
+   "aliases": [
+    "inode-directory",
+    "folder-new"
+   ]
+  },
+  "folder-open": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 4
+  },
+  "folder-documents": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 112
+  },
+  "folder-pictures": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 113
+  },
+  "folder-music": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 108
+  },
+  "folder-videos": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 189
+  },
+  "folder-download": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 184,
+   "aliases": [
+    "folder-downloads"
+   ]
+  },
+  "network-workgroup": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 25,
+   "aliases": [
+    "network",
+    "folder-remote"
+   ]
+  },
+  "drive-harddisk": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 32,
+   "aliases": [
+    "drive-harddisk-system",
+    "drive-multidisk"
+   ]
+  },
+  "text-x-generic": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 2,
+   "aliases": [
+    "unknown",
+    "application-octet-stream"
+   ]
+  },
+  "application-x-executable": {
+   "file": "Windows/System32/imageres.dll",
+   "id": 15,
+   "aliases": [
+    "application-x-executable-script",
+    "system-run"
+   ]
+  },
+  "preferences-system": {
+   "file": "Windows/System32/control.exe",
+   "aliases": [
+    "preferences-desktop",
+    "gnome-control-center",
+    "org.gnome.Settings",
+    "xfce4-settings-manager",
+    "systemsettings",
+    "lxqt-config"
+   ]
+  },
+  "system-file-manager": {
+   "file": "Windows/explorer.exe",
+   "aliases": [
+    "org.gnome.Nautilus",
+    "nautilus",
+    "thunar",
+    "Thunar",
+    "org.xfce.thunar",
+    "pcmanfm",
+    "pcmanfm-qt",
+    "nemo",
+    "caja",
+    "dolphin",
+    "file-manager"
+   ]
+  },
+  "web-browser": {
+   "file": "Program Files/Internet Explorer/iexplore.exe",
+   "aliases": [
+    "firefox",
+    "firefox-esr",
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "internet-web-browser",
+    "org.mozilla.firefox",
+    "brave-browser"
+   ]
+  },
+  "utilities-terminal": {
+   "file": "Windows/System32/cmd.exe",
+   "aliases": [
+    "org.gnome.Terminal",
+    "gnome-terminal",
+    "xfce4-terminal",
+    "org.xfce.terminal",
+    "xterm",
+    "lxterminal",
+    "Alacritty",
+    "kitty",
+    "konsole",
+    "terminal",
+    "qterminal",
+    "org.gnome.Console"
+   ]
+  },
+  "accessories-text-editor": {
+   "file": "Windows/System32/notepad.exe",
+   "aliases": [
+    "org.gnome.gedit",
+    "gedit",
+    "org.gnome.TextEditor",
+    "mousepad",
+    "org.xfce.mousepad",
+    "kate",
+    "featherpad",
+    "leafpad",
+    "text-editor"
+   ]
+  },
+  "accessories-calculator": {
+   "file": "Windows/System32/calc.exe",
+   "aliases": [
+    "org.gnome.Calculator",
+    "gnome-calculator",
+    "galculator",
+    "kcalc",
+    "qalculate"
+   ]
+  },
+  "applications-graphics": {
+   "file": "Windows/System32/mspaint.exe",
+   "aliases": [
+    "kolourpaint",
+    "pinta",
+    "mtpaint",
+    "drawing",
+    "com.github.maoschanz.drawing"
+   ]
+  },
+  "multimedia-player": {
+   "file": "Program Files/Windows Media Player/wmplayer.exe",
+   "aliases": [
+    "vlc",
+    "totem",
+    "org.gnome.Totem",
+    "mpv",
+    "multimedia-video-player",
+    "audio-x-generic",
+    "parole",
+    "smplayer",
+    "celluloid"
+   ]
+  },
+  "accessories-word-processor": {
+   "file": "Program Files/Windows NT/Accessories/wordpad.exe",
+   "aliases": [
+    "libreoffice-writer",
+    "abiword"
+   ]
+  },
+  "utilities-system-monitor": {
+   "file": "Windows/System32/taskmgr.exe",
+   "aliases": [
+    "gnome-system-monitor",
+    "org.gnome.SystemMonitor",
+    "lxtask",
+    "xfce4-taskmanager",
+    "htop",
+    "ksysguard"
+   ]
+  },
+  "audio-volume-high": {
+   "file": "Windows/System32/SndVol.exe",
+   "aliases": [
+    "multimedia-volume-control",
+    "pavucontrol",
+    "audio-card"
+   ]
+  },
+  "network-wired": {
+   "file": "Windows/System32/pnidui.dll",
+   "aliases": [
+    "network-transmit-receive",
+    "network-idle",
+    "nm-device-wired"
+   ]
+  },
+  "accessories-screenshot": {
+   "file": "Windows/System32/SnippingTool.exe",
+   "aliases": [
+    "org.gnome.Screenshot",
+    "gnome-screenshot",
+    "xfce4-screenshooter",
+    "flameshot",
+    "spectacle"
+   ]
+  },
+  "help-browser": {
+   "file": "Windows/HelpPane.exe",
+   "aliases": [
+    "help-contents",
+    "system-help",
+    "yelp"
+   ]
+  }
+ }
+}
