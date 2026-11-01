@@ -298,3 +298,13 @@ pub fn paint_orb(cr: &cairo::Context, size: f64, state: i32) {
     cr.close_path();
     cr.fill().ok();
 }
+
+/// Rounded rectangle with radius `r` on top corners and `rb` on the bottom ones.
+pub fn rounded_top(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64, rb: f64) {
+    cr.new_sub_path();
+    cr.arc(x + w - r.max(0.01), y + r.max(0.01), r.max(0.01), -PI / 2.0, 0.0);
+    cr.arc(x + w - rb.max(0.01), y + h - rb.max(0.01), rb.max(0.01), 0.0, PI / 2.0);
+    cr.arc(x + rb.max(0.01), y + h - rb.max(0.01), rb.max(0.01), PI / 2.0, PI);
+    cr.arc(x + r.max(0.01), y + r.max(0.01), r.max(0.01), PI, 1.5 * PI);
+    cr.close_path();
+}
