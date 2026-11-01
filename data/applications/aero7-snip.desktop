@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Snipping Tool
+Comment=Capture all or part of your screen and annotate it
+Exec=aero7-snip
+Icon=accessories-screenshot
+Categories=Utility;Graphics;
+StartupWMClass=aero7-snip
