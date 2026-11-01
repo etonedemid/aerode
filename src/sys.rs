@@ -198,13 +198,22 @@ pub fn set_brightness(pct: u32) {
 }
 
 // ---------------------------------------------------------------- power
-pub fn shutdown() { crate::util::play_sound("Windows Shutdown.wav"); spawn(&["systemctl", "poweroff"]); }
-pub fn restart() { spawn(&["systemctl", "reboot"]); }
+/// Play an event sound to completion (used before the session goes away).
+fn play_blocking(ev: crate::sounds::Event) {
+    if let Some(f) = crate::sounds::file_for(ev) {
+        for pl in ["pw-play", "paplay", "aplay"] {
+            if which(pl) { let _ = std::process::Command::new(pl).arg(&f).status(); return; }
+        }
+    }
+}
+pub fn shutdown() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "poweroff"]); }
+pub fn restart() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "reboot"]); }
 pub fn sleep() { lock(); spawn(&["systemctl", "suspend"]); }
 pub fn hibernate() { lock(); spawn(&["systemctl", "hibernate"]); }
 pub fn log_off() {
-    crate::util::play_sound("Windows Logoff Sound.wav");
-    if !spawn(&["openbox", "--exit"]) {
+    play_blocking(crate::sounds::Event::Logoff);
+    // ending the window manager ends the session (it is the session leader)
+    if !spawn(&["pkill", "-TERM", "-x", "aero7-wm"]) {
         spawn(&["loginctl", "terminate-session", &std::env::var("XDG_SESSION_ID").unwrap_or_default()]);
     }
 }

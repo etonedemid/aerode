@@ -286,29 +286,16 @@ pub fn error(title: &str, text: &str) {
     d.set_keep_above(true);
     d.connect_response(|d, _| d.close());
     d.show_all();
+    sound(crate::sounds::Event::CriticalStop);
 }
 
 pub fn special_dir(d: glib::UserDirectory, fallback: &str) -> std::path::PathBuf {
     glib::user_special_dir(d).unwrap_or_else(|| config::home().join(fallback))
 }
 
-/// Play one of the extracted Windows .wav files if present.
-pub fn play_sound(name: &str) {
-    let dir = config::data_dir().join("sounds");
-    let Ok(rd) = std::fs::read_dir(&dir) else { return };
-    for e in rd.flatten() {
-        if e.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
-            let p = e.path();
-            let p = p.to_string_lossy();
-            for pl in [&["paplay"][..], &["pw-play"][..], &["aplay", "-q"][..]] {
-                let mut a: Vec<&str> = pl.to_vec();
-                a.push(&p);
-                if spawn(&a) {
-                    return;
-                }
-            }
-        }
-    }
+/// Play an event from the Windows 7 sound scheme.
+pub fn sound(ev: crate::sounds::Event) {
+    crate::sounds::play(ev);
 }
 
 pub fn primary_geometry() -> gdk::Rectangle {

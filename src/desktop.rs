@@ -215,7 +215,7 @@ impl Desktop {
         for p in self.selected_paths() {
             let _ = gio::File::for_path(&p).trash(gio::Cancellable::NONE);
         }
-        util::play_sound("Windows Recycle.wav");
+        util::sound(crate::sounds::Event::EmptyRecycleBin);
         self.rebuild();
     }
 
@@ -229,7 +229,7 @@ impl Desktop {
                 add(&m, "Empty Recycle Bin", Box::new(move || {
                     if confirm("Delete Multiple Items", "Are you sure you want to permanently delete all of the items in the Recycle Bin?") {
                         util::spawn(&["gio", "trash", "--empty"]);
-                        util::play_sound("Windows Recycle.wav");
+                        util::sound(crate::sounds::Event::EmptyRecycleBin);
                         let d = d.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || { if let Some(d) = d.upgrade() { d.rebuild(); } });
                     }
@@ -347,6 +347,7 @@ fn open_item(it: &Item) {
 
 pub fn confirm(title: &str, text: &str) -> bool {
     let d = gtk::MessageDialog::new(None::<&gtk::Window>, gtk::DialogFlags::MODAL, gtk::MessageType::Warning, gtk::ButtonsType::YesNo, text);
+    util::sound(crate::sounds::Event::Exclamation);
     d.set_title(title);
     d.set_keep_above(true);
     let r = d.run();

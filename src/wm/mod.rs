@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
+use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -125,6 +126,13 @@ impl Wm {
         conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(mask))?
             .check().context("another window manager is already running")?;
         let _ = conn.randr_select_input(root, x11rb::protocol::randr::NotifyMask::SCREEN_CHANGE);
+        // repaint frames when a compositor starts/stops (glass vs. opaque)
+        if conn.xfixes_query_version(5, 0).is_ok() {
+            let _ = conn.xfixes_select_selection_input(root, atoms._NET_CM_S0,
+                x11rb::protocol::xfixes::SelectionEventMask::SET_SELECTION_OWNER
+                    | x11rb::protocol::xfixes::SelectionEventMask::SELECTION_WINDOW_DESTROY
+                    | x11rb::protocol::xfixes::SelectionEventMask::SELECTION_CLIENT_CLOSE);
+        }
         // ARGB visual for translucent frames
         let scr = &conn.setup().roots[screen_num];
         let argb = scr.allowed_depths.iter().find(|d| d.depth == 32).and_then(|d| {
@@ -824,6 +832,10 @@ impl Wm {
             Event::KeyPress(e) => self.key(e, true),
             Event::KeyRelease(e) => self.key(e, false),
             Event::MappingNotify(_) => { self.keys.grab(&self.conn, self.root)?; }
+            Event::XfixesSelectionNotify(_) => {
+                let ids: Vec<u32> = self.clients.keys().copied().collect();
+                for w in ids { self.redraw(w); }
+            }
             Event::RandrScreenChangeNotify(_) => { self.update_monitors(); self.load_wallpaper(); }
             _ => {}
         }

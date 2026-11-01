@@ -9,6 +9,7 @@ pub mod glass;
 pub mod lock;
 pub mod msstyles;
 pub mod pe;
+pub mod sounds;
 pub mod startmenu;
 pub mod sys;
 pub mod taskbar;

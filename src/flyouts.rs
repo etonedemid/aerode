@@ -166,6 +166,7 @@ fn volume(tb: &Rc<Taskbar>) {
         scale.set_draw_value(false);
         let lbl = gtk::Label::new(Some(&pct.to_string()));
         { let l = lbl.clone(); scale.connect_value_changed(move |s| { let v = s.value() as u32; sys::set_volume(v); l.set_text(&v.to_string()); }); }
+        scale.connect_button_release_event(|_, _| { util::sound(crate::sounds::Event::DefaultBeep); glib::Propagation::Proceed });
         let mute = gtk::Button::new();
         mute.add(&util::image(sys::volume_icon(Some((pct, muted))), 32));
         mute.set_relief(gtk::ReliefStyle::None);

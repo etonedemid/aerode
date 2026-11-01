@@ -40,7 +40,8 @@ fn build(app: &gtk::Application) {
     }
     aero7::gadgets::restore();
     autostart();
-    util::play_sound("Windows Logon Sound.wav");
+    util::sound(aero7::sounds::Event::Logon);
+    aero7::sounds::start_watchers();
     SHELL.with(|s| *s.borrow_mut() = Some(Shell { _desktop: d, taskbar: tb, start: sm }));
 }
 

@@ -18,6 +18,9 @@ pub struct Config {
     /// Aero glass colour (r, g, b, intensity)
     pub tint: [f64; 4],
     pub taskbar_height: i32,
+    /// sound scheme overrides: event key -> file name/path ("" = none)
+    pub sounds: HashMap<String, String>,
+    pub sounds_muted: bool,
 }
 
 impl Default for Config {
@@ -32,6 +35,8 @@ impl Default for Config {
             clock_24h: false,
             tint: [0.10, 0.22, 0.36, 0.52],
             taskbar_height: 40,
+            sounds: HashMap::new(),
+            sounds_muted: false,
         }
     }
 }
