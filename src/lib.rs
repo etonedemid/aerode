@@ -4,6 +4,7 @@ pub mod desktop;
 pub mod dialogs;
 pub mod flyouts;
 pub mod gadgets;
+pub mod explorer;
 pub mod extract;
 pub mod glass;
 pub mod lock;

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Windows Explorer
+GenericName=File Manager
+Comment=Browse your files and folders
+Exec=aero7-explorer %U
+Icon=system-file-manager
+MimeType=inode/directory;
+Categories=System;FileManager;Utility;
+StartupWMClass=aero7-explorer
