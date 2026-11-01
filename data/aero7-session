@@ -9,8 +9,6 @@ export QT_QPA_PLATFORMTHEME=gtk3
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aero7"
 mkdir -p "$CONF"
 SHARE=/usr/share/aero7
-[ -f "$CONF/rc.xml" ] || cp "$SHARE/openbox/rc.xml" "$CONF/rc.xml"
-[ -f "$CONF/menu.xml" ] || cp "$SHARE/openbox/menu.xml" "$CONF/menu.xml"
 
 # GTK/Xsettings for the session only (icons, cursors, fonts)
 ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aero7/index.theme" ] && ICONS=Aero7
@@ -31,12 +29,15 @@ xsetroot -cursor_name left_ptr 2>/dev/null
 
 dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP 2>/dev/null
 # helpers Plasma would provide (all optional)
-for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent /usr/bin/lxpolkit; do
-  [ -x "$agent" ] && { "$agent" & break; }
-done
+# UAC-style polkit agent (falls back to other agents if ours is missing)
+if command -v aero7-polkit >/dev/null; then aero7-polkit &
+else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent; do
+  [ -x "$agent" ] && { "$agent" & break; }; done; fi
 command -v xss-lock >/dev/null && xss-lock -- aero7 lock &
 command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$SHARE/picom.conf" -b
 command -v udiskie >/dev/null && udiskie --no-tray &
 command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
 
-exec openbox --config-file "$CONF/rc.xml" --startup "aero7 shell"
+aero7 shell &
+# the window manager is the session leader: logging off ends it
+exec aero7-wm
