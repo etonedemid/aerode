@@ -9,6 +9,7 @@ use std::time::Instant;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
+use x11rb::protocol::shape::ConnectionExt as _;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -773,6 +774,21 @@ impl Wm {
             }
         }
         let _ = self.conn.free_gc(gc);
+        self.shape_frame(frame, fw, fh, if c.maximized { 0 } else { decor::RADIUS as i32 });
+    }
+
+    /// Round the top corners with the Shape extension (otherwise the transparent
+    /// corner pixels show up black when no compositor is running).
+    fn shape_frame(&self, frame: u32, w: i32, h: i32, r: i32) {
+        let mut rects = vec![];
+        for y in 0..r {
+            let dy = r as f64 - y as f64 - 0.5;
+            let inset = (r as f64 - (r as f64 * r as f64 - dy * dy).max(0.0).sqrt()).round() as i32;
+            rects.push(Rectangle { x: inset as i16, y: y as i16, width: (w - 2 * inset).max(0) as u16, height: 1 });
+        }
+        rects.push(Rectangle { x: 0, y: r as i16, width: w as u16, height: (h - r).max(0) as u16 });
+        let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::BOUNDING,
+            ClipOrdering::UNSORTED, frame, 0, 0, &rects);
     }
 
     // ---------------------------------------------------------- hit testing

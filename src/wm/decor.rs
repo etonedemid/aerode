@@ -255,22 +255,16 @@ impl Decor {
             let (_, lh) = layout.pixel_size();
             let (lw, _) = layout.pixel_size();
             let ty = if p.maximized { ((top - lh as f64) / 2.0).round() } else { (b + (CAPTION as f64 - lh as f64) / 2.0).round() };
-            // glow: soft white pill behind the text
-            let gw = lw as f64 + 26.0;
-            let gh = lh as f64 + 14.0;
-            let (gx, gy) = (tx - 13.0, ty - 7.0);
-            cr.save().ok();
-            cr.translate(gx + gw / 2.0, gy + gh / 2.0);
-            cr.scale(gw / 2.0, gh / 2.0);
-            let rg = cairo::RadialGradient::new(0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
-            let ga = if p.active { 0.85 } else { 0.6 };
-            rg.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, ga);
-            rg.add_color_stop_rgba(0.55, 1.0, 1.0, 1.0, ga * 0.85);
-            rg.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.0);
-            cr.set_source(&rg).ok();
-            cr.arc(0.0, 0.0, 1.0, 0.0, std::f64::consts::TAU);
-            cr.fill().ok();
-            cr.restore().ok();
+            // Aero caption glow: the text shape, blurred, painted white behind the text
+            let _ = lw;
+            let ga = if p.active { 1.0 } else { 0.7 };
+            if let Some(mask) = text_glow(&layout, 7) {
+                cr.save().ok();
+                cr.set_source_rgba(1.0, 1.0, 1.0, ga);
+                cr.mask_surface(&mask, tx - 7.0 * 2.0, ty - 7.0 * 2.0).ok();
+                cr.mask_surface(&mask, tx - 7.0 * 2.0, ty - 7.0 * 2.0).ok();
+                cr.restore().ok();
+            }
             cr.move_to(tx, ty);
             cr.set_source_rgba(0.0, 0.0, 0.0, if p.active { 1.0 } else { 0.55 });
             pangocairo::functions::show_layout(cr, &layout);
@@ -334,4 +328,53 @@ fn fallback_button(cr: &Context, b: Btn, s: BState, active: bool, maxed: bool, x
         Btn::Help => { cr.arc(cx, cy - 1.0, 3.0, 3.6, 7.0); }
     }
     cr.stroke().ok();
+}
+
+/// Render a layout into an A8 surface (padded by 2r) and blur it – the DWM text glow.
+fn text_glow(layout: &pangocairo::pango::Layout, r: usize) -> Option<ImageSurface> {
+    let (lw, lh) = layout.pixel_size();
+    let pad = 2 * r as i32;
+    let (w, h) = (lw + 2 * pad, lh + 2 * pad);
+    let mut s = ImageSurface::create(Format::A8, w, h).ok()?;
+    {
+        let cr = Context::new(&s).ok()?;
+        cr.move_to(pad as f64, pad as f64);
+        pangocairo::functions::layout_path(&cr, layout);
+        cr.set_line_width(3.0);
+        cr.set_line_join(cairo::LineJoin::Round);
+        cr.stroke_preserve().ok();
+        cr.fill().ok();
+    }
+    s.flush();
+    let stride = s.stride() as usize;
+    {
+        let mut d = s.data().ok()?;
+        let (w, h) = (w as usize, h as usize);
+        let mut buf: Vec<f32> = (0..h).flat_map(|y| (0..w).map(move |x| (y, x))).map(|(y, x)| d[y * stride + x] as f32).collect();
+        let mut tmp = buf.clone();
+        for _ in 0..3 {
+            for (src, dst, horiz) in [(&buf, &mut tmp, true)] { blur_pass(src, dst, w, h, r / 2 + 1, horiz); }
+            let t2 = tmp.clone();
+            blur_pass(&t2, &mut buf, w, h, r / 2 + 1, false);
+        }
+        for y in 0..h { for x in 0..w { d[y * stride + x] = (buf[y * w + x] * 1.6).min(255.0) as u8; } }
+    }
+    s.mark_dirty();
+    Some(s)
+}
+
+fn blur_pass(src: &[f32], dst: &mut [f32], w: usize, h: usize, r: usize, horiz: bool) {
+    let (len, lines) = if horiz { (w, h) } else { (h, w) };
+    let idx = |l: usize, i: usize| if horiz { l * w + i } else { i * w + l };
+    let norm = 1.0 / (2 * r + 1) as f32;
+    for l in 0..lines {
+        let mut acc = 0.0;
+        for k in 0..=2 * r { let i = (k as isize - r as isize).clamp(0, len as isize - 1) as usize; acc += src[idx(l, i)]; }
+        for i in 0..len {
+            dst[idx(l, i)] = acc * norm;
+            let add = (i + r + 1).min(len - 1);
+            let sub = (i as isize - r as isize).max(0) as usize;
+            acc += src[idx(l, add)] - src[idx(l, sub)];
+        }
+    }
 }
