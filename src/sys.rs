@@ -259,11 +259,11 @@ pub fn hibernate() { lock(); spawn(&["systemctl", "hibernate"]); }
 pub fn log_off() {
     play_blocking(crate::sounds::Event::Logoff);
     // ending the window manager ends the session (it is the session leader)
-    if !spawn(&["pkill", "-TERM", "-x", "aero7-wm"]) {
+    if !spawn(&["pkill", "-TERM", "-x", "aerode-wm"]) {
         spawn(&["loginctl", "terminate-session", &std::env::var("XDG_SESSION_ID").unwrap_or_default()]);
     }
 }
 pub fn lock() {
-    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aero7".into());
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode".into());
     spawn(&[&exe, "lock"]);
 }

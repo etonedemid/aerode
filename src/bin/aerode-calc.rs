@@ -4,7 +4,7 @@ use gtk::{gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aero7::{config, sounds, theme, util};
+use aerode::{config, sounds, theme, util};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Mode { Standard, Scientific, Programmer }
@@ -732,7 +732,7 @@ fn build(app: &gtk::Application) {
         let d = gtk::AboutDialog::new();
         d.set_transient_for(Some(&w));
         d.set_program_name("Calculator");
-        d.set_comments(Some("Aero7 Calculator – a Windows 7 style calculator for Linux"));
+        d.set_comments(Some("Aerode Calculator – a Windows 7 style calculator for Linux"));
         d.set_logo_icon_name(Some(util::first_icon(&["accessories-calculator"])));
         d.run();
         d.close();
@@ -785,7 +785,7 @@ fn build(app: &gtk::Application) {
 }
 
 fn main() -> glib::ExitCode {
-    let app = gtk::Application::new(Some("org.aero7.Calculator"), gio::ApplicationFlags::NON_UNIQUE);
+    let app = gtk::Application::new(Some("org.aerode.Calculator"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(build);
     app.run()
 }

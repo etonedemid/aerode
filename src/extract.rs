@@ -1,10 +1,10 @@
 //! Extract the original Windows 7 artwork from the user's own ISO/WIM.
 //!
-//! Nothing from Microsoft ships with Aero7; this reads YOUR ISO and writes:
-//!   ~/.local/share/icons/Aero7/          icon theme (real Win7 icons)
-//!   ~/.local/share/icons/Aero7-cursors/  Xcursor theme (aero_* cursors)
-//!   ~/.local/share/fonts/aero7/          Segoe UI etc.
-//!   ~/.local/share/aero7/                orb, wallpapers, sounds, avatars, aero.msstyles
+//! Nothing from Microsoft ships with Aerode; this reads YOUR ISO and writes:
+//!   ~/.local/share/icons/Aerode/          icon theme (real Win7 icons)
+//!   ~/.local/share/icons/Aerode-cursors/  Xcursor theme (aero_* cursors)
+//!   ~/.local/share/fonts/aerode/          Segoe UI etc.
+//!   ~/.local/share/aerode/                orb, wallpapers, sounds, avatars, aero.msstyles
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -66,16 +66,16 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("system-search", "Windows/System32/imageres.dll", Some(8), &[]),
     ("printer", "Windows/System32/DeviceCenter.dll", None, &["preferences-devices-printer"]),
     ("help-browser", "Windows/HelpPane.exe", None, &["help-contents", "system-help", "yelp"]),
-    ("preferences-system", "Windows/System32/control.exe", None, &["preferences-desktop", "gnome-control-center", "org.gnome.Settings", "systemsettings", "xfce4-settings-manager", "aero7-control"]),
-    ("system-file-manager", "Windows/explorer.exe", None, &["org.gnome.Nautilus", "nautilus", "thunar", "Thunar", "org.xfce.thunar", "pcmanfm", "pcmanfm-qt", "nemo", "caja", "dolphin", "org.kde.dolphin", "aero7-explorer"]),
+    ("preferences-system", "Windows/System32/control.exe", None, &["preferences-desktop", "gnome-control-center", "org.gnome.Settings", "systemsettings", "xfce4-settings-manager", "aerode-control"]),
+    ("system-file-manager", "Windows/explorer.exe", None, &["org.gnome.Nautilus", "nautilus", "thunar", "Thunar", "org.xfce.thunar", "pcmanfm", "pcmanfm-qt", "nemo", "caja", "dolphin", "org.kde.dolphin", "aerode-explorer"]),
     ("web-browser", "Program Files/Internet Explorer/iexplore.exe", None, &["firefox", "firefox-esr", "chromium", "google-chrome", "internet-web-browser", "org.mozilla.firefox", "brave-browser", "librewolf"]),
     ("utilities-terminal", "Windows/System32/cmd.exe", None, &["org.gnome.Terminal", "org.gnome.Console", "xfce4-terminal", "xterm", "lxterminal", "Alacritty", "kitty", "konsole", "org.kde.konsole", "terminal", "qterminal"]),
-    ("accessories-text-editor", "Windows/System32/notepad.exe", None, &["org.gnome.gedit", "gedit", "org.gnome.TextEditor", "mousepad", "kate", "org.kde.kate", "featherpad", "aero7-notepad", "text-editor"]),
-    ("accessories-calculator", "Windows/System32/calc.exe", None, &["org.gnome.Calculator", "gnome-calculator", "galculator", "kcalc", "org.kde.kcalc", "qalculate", "aero7-calc"]),
-    ("applications-graphics", "Windows/System32/mspaint.exe", None, &["kolourpaint", "org.kde.kolourpaint", "pinta", "drawing", "aero7-mspaint"]),
+    ("accessories-text-editor", "Windows/System32/notepad.exe", None, &["org.gnome.gedit", "gedit", "org.gnome.TextEditor", "mousepad", "kate", "org.kde.kate", "featherpad", "aerode-notepad", "text-editor"]),
+    ("accessories-calculator", "Windows/System32/calc.exe", None, &["org.gnome.Calculator", "gnome-calculator", "galculator", "kcalc", "org.kde.kcalc", "qalculate", "aerode-calc"]),
+    ("applications-graphics", "Windows/System32/mspaint.exe", None, &["kolourpaint", "org.kde.kolourpaint", "pinta", "drawing", "aerode-mspaint"]),
     ("multimedia-player", "Program Files/Windows Media Player/wmplayer.exe", None, &["vlc", "totem", "org.gnome.Totem", "mpv", "multimedia-video-player", "celluloid", "smplayer", "haruna", "org.kde.haruna"]),
     ("accessories-word-processor", "Program Files/Windows NT/Accessories/wordpad.exe", None, &["libreoffice-writer", "abiword"]),
-    ("utilities-system-monitor", "Windows/System32/taskmgr.exe", None, &["gnome-system-monitor", "org.gnome.SystemMonitor", "lxtask", "xfce4-taskmanager", "htop", "ksysguard", "plasma-systemmonitor", "aero7-taskmgr"]),
+    ("utilities-system-monitor", "Windows/System32/taskmgr.exe", None, &["gnome-system-monitor", "org.gnome.SystemMonitor", "lxtask", "xfce4-taskmanager", "htop", "ksysguard", "plasma-systemmonitor", "aerode-taskmgr"]),
     ("multimedia-volume-control", "Windows/System32/SndVol.exe", None, &["pavucontrol", "audio-card", "org.pulseaudio.pavucontrol"]),
     // notification-area icons (the real Win7 tray art)
     ("audio-volume-muted", "Windows/System32/SndVolSSO.dll", Some(120), &["audio-volume-muted-blocking"]),
@@ -93,7 +93,7 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("network-wireless-signal-good", "Windows/System32/pnidui.dll", Some(3024), &[]),
     ("network-wireless-signal-excellent", "Windows/System32/pnidui.dll", Some(3026), &["network-wireless"]),
     ("preferences-system-network", "Windows/System32/pnidui.dll", Some(2402), &["network-workgroup-sharing"]),
-    ("accessories-screenshot", "Windows/System32/SnippingTool.exe", None, &["org.gnome.Screenshot", "gnome-screenshot", "xfce4-screenshooter", "flameshot", "spectacle", "org.kde.spectacle", "aero7-snip"]),
+    ("accessories-screenshot", "Windows/System32/SnippingTool.exe", None, &["org.gnome.Screenshot", "gnome-screenshot", "xfce4-screenshooter", "flameshot", "spectacle", "org.kde.spectacle", "aerode-snip"]),
     ("accessories-notes", "Windows/System32/StikyNot.exe", None, &["xpad", "knotes"]),
     ("preferences-desktop-accessibility", "Windows/System32/magnify.exe", None, &[]),
     ("preferences-desktop-keyboard", "Windows/System32/osk.exe", None, &["onboard"]),
@@ -192,7 +192,7 @@ fn build_icons(root: &Path, out: &Path) -> Result<usize> {
         n += 1;
     }
     let dirs: Vec<String> = SIZES.iter().map(|s| format!("{s}x{s}/apps")).collect();
-    let mut idx = format!("[Icon Theme]\nName=Aero7\nComment=Windows 7 icons (extracted locally)\nInherits=Papirus,breeze,Adwaita,hicolor\nDirectories={}\n\n", dirs.join(","));
+    let mut idx = format!("[Icon Theme]\nName=Aerode\nComment=Windows 7 icons (extracted locally)\nInherits=Papirus,breeze,Adwaita,hicolor\nDirectories={}\n\n", dirs.join(","));
     for s in SIZES {
         idx += &format!("[{s}x{s}/apps]\nSize={s}\nContext=Applications\nType={}\n\n", if s == 256 { "Scalable\nMinSize=64\nMaxSize=512" } else { "Fixed" });
     }
@@ -352,7 +352,7 @@ fn build_cursors(root: &Path, out: &Path) -> Result<()> {
         }
         n += 1;
     }
-    std::fs::write(out.join("index.theme"), "[Icon Theme]\nName=Aero7-cursors\nComment=Windows 7 Aero cursors\nInherits=Adwaita\n")?;
+    std::fs::write(out.join("index.theme"), "[Icon Theme]\nName=Aerode-cursors\nComment=Windows 7 Aero cursors\nInherits=Adwaita\n")?;
     println!("· {n} cursors");
     Ok(())
 }
@@ -415,13 +415,13 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
 
 pub fn run(args: &[String]) -> Result<()> {
     let Some(src) = args.iter().find(|a| !a.starts_with("--")) else {
-        bail!("usage: aero7-extract /path/to/windows7.iso [--sheet]\n       (also accepts install.wim / install.esd or an extracted/mounted Windows folder)");
+        bail!("usage: aerode-extract /path/to/windows7.iso [--sheet]\n       (also accepts install.wim / install.esd or an extracted/mounted Windows folder)");
     };
     let src = std::fs::canonicalize(crate::util::shellexpand(src)).context("ISO not found")?;
     let share = gtk::glib::user_data_dir();
-    let data = share.join("aero7");
+    let data = share.join("aerode");
     std::fs::create_dir_all(&data)?;
-    let tmp = std::env::temp_dir().join(format!("aero7-extract-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("aerode-extract-{}", std::process::id()));
     std::fs::create_dir_all(&tmp)?;
     let result = (|| -> Result<()> {
         let root = if src.is_dir() { src.clone() } else {
@@ -432,15 +432,15 @@ pub fn run(args: &[String]) -> Result<()> {
             root
         };
         if find_ci(&root, "Windows/System32/imageres.dll").is_none() { bail!("imageres.dll not found – is this a Windows 7 image?"); }
-        build_icons(&root, &share.join("icons/Aero7"))?;
+        build_icons(&root, &share.join("icons/Aerode"))?;
         extract_orb(&root, &data);
-        build_cursors(&root, &share.join("icons/Aero7-cursors"))?;
-        copy_misc(&root, &data, &share.join("fonts/aero7"))?;
+        build_cursors(&root, &share.join("icons/Aerode-cursors"))?;
+        copy_misc(&root, &data, &share.join("fonts/aerode"))?;
         if args.iter().any(|a| a == "--sheet") { icon_sheet(&root, &data.join("iconsheet"))?; }
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&tmp);
     result?;
-    println!("done. Log out and choose the \"Aero7\" session.");
+    println!("done. Log out and choose the \"Aerode\" session.");
     Ok(())
 }

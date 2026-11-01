@@ -390,7 +390,7 @@ impl Explorer {
                 let (ww, hh) = (h.allocated_width() as f64, h.allocated_height() as f64);
                 cr.set_source_pixbuf(&glass::wallpaper().blurred, -x as f64, -y as f64);
                 cr.paint().ok();
-                let c = aero7_frame_color();
+                let c = aerode_frame_color();
                 cr.set_source_rgba(c[0], c[1], c[2], if w.is_active() { 0.55 } else { 0.35 });
                 cr.paint().ok();
                 cr.set_source_rgba(1.0, 1.0, 1.0, if w.is_active() { 0.18 } else { 0.38 });
@@ -871,9 +871,9 @@ impl Explorer {
                 }));
             }
         } else if loc == Loc::Computer {
-            add("System properties", Box::new(|| { util::spawn(&["aero7-control", "system"]); }));
-            add("Uninstall or change a program", Box::new(|| { util::spawn(&["aero7-control", "programs"]); }));
-            add("Open Control Panel", Box::new(|| { util::spawn(&["aero7-control"]); }));
+            add("System properties", Box::new(|| { util::spawn(&["aerode-control", "system"]); }));
+            add("Uninstall or change a program", Box::new(|| { util::spawn(&["aerode-control", "programs"]); }));
+            add("Open Control Panel", Box::new(|| { util::spawn(&["aerode-control"]); }));
         } else {
             if sel.len() == 1 {
                 let e = self.clone();
@@ -1071,7 +1071,7 @@ impl Explorer {
             }
             if sel.len() == 1 && sel[0].is_dir() {
                 let p = sel[0].clone();
-                add(&m, "Open in new window", Box::new(move || { util::spawn(&["aero7-explorer", &p.to_string_lossy()]); }));
+                add(&m, "Open in new window", Box::new(move || { util::spawn(&["aerode-explorer", &p.to_string_lossy()]); }));
             }
             m.append(&gtk::SeparatorMenuItem::new());
             let send = gtk::Menu::new();
@@ -1348,7 +1348,7 @@ impl Explorer {
                     k if (k == K::v || k == K::V) && ctrl => e.paste(),
                     k if (k == K::a || k == K::A) && ctrl => if e.view.get() == View::Details { e.details.selection().select_all() } else { e.icons.select_all() },
                     k if (k == K::n || k == K::N) && ctrl && shift => e.new_folder(),
-                    k if (k == K::n || k == K::N) && ctrl => { let t = match &*e.loc.borrow() { Loc::Path(p) => p.display().to_string(), _ => "computer:///".into() }; util::spawn(&["aero7-explorer", &t]); }
+                    k if (k == K::n || k == K::N) && ctrl => { let t = match &*e.loc.borrow() { Loc::Path(p) => p.display().to_string(), _ => "computer:///".into() }; util::spawn(&["aerode-explorer", &t]); }
                     k if (k == K::e || k == K::E || k == K::f || k == K::F) && ctrl => e.search.grab_focus(),
                     k if (k == K::l || k == K::L) && ctrl || k == K::F4 => { let t = match &*e.loc.borrow() { Loc::Path(p) => p.display().to_string(), l => l.title() }; e.addr_entry.set_text(&t); e.addr_stack.set_visible_child_name("entry"); e.addr_entry.grab_focus(); }
                     k if (k == K::w || k == K::W) && ctrl => e.win.close(),
@@ -1408,4 +1408,4 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Same colour the window frame uses (so the header glass matches).
-fn aero7_frame_color() -> [f64; 4] { crate::wm::colorization(&config::get().tint) }
+fn aerode_frame_color() -> [f64; 4] { crate::wm::colorization(&config::get().tint) }

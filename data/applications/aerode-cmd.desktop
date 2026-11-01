@@ -2,8 +2,8 @@
 Type=Application
 Name=Command Prompt
 Comment=Performs text-based (command-line) functions
-Exec=aero7-cmd
+Exec=aerode-cmd
 Icon=utilities-terminal
 Categories=System;TerminalEmulator;
-StartupWMClass=aero7-cmd
+StartupWMClass=aerode-cmd
 Keywords=cmd;terminal;console;shell;fish;

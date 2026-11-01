@@ -2,7 +2,7 @@
 Type=Application
 Name=Control Panel
 Comment=View and change system settings
-Exec=aero7-control
+Exec=aerode-control
 Icon=preferences-system
 Categories=Settings;System;
-StartupWMClass=aero7-control
+StartupWMClass=aerode-control

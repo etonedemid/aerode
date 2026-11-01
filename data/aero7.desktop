@@ -1,7 +1,0 @@
-[Desktop Entry]
-Name=Aero7
-Comment=Windows 7 style desktop
-Exec=aero7-session
-TryExec=aero7-session
-Type=Application
-DesktopNames=Aero7

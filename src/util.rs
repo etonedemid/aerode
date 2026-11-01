@@ -103,7 +103,7 @@ pub fn pinned() -> Vec<String> {
     }
     let mut ids: Vec<String> = Vec::new();
     for a in [
-        app_by_id("aero7-explorer.desktop").or_else(|| default_for("inode/directory")),
+        app_by_id("aerode-explorer.desktop").or_else(|| default_for("inode/directory")),
         default_for("x-scheme-handler/http"),
         default_for("video/mp4"),
     ]
@@ -146,8 +146,8 @@ pub fn open_path(p: &Path) -> bool {
 
 /// Open a folder, preferring our own Explorer.
 pub fn explore(target: &str) {
-    if which("aero7-explorer") {
-        spawn(&["aero7-explorer", target]);
+    if which("aerode-explorer") {
+        spawn(&["aerode-explorer", target]);
     } else if target.contains("://") {
         open_uri(target);
     } else {

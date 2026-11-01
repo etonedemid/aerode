@@ -69,7 +69,7 @@ impl Taskbar {
         crate::glass::enable_rgba(&win);
         win.set_size_request(geo.width(), h);
         win.move_(geo.x(), geo.y() + geo.height() - h);
-        win.style_context().add_class("aero7");
+        win.style_context().add_class("aerode");
         win.style_context().add_class("taskbar");
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);

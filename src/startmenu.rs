@@ -54,7 +54,7 @@ impl StartMenu {
         win.set_app_paintable(true);
         crate::glass::enable_rgba(&win);
         win.set_size_request(W, H);
-        win.style_context().add_class("aero7");
+        win.style_context().add_class("aerode");
         win.style_context().add_class("startmenu");
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -121,14 +121,14 @@ impl StartMenu {
         let home = config::home();
         type Act = Rc<dyn Fn()>;
         let ex = |p: std::path::PathBuf| -> Act { Rc::new(move || util::explore(&p.to_string_lossy())) };
-        let ctrl = |page: &'static str| -> Act { Rc::new(move || { util::spawn(&["aero7-control", page]); }) };
+        let ctrl = |page: &'static str| -> Act { Rc::new(move || { util::spawn(&["aerode-control", page]); }) };
         let links: Vec<Option<(String, &str, Act)>> = vec![
             Some((user.clone(), "user-home", ex(home.clone()))),
             Some(("Documents".into(), "folder-documents", ex(util::special_dir(glib::UserDirectory::Documents, "Documents")))),
             Some(("Pictures".into(), "folder-pictures", ex(util::special_dir(glib::UserDirectory::Pictures, "Pictures")))),
             Some(("Music".into(), "folder-music", ex(util::special_dir(glib::UserDirectory::Music, "Music")))),
             None,
-            Some(("Games".into(), "applications-games", Rc::new(|| util::explore("aero7:games")))),
+            Some(("Games".into(), "applications-games", Rc::new(|| util::explore("aerode:games")))),
             Some(("Computer".into(), "computer", Rc::new(|| util::explore("computer:///")))),
             None,
             Some(("Control Panel".into(), "preferences-system", ctrl(""))),
@@ -313,7 +313,7 @@ impl StartMenu {
                 let mut freq: Vec<_> = apps.iter().filter(|a| a.id().map(|i| usage.contains_key(i.as_str())).unwrap_or(false)).cloned().collect();
                 freq.sort_by_key(|a| std::cmp::Reverse(usage.get(a.id().unwrap().as_str()).copied().unwrap_or(0)));
                 // seed with sensible defaults on first run
-                let seeds = ["aero7-explorer.desktop", "aero7-notepad.desktop", "aero7-calc.desktop", "aero7-mspaint.desktop", "aero7-taskmgr.desktop"];
+                let seeds = ["aerode-explorer.desktop", "aerode-notepad.desktop", "aerode-calc.desktop", "aerode-mspaint.desktop", "aerode-taskmgr.desktop"];
                 for s in seeds {
                     if freq.len() >= 10 { break; }
                     if let Some(a) = util::app_by_id(s) { if !freq.iter().any(|f| f.id() == a.id()) { freq.push(a); } }

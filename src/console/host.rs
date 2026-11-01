@@ -42,7 +42,7 @@ pub struct ConsoleConfig {
     pub history_size: u32,
     pub history_buffers: u32,
     pub discard_duplicates: bool,
-    /// "cmd" (the Aero7 cmd.exe), "fish", "bash", or any command line
+    /// "cmd" (the Aerode cmd.exe), "fish", "bash", or any command line
     pub shell: String,
 }
 
@@ -67,7 +67,7 @@ pub fn save_config(c: &ConsoleConfig) {
 
 /// Where the user's own Win7 raster fonts were extracted.
 pub fn raster_fonts() -> Vec<RasterFont> {
-    let dirs = [gtk::glib::user_data_dir().join("fonts/aero7"), std::path::PathBuf::from("/usr/share/fonts/aero7")];
+    let dirs = [gtk::glib::user_data_dir().join("fonts/aerode"), std::path::PathBuf::from("/usr/share/fonts/aerode")];
     let mut v = vec![];
     for d in dirs {
         for f in ["vgaoem.fon", "dosapp.fon"] {
@@ -277,7 +277,7 @@ impl Console {
         for a in &argv[1..] { cmd.arg(a); }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "");
-        cmd.env("AERO7_CONSOLE", "1");
+        cmd.env("AERODE_CONSOLE", "1");
         cmd.cwd(config::home());
         let mut child = match pair.slave.spawn_command(cmd) {
             Ok(c) => c,

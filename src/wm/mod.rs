@@ -1,4 +1,4 @@
-//! aero7-wm: a small reparenting X11 window manager drawing Windows 7 frames.
+//! aerode-wm: a small reparenting X11 window manager drawing Windows 7 frames.
 pub mod decor;
 pub mod keys;
 pub mod switcher;
@@ -38,7 +38,7 @@ x11rb::atom_manager! {
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
-        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERO7_SNAP_PREVIEW,
+        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART,
     }
 }
 
@@ -108,6 +108,8 @@ pub struct Wm {
     pub keys: keys::Keys,
     pub switcher: Option<switcher::Switcher>,
     pub snap_preview: Option<(u32, i8)>,
+    last_move_redraw: Instant,
+    composited_cache: std::cell::Cell<(Instant, bool)>,
     pub wallpaper: Option<cairo::ImageSurface>,
     pub color: [f64; 4],
 }
@@ -151,6 +153,7 @@ impl Wm {
             active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
             showing_desktop: false, current_desktop: 0, num_desktops: 1, drag: None,
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
+            last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
             wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint[3].clamp(0.2, 0.8)],
         };
         wm.color = colorization(&cfg.tint);
@@ -198,15 +201,19 @@ impl Wm {
     }
 
     fn composited(&self) -> bool {
-        self.argb.is_some() && self.conn.get_selection_owner(self.atoms._NET_CM_S0).ok()
-            .and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false)
+        let (t, v) = self.composited_cache.get();
+        if t.elapsed().as_millis() < 1000 { return v; }
+        let v = self.argb.is_some() && self.conn.get_selection_owner(self.atoms._NET_CM_S0).ok()
+            .and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
+        self.composited_cache.set((Instant::now(), v));
+        v
     }
 
     fn set_supported(&self) -> Result<()> {
         let a = &self.atoms;
         let c = &self.conn;
         c.change_property32(PropMode::REPLACE, self.check_win, a._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, &[self.check_win])?;
-        c.change_property8(PropMode::REPLACE, self.check_win, a._NET_WM_NAME, a.UTF8_STRING, b"Aero7")?;
+        c.change_property8(PropMode::REPLACE, self.check_win, a._NET_WM_NAME, a.UTF8_STRING, b"Aerode")?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, &[self.check_win])?;
         let sup = [a._NET_SUPPORTED, a._NET_SUPPORTING_WM_CHECK, a._NET_WM_NAME, a._NET_CLIENT_LIST, a._NET_CLIENT_LIST_STACKING,
             a._NET_ACTIVE_WINDOW, a._NET_CLOSE_WINDOW, a._NET_WORKAREA, a._NET_NUMBER_OF_DESKTOPS, a._NET_CURRENT_DESKTOP,
@@ -369,7 +376,6 @@ impl Wm {
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().border_width(0));
             // click-to-focus: passive grab on the client
             let _ = self.conn.grab_button(true, w, EventMask::BUTTON_PRESS, GrabMode::SYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, ButtonIndex::ANY, ModMask::ANY);
-            c.ignore_unmaps += 1;
             c.frame = Some(frame);
             self.frames.insert(frame, w);
             self.set_frame_extents(w, [BORDER, BORDER, TOP, BORDER]);
@@ -399,6 +405,7 @@ impl Wm {
     }
 
     fn unmanage(&mut self, w: u32, destroyed: bool) {
+        if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.remove(&w) else { return };
         if let Some(f) = c.frame {
             self.frames.remove(&f);
@@ -484,7 +491,13 @@ impl Wm {
         let ev = ConfigureNotifyEvent { response_type: CONFIGURE_NOTIFY_EVENT, sequence: 0, event: w, window: w, above_sibling: x11rb::NONE,
             x: g.x as i16, y: g.y as i16, width: g.w as u16, height: g.h as u16, border_width: 0, override_redirect: false };
         let _ = self.conn.send_event(false, w, EventMask::STRUCTURE_NOTIFY, ev);
-        if size_changed || true { self.redraw(w); }
+        if size_changed {
+            self.redraw(w);
+        } else if !self.composited() && self.last_move_redraw.elapsed().as_millis() > 60 {
+            // opaque fake glass shows the wallpaper behind: refresh it, but not on every pixel
+            self.last_move_redraw = Instant::now();
+            self.redraw(w);
+        }
     }
 
     pub fn pointer(&self) -> (i32, i32) {
@@ -566,6 +579,7 @@ impl Wm {
     }
 
     pub fn set_fullscreen(&mut self, w: u32, on: bool) {
+        if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.get(&w) else { return };
         let m = self.monitors.get(self.monitor_of(&c.geom)).copied().unwrap_or_default();
         let c = self.clients.get_mut(&w).unwrap();
@@ -586,9 +600,9 @@ impl Wm {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if c.minimized { return; }
         c.minimized = true;
-        c.ignore_unmaps += if c.frame.is_some() { 1 } else { 1 };
+        // framed: hide only the frame (the client stays mapped inside it)
+        if c.frame.is_none() { c.ignore_unmaps += 1; }
         let target = c.frame.unwrap_or(w);
-        if c.frame.is_some() { let _ = self.conn.unmap_window(w); }
         let _ = self.conn.unmap_window(target);
         self.set_wm_state(w, 3);
         self.update_net_state(w);
@@ -603,7 +617,7 @@ impl Wm {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if !c.minimized { return; }
         c.minimized = false;
-        if let Some(f) = c.frame { let _ = self.conn.map_window(w); let _ = self.conn.map_window(f); } else { let _ = self.conn.map_window(w); }
+        if let Some(f) = c.frame { let _ = self.conn.map_window(f); } else { let _ = self.conn.map_window(w); }
         self.set_wm_state(w, 1);
         self.update_net_state(w);
     }
@@ -684,9 +698,8 @@ impl Wm {
         for w in ids {
             let c = self.clients.get_mut(&w).unwrap();
             if c.minimized { continue; }
-            c.ignore_unmaps += 1;
             let t = c.frame.unwrap_or(w);
-            if on { let _ = self.conn.unmap_window(t); } else { c.ignore_unmaps -= 1; let _ = self.conn.map_window(t); }
+            if on { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); } else { let _ = self.conn.map_window(t); }
         }
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_SHOWING_DESKTOP, AtomEnum::CARDINAL, &[on as u32]);
     }
@@ -700,7 +713,7 @@ impl Wm {
             let c = self.clients.get_mut(&w).unwrap();
             if c.desktop == 0xffffffff || c.minimized || matches!(c.kind, Kind::Dock | Kind::Desktop) { continue; }
             let t = c.frame.unwrap_or(w);
-            if c.desktop == d { let _ = self.conn.map_window(t); } else { c.ignore_unmaps += 1; let _ = self.conn.unmap_window(t); }
+            if c.desktop == d { let _ = self.conn.map_window(t); } else { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); }
         }
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL, &[d]);
     }
@@ -813,7 +826,7 @@ impl Wm {
         loop {
             self.conn.flush()?;
             let ev = self.conn.wait_for_event()?;
-            if let Err(e) = self.handle(ev) { eprintln!("aero7-wm: {e}"); }
+            if let Err(e) = self.handle(ev) { eprintln!("aerode-wm: {e}"); }
         }
     }
 
@@ -827,7 +840,12 @@ impl Wm {
             }
             Event::UnmapNotify(e) => {
                 if let Some(c) = self.clients.get_mut(&e.window) {
-                    if c.ignore_unmaps > 0 { c.ignore_unmaps -= 1; } else if e.event != self.root || c.frame.is_none() { self.unmanage(e.window, false); }
+                    match c.frame {
+                        // the client withdrew itself (reported via SubstructureNotify on its frame)
+                        Some(f) => if e.event == f { if c.ignore_unmaps > 0 { c.ignore_unmaps -= 1; } else { self.unmanage(e.window, false); } },
+                        // undecorated windows: we watch them through the root
+                        None => if e.event == self.root { if c.ignore_unmaps > 0 { c.ignore_unmaps -= 1; } else { self.unmanage(e.window, false); } },
+                    }
                 }
             }
             Event::DestroyNotify(e) => { if self.clients.contains_key(&e.window) { self.unmanage(e.window, true); } }
@@ -850,7 +868,7 @@ impl Wm {
             Event::KeyRelease(e) => self.key(e, false),
             Event::MappingNotify(_) => { self.keys.grab(&self.conn, self.root)?; }
             Event::XfixesSelectionNotify(_) => {
-                eprintln!("aero7-wm: compositor change, composited={} argb={}", self.composited(), self.argb.is_some());
+                eprintln!("aerode-wm: compositor change, composited={} argb={}", self.composited(), self.argb.is_some());
                 let ids: Vec<u32> = self.clients.keys().copied().collect();
                 for w in ids { self.redraw(w); }
             }
@@ -949,10 +967,13 @@ impl Wm {
                 c.desktop = d[0];
                 let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[d[0]]);
                 let t = c.frame.unwrap_or(w);
-                if d[0] != self.current_desktop && d[0] != 0xffffffff { c.ignore_unmaps += 1; let _ = self.conn.unmap_window(t); }
+                if d[0] != self.current_desktop && d[0] != 0xffffffff { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); }
             }
-        } else if e.type_ == a._AERO7_SNAP_PREVIEW && w == self.check_win {
+        } else if e.type_ == a._AERODE_RESTART && w == self.check_win {
+            self.restart();
+        } else if e.type_ == a._AERODE_SNAP_PREVIEW && w == self.check_win {
             // compositor started/stopped: repaint frames (glass vs. opaque)
+            self.composited_cache.set((Instant::now() - std::time::Duration::from_secs(10), false));
             let ids: Vec<u32> = self.clients.keys().copied().collect();
             for w in ids { self.redraw(w); }
         } else if e.type_ == a._NET_REQUEST_FRAME_EXTENTS {
@@ -972,15 +993,20 @@ impl Wm {
             let Some(c) = self.clients.get(&w) else { return };
             let (px, py) = (d[0] as i32, d[1] as i32);
             let dir = d[2];
-            if dir == 11 { self.drag = None; let _ = self.conn.ungrab_pointer(CURRENT_TIME); return; }
+            if dir == 11 { self.end_drag(); return; }
+            if dir == 9 || dir == 10 { return; } // keyboard move/size: not supported
+            // the button may already be up (the app sent this late): then do nothing
+            let held = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| u16::from(r.mask) & (u16::from(KeyButMask::BUTTON1) | u16::from(KeyButMask::BUTTON2) | u16::from(KeyButMask::BUTTON3)) != 0).unwrap_or(false);
+            if !held { return; }
             let drag = if dir == 8 {
                 Drag::Move { cx: px, cy: py, ox: c.geom.x, oy: c.geom.y, from_max: c.maximized }
             } else if dir <= 7 {
                 let edges = [5u8, 4, 6, 2, 10, 8, 9, 1][dir as usize];
                 Drag::Resize { edges, start: c.geom, px, py }
             } else { return };
-            self.drag = Some((w, drag));
-            let _ = self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, CURRENT_TIME);
+            let ok = self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, CURRENT_TIME)
+                .ok().and_then(|c| c.reply().ok()).map(|r| r.status == GrabStatus::SUCCESS).unwrap_or(false);
+            if ok { self.drag = Some((w, drag)); }
         }
     }
 
@@ -1029,7 +1055,7 @@ impl Wm {
                 self.drag = Some((w, Drag::Resize { edges, start: c.geom, px: e.root_x as i32, py: e.root_y as i32 }));
             }
             (3, Hit::Caption) | (3, Hit::Button(_)) => {
-                crate::util::spawn(&["aero7", "sysmenu", &w.to_string(), &e.root_x.to_string(), &e.root_y.to_string()]);
+                crate::util::spawn(&["aerode", "sysmenu", &w.to_string(), &e.root_x.to_string(), &e.root_y.to_string()]);
             }
             (2, Hit::Caption) => { self.stack.retain(|x| *x != w); self.stack.insert(0, w); self.restack(); }
             _ => {}
@@ -1037,9 +1063,21 @@ impl Wm {
         Ok(())
     }
 
+    /// Abort any drag in progress (always removes the snap preview).
+    fn end_drag(&mut self) {
+        if let Some((w, Drag::Button { .. })) = self.drag {
+            if let Some(c) = self.clients.get_mut(&w) { c.pressed = None; }
+            self.redraw(w);
+        }
+        self.drag = None;
+        self.hide_snap_preview();
+        let _ = self.conn.ungrab_pointer(CURRENT_TIME);
+    }
+
     fn button_release(&mut self, e: ButtonReleaseEvent) {
-        let Some((w, drag)) = self.drag.take() else { return };
+        let Some((w, drag)) = self.drag.take() else { self.hide_snap_preview(); return };
         let _ = self.conn.ungrab_pointer(e.time);
+        if matches!(drag, Drag::Resize { .. }) || matches!(drag, Drag::Move { .. }) { self.redraw(w); }
         match drag {
             Drag::Button { btn } => {
                 let Some(c) = self.clients.get_mut(&w) else { return };
@@ -1059,9 +1097,9 @@ impl Wm {
                 }
             }
             Drag::Move { .. } => {
-                if let Some((_, side)) = self.snap_preview.take() {
-                    self.hide_snap_preview();
-                    match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) }
+                if let Some((win, side)) = self.snap_preview.take() {
+                    let _ = self.conn.destroy_window(win);
+                    if self.clients.contains_key(&w) { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } }
                 }
             }
             _ => {}
@@ -1070,6 +1108,17 @@ impl Wm {
 
     fn motion(&mut self, e: MotionNotifyEvent) {
         let (rx, ry) = (e.root_x as i32, e.root_y as i32);
+        let buttons = u16::from(e.state) & (u16::from(KeyButMask::BUTTON1) | u16::from(KeyButMask::BUTTON2) | u16::from(KeyButMask::BUTTON3));
+        if self.drag.is_some() && buttons == 0 {
+            // we missed the release (e.g. a _NET_WM_MOVERESIZE that started after the button went up)
+            let w = self.drag.map(|d| d.0).unwrap_or(0);
+            let snap = self.snap_preview.map(|s| s.1);
+            let is_move = matches!(self.drag, Some((_, Drag::Move { .. })));
+            self.end_drag();
+            if is_move { if let Some(side) = snap { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } } }
+            self.redraw(w);
+            return;
+        }
         match self.drag {
             Some((w, Drag::Move { cx, cy, ox, oy, from_max })) => {
                 let Some(c) = self.clients.get(&w) else { return };
@@ -1242,6 +1291,26 @@ impl Wm {
         }
     }
 
+    /// Hand every window back to the root (keeping it where it is) and re-exec ourselves.
+    pub fn restart(&mut self) {
+        self.end_drag();
+        self.switcher_cancel();
+        let ids: Vec<u32> = self.stack.clone();
+        for w in ids {
+            let Some(c) = self.clients.get(&w) else { continue };
+            if let Some(f) = c.frame {
+                let _ = self.conn.reparent_window(w, self.root, c.geom.x as i16, c.geom.y as i16);
+                let _ = self.conn.map_window(w);
+                let _ = self.conn.destroy_window(f);
+            } else if c.minimized { let _ = self.conn.map_window(w); }
+        }
+        let _ = self.conn.flush();
+        let exe = std::env::current_exe().unwrap_or_else(|_| "aerode-wm".into());
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(exe).args(std::env::args().skip(1)).exec();
+        eprintln!("aerode-wm: restart failed: {err}");
+    }
+
     fn switch_order(&self) -> Vec<u32> {
         // most recently used first = top of stack first
         let mut v: Vec<u32> = self.stack.iter().rev().copied().filter(|w| self.clients.get(w).map(|c| matches!(c.kind, Kind::Normal | Kind::Dialog) && !c.skip_taskbar && c.frame.is_some()).unwrap_or(false)).collect();
@@ -1259,7 +1328,7 @@ fn spawn_compositor_watch(check_win: u32) {
         loop {
             let owner = conn.get_selection_owner(a._NET_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner).unwrap_or(0);
             if owner != last && last != u32::MAX {
-                let ev = ClientMessageEvent::new(32, check_win, a._AERO7_SNAP_PREVIEW, [0, 0, 0, 0, 0]);
+                let ev = ClientMessageEvent::new(32, check_win, a._AERODE_SNAP_PREVIEW, [0, 0, 0, 0, 0]);
                 let _ = conn.send_event(false, check_win, EventMask::NO_EVENT, ev);
                 let _ = conn.flush();
             }

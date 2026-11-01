@@ -1,6 +1,6 @@
-/* Aero7 shell styling (taskbar, start menu, desktop, flyouts) */
-.aero7, .aero7 * { font-family: "Segoe UI", "Noto Sans", sans-serif; font-size: 9pt; }
-.aero7 { background: transparent; }
+/* Aerode shell styling (taskbar, start menu, desktop, flyouts) */
+.aerode, .aerode * { font-family: "Segoe UI", "Noto Sans", sans-serif; font-size: 9pt; }
+.aerode { background: transparent; }
 
 /* ---------- taskbar ---------- */
 .taskbar button {

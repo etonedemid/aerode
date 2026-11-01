@@ -1,4 +1,4 @@
-use aero7::pe::{Pe, ResId};
+use aerode::pe::{Pe, ResId};
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let pe = Pe::open(std::path::Path::new(&a[1])).unwrap();

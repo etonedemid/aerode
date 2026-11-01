@@ -1,5 +1,5 @@
-/* Aero7 – Windows 7 style widgets for GTK 3.  Installed as the "Aero7" GTK
-   theme and also loaded by aero7's own programs.  Built on Adwaita. */
+/* Aerode – Windows 7 style widgets for GTK 3.  Installed as the "Aerode" GTK
+   theme and also loaded by aerode's own programs.  Built on Adwaita. */
 @import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css");
 
 @define-color theme_bg_color #f0f0f0;

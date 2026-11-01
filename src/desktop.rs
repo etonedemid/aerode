@@ -52,7 +52,7 @@ impl Desktop {
         win.set_app_paintable(true);
         win.move_(g.x(), g.y());
         win.set_size_request(g.width(), g.height());
-        win.style_context().add_class("aero7");
+        win.style_context().add_class("aerode");
         win.style_context().add_class("desktop");
         let ev = gtk::EventBox::new();
         ev.set_visible_window(false);
@@ -115,7 +115,7 @@ impl Desktop {
                 "home" => v.push(Item { label: glib::user_name().to_string_lossy().into_owned(), icon: None, icon_name: Some("user-home".into()), target: Target::Path(config::home()), special: None }),
                 "trash" => v.push(Item { label: "Recycle Bin".into(), icon: None, icon_name: Some(if trash_full() { "user-trash-full" } else { "user-trash" }.into()), target: Target::Uri("trash:///".into()), special: Some("trash") }),
                 "network" => v.push(Item { label: "Network".into(), icon: None, icon_name: Some("network-workgroup".into()), target: Target::Uri("network:///".into()), special: None }),
-                "control" => v.push(Item { label: "Control Panel".into(), icon: None, icon_name: Some("preferences-system".into()), target: Target::Uri("aero7:control".into()), special: Some("control") }),
+                "control" => v.push(Item { label: "Control Panel".into(), icon: None, icon_name: Some("preferences-system".into()), target: Target::Uri("aerode:control".into()), special: Some("control") }),
                 _ => {}
             }
         }
@@ -236,8 +236,8 @@ impl Desktop {
                 }));
             }
             Some("computer") => {
-                add(&m, "Manage", Box::new(|| { util::spawn(&["aero7-taskmgr"]); }));
-                add(&m, "Properties", Box::new(|| { util::spawn(&["aero7-control", "system"]); }));
+                add(&m, "Manage", Box::new(|| { util::spawn(&["aerode-taskmgr"]); }));
+                add(&m, "Properties", Box::new(|| { util::spawn(&["aerode-control", "system"]); }));
             }
             _ => {
                 if let Target::Path(p) = &it.target {
@@ -254,7 +254,7 @@ impl Desktop {
                             }
                         }));
                         let p3 = p.clone();
-                        add(&m, "Properties", Box::new(move || { util::spawn(&["aero7-explorer", "--properties", &p3.to_string_lossy()]); }));
+                        add(&m, "Properties", Box::new(move || { util::spawn(&["aerode-explorer", "--properties", &p3.to_string_lossy()]); }));
                     }
                 }
             }
@@ -320,7 +320,7 @@ impl Desktop {
         m.append(&ni);
         m.append(&gtk::SeparatorMenuItem::new());
         let res = gtk::MenuItem::with_label("Screen resolution");
-        res.connect_activate(|_| { util::spawn(&["aero7-control", "display"]); });
+        res.connect_activate(|_| { util::spawn(&["aerode-control", "display"]); });
         m.append(&res);
         let gad = gtk::MenuItem::with_label("Gadgets");
         gad.connect_activate(|_| crate::gadgets::show_gallery());
@@ -338,7 +338,7 @@ fn open_item(it: &Item) {
         (Target::Path(p), Some("launcher")) => {
             if let Some(a) = gio::DesktopAppInfo::from_filename(p) { util::launch(a.upcast_ref()); }
         }
-        (_, Some("control")) => { util::spawn(&["aero7-control"]); }
+        (_, Some("control")) => { util::spawn(&["aerode-control"]); }
         (Target::Path(p), _) if p.is_dir() => util::explore(&p.to_string_lossy()),
         (Target::Path(p), _) => { util::open_path(p); }
         (Target::Uri(u), _) => util::explore(u),

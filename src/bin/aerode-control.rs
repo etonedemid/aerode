@@ -1,12 +1,12 @@
 //! Control Panel – Windows 7 Control Panel remake backed by Linux tools.
-//!   aero7-control [page]   pages: system display personalization sound datetime power mouse keyboard
+//!   aerode-control [page]   pages: system display personalization sound datetime power mouse keyboard
 //!                          programs users network defaults devices region access startup services
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aero7::{config, sounds, theme, util};
+use aerode::{config, sounds, theme, util};
 
 const CSS: &str = r#"
 .cp-main { background-color: #ffffff; }
@@ -102,7 +102,7 @@ impl Cp {
         let (crumb, w): (&str, gtk::Widget) = match page {
             "system" => ("System and Security ▸ System", self.page_system()),
             "display" => ("Appearance and Personalization ▸ Display ▸ Screen Resolution", self.page_display()),
-            "personalization" => { util::spawn(&["aero7", "personalize"]); ("Appearance and Personalization", self.page_category("appearance")) }
+            "personalization" => { util::spawn(&["aerode", "personalize"]); ("Appearance and Personalization", self.page_category("appearance")) }
             "sound" => ("Hardware and Sound ▸ Sound", self.page_sound()),
             "datetime" => ("Clock, Language, and Region ▸ Date and Time", self.page_datetime()),
             "power" => ("Hardware and Sound ▸ Power Options", self.page_power()),
@@ -231,7 +231,7 @@ impl Cp {
         let os = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
         let get = |k: &str| os.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|s| s.trim_matches('"').to_string()).unwrap_or_default();
         v.pack_start(&section("Edition"), false, false, 0);
-        v.pack_start(&kv_grid(&[(&get("PRETTY_NAME"), String::new()), ("Kernel", out(&["uname", "-r"]).trim().to_string()), ("Desktop", "Aero7".into())]), false, false, 0);
+        v.pack_start(&kv_grid(&[(&get("PRETTY_NAME"), String::new()), ("Kernel", out(&["uname", "-r"]).trim().to_string()), ("Desktop", "Aerode".into())]), false, false, 0);
         let cpu = std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|s| s.lines().find_map(|l| l.strip_prefix("model name").map(|v| v.trim_start_matches([' ', '\t', ':']).to_string()))).unwrap_or_default();
         let mem = std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| s.lines().next()?.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap_or(0);
         v.pack_start(&section("System"), false, false, 0);
@@ -246,7 +246,7 @@ impl Cp {
         v.pack_start(&kv_grid(&[("Computer name:", name.clone()), ("Uptime:", out(&["uptime", "-p"]).trim().to_string())]), false, false, 0);
         let me = self.clone();
         v.pack_start(&link("Change settings", move || {
-            if let Some(n) = aero7::desktop::prompt("Computer Name", "Computer name:", &glib::host_name()) {
+            if let Some(n) = aerode::desktop::prompt("Computer Name", "Computer name:", &glib::host_name()) {
                 if admin(&["hostnamectl", "set-hostname", &n]) { me.open("system"); }
             }
         }), false, false, 0);
@@ -380,6 +380,28 @@ impl Cp {
         v.pack_start(&g, false, false, 0);
         let me = self.clone();
         v.pack_start(&link("Make text and other items larger or smaller", move || me.open("access")), false, false, 0);
+        // desktop composition (picom): Aero glass, shadows, vsync
+        v.pack_start(&section("Desktop composition"), false, false, 0);
+        let comp = gtk::CheckButton::with_label("Enable desktop composition (Aero glass, shadows, animations)");
+        comp.set_active(!config::conf_dir().join("no-compositor").exists());
+        comp.connect_toggled(|c| {
+            let f = config::conf_dir().join("no-compositor");
+            let _ = std::fs::create_dir_all(config::conf_dir());
+            if c.is_active() { let _ = std::fs::remove_file(&f); } else { let _ = std::fs::write(&f, ""); let _ = std::process::Command::new("pkill").args(["-x", "picom"]).status(); }
+            if c.is_active() { util::spawn(&["aerode", "restart"]); }
+        });
+        v.pack_start(&comp, false, false, 0);
+        let vs = gtk::CheckButton::with_label("Sync to the display's refresh rate (VSync) – turn off if you are capped at 60 FPS");
+        let user_conf = config::conf_dir().join("picom.conf");
+        vs.set_active(!std::fs::read_to_string(&user_conf).map(|s| s.contains("vsync = false")).unwrap_or(false));
+        vs.connect_toggled(move |c| {
+            let base = std::fs::read_to_string("/usr/share/aerode/picom.conf").unwrap_or_default();
+            let txt = base.replace("vsync = true;", if c.is_active() { "vsync = true;" } else { "vsync = false;" });
+            let _ = std::fs::create_dir_all(config::conf_dir());
+            let _ = std::fs::write(config::conf_dir().join("picom.conf"), txt);
+            util::spawn(&["aerode", "restart"]);
+        });
+        v.pack_start(&vs, false, false, 0);
         let apply = gtk::Button::with_label("Apply");
         apply.set_halign(gtk::Align::End);
         let (w, outs) = (self.win.clone(), outputs.clone());
@@ -589,7 +611,7 @@ impl Cp {
         v.pack_start(&section("Clock"), false, false, 0);
         let h24 = gtk::CheckButton::with_label("Use 24-hour clock on the taskbar");
         h24.set_active(config::get().clock_24h);
-        h24.connect_toggled(|c| { let a = c.is_active(); config::update(|cf| cf.clock_24h = a); util::spawn(&["aero7", "reload"]); });
+        h24.connect_toggled(|c| { let a = c.is_active(); config::update(|cf| cf.clock_24h = a); util::spawn(&["aerode", "reload"]); });
         v.pack_start(&h24, false, false, 0);
         v.upcast()
     }
@@ -599,7 +621,7 @@ impl Cp {
         let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
         v.pack_start(&title("Select a power plan"), false, false, 0);
         v.pack_start(&text("Power plans can help you maximize your computer's performance or conserve energy."), false, false, 0);
-        let cur = aero7::sys::power_profile();
+        let cur = aerode::sys::power_profile();
         let mut grp: Option<gtk::RadioButton> = None;
         for (id, name, desc) in [("balanced", "Balanced (recommended)", "Automatically balances performance with energy consumption on capable hardware."),
             ("power-saver", "Power saver", "Saves energy by reducing your computer's performance where possible."),
@@ -608,7 +630,7 @@ impl Cp {
             if grp.is_none() { grp = Some(r.clone()); }
             r.set_active(cur.as_deref() == Some(id));
             r.set_sensitive(cur.is_some());
-            r.connect_toggled(move |r| if r.is_active() { aero7::sys::set_power_profile(id) });
+            r.connect_toggled(move |r| if r.is_active() { aerode::sys::set_power_profile(id) });
             v.pack_start(&r, false, false, 0);
             let d = text(desc);
             d.set_margin_start(24);
@@ -627,11 +649,11 @@ impl Cp {
             let _ = std::fs::write(config::conf_dir().join("display-off"), &s);
         });
         v.pack_start(&combo, false, false, 0);
-        if let Some(b) = aero7::sys::brightness() {
+        if let Some(b) = aerode::sys::brightness() {
             v.pack_start(&section("Screen brightness"), false, false, 0);
             let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
             s.set_value(b as f64);
-            s.connect_value_changed(|s| aero7::sys::set_brightness(s.value() as u32));
+            s.connect_value_changed(|s| aerode::sys::set_brightness(s.value() as u32));
             v.pack_start(&s, false, false, 0);
         }
         v.upcast()
@@ -664,9 +686,9 @@ impl Cp {
         v.pack_start(&text("Scheme"), false, false, 0);
         let schemes = gtk::ComboBoxText::new();
         for d in [glib::user_data_dir().join("icons"), std::path::PathBuf::from("/usr/share/icons")] {
-            if let Ok(rd) = std::fs::read_dir(d) { for e in rd.flatten() { if e.path().join("cursors").is_dir() { let n = e.file_name().to_string_lossy().into_owned(); schemes.append(Some(&n), &if n == "Aero7-cursors" { "Windows Aero (system scheme)".into() } else { n.clone() }); } } }
+            if let Ok(rd) = std::fs::read_dir(d) { for e in rd.flatten() { if e.path().join("cursors").is_dir() { let n = e.file_name().to_string_lossy().into_owned(); schemes.append(Some(&n), &if n == "Aerode-cursors" { "Windows Aero (system scheme)".into() } else { n.clone() }); } } }
         }
-        schemes.set_active_id(Some(&std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "Aero7-cursors".into())));
+        schemes.set_active_id(Some(&std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "Aerode-cursors".into())));
         schemes.connect_changed(|c| if let Some(id) = c.active_id() {
             let d = glib::user_data_dir().join("icons/default");
             let _ = std::fs::create_dir_all(&d);
@@ -834,7 +856,7 @@ impl Cp {
             }), false, false, 0);
         }
         v.pack_start(&link("Change your account name", move || {
-            if let Some(n) = aero7::desktop::prompt("Change Your Name", "New account name:", &glib::real_name().to_string_lossy()) { admin(&["chfn", "-f", &n, &glib::user_name().to_string_lossy()]); }
+            if let Some(n) = aerode::desktop::prompt("Change Your Name", "New account name:", &glib::real_name().to_string_lossy()) { admin(&["chfn", "-f", &n, &glib::user_name().to_string_lossy()]); }
         }), false, false, 0);
         v.pack_start(&section("Other accounts"), false, false, 0);
         let users: Vec<String> = std::fs::read_to_string("/etc/passwd").unwrap_or_default().lines().filter_map(|l| {
@@ -849,9 +871,9 @@ impl Cp {
     fn page_network(self: &Rc<Self>) -> gtk::Widget {
         let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
         v.pack_start(&title("View your basic network information and set up connections"), false, false, 0);
-        let st = aero7::sys::net_status();
+        let st = aerode::sys::net_status();
         let map = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-        for (icon, label) in [("computer", glib::host_name().to_string()), (aero7::sys::net_icon(&st), if st.kind == "none" { "Not connected".to_string() } else { st.name.clone() }), ("web-browser", "Internet".to_string())] {
+        for (icon, label) in [("computer", glib::host_name().to_string()), (aerode::sys::net_icon(&st), if st.kind == "none" { "Not connected".to_string() } else { st.name.clone() }), ("web-browser", "Internet".to_string())] {
             let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
             b.pack_start(&util::image(icon, 48), false, false, 0);
             b.pack_start(&gtk::Label::new(Some(&label)), false, false, 0);
@@ -861,7 +883,7 @@ impl Cp {
         v.pack_start(&map, false, false, 6);
         v.pack_start(&section("View your active networks"), false, false, 0);
         for l in out(&["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"]).lines() {
-            let f = aero7::sys::nm_split(l);
+            let f = aerode::sys::nm_split(l);
             if f.len() >= 3 { v.pack_start(&kv_grid(&[(&f[0], format!("Access type: Internet\nConnections: {} ({})", f[2], f[1]))]), false, false, 0); }
         }
         v.pack_start(&section("Change your networking settings"), false, false, 0);
@@ -1000,7 +1022,7 @@ impl Cp {
 
 fn build(app: &gtk::Application, page: String) {
     theme::init_app();
-    theme::load_css(aero7::explorer::CSS);
+    theme::load_css(aerode::explorer::CSS);
     theme::load_css(CSS);
     let win = gtk::ApplicationWindow::new(app);
     win.set_default_size(880, 620);
@@ -1032,9 +1054,9 @@ fn build(app: &gtk::Application, page: String) {
     header.connect_draw(|h, cr| {
         use gtk::gdk::prelude::GdkContextExt;
         let (x, y) = h.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
-        cr.set_source_pixbuf(&aero7::glass::wallpaper().blurred, -x as f64, -y as f64);
+        cr.set_source_pixbuf(&aerode::glass::wallpaper().blurred, -x as f64, -y as f64);
         cr.paint().ok();
-        let c = aero7::wm::colorization(&config::get().tint);
+        let c = aerode::wm::colorization(&config::get().tint);
         cr.set_source_rgba(c[0], c[1], c[2], 0.55);
         cr.paint().ok();
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.18);
@@ -1079,7 +1101,7 @@ fn build(app: &gtk::Application, page: String) {
 
 fn main() -> glib::ExitCode {
     let page = std::env::args().nth(1).unwrap_or_default();
-    let app = gtk::Application::new(Some("org.aero7.ControlPanel"), gio::ApplicationFlags::NON_UNIQUE);
+    let app = gtk::Application::new(Some("org.aerode.ControlPanel"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(move |app| build(app, page.clone()));
     app.run_with_args::<&str>(&[])
 }

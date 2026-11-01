@@ -1,5 +1,5 @@
 // dump PNGFILE and group icons of a PE to a folder: resdump <pe> <outdir>
-use aero7::pe::{self, Pe, ResId};
+use aerode::pe::{self, Pe, ResId};
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let p = Pe::open(std::path::Path::new(&a[1])).unwrap();
