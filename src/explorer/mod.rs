@@ -138,7 +138,7 @@ pub struct Explorer {
     vm: gio::VolumeMonitor,
 }
 
-const CSS: &str = r#"
+pub const CSS: &str = r#"
 .exp-header { padding: 4px 6px 5px 6px; }
 .exp-header button.nav { min-width: 26px; min-height: 26px; padding: 0; border-radius: 50%;
   background-image: radial-gradient(circle at 50% 35%, #cfe9ff, #4f9be3 55%, #1f5fae); border: 1px solid #23466f; box-shadow: inset 0 1px 0 rgba(255,255,255,0.7); }
