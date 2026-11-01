@@ -6,9 +6,13 @@ cd "$(dirname "$0")"
 DEPS=(gtk3 python cairo pango libx11 libxcb xorg-xsetroot xsettingsd picom
       7zip wimlib papirus-icon-theme noto-fonts i3lock xss-lock polkit
       pipewire-pulse wireplumber pavucontrol networkmanager brightnessctl
-      playerctl udiskie power-profiles-daemon gnome-keyring rust)
+      playerctl ddcutil udiskie power-profiles-daemon gnome-keyring rust)
 echo ":: installing dependencies (sudo)"
 sudo pacman -S --needed --noconfirm "${DEPS[@]}"
+echo ":: enabling DDC/CI (external monitor brightness)"
+echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf >/dev/null
+sudo modprobe i2c-dev || true
+getent group i2c >/dev/null && sudo usermod -aG i2c "$USER" || true
 echo ":: building"
 cargo build --release
 echo ":: installing to /usr (sudo)"

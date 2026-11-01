@@ -187,14 +187,60 @@ pub fn set_power_profile(p: &str) {
 }
 
 // ---------------------------------------------------------------- brightness
-pub fn brightness() -> Option<u32> {
+/// Laptop panel backlight (brightnessctl), as a percentage.
+pub fn backlight() -> Option<u32> {
+    if !std::path::Path::new("/sys/class/backlight").read_dir().map(|mut r| r.next().is_some()).unwrap_or(false) { return None; }
     let cur: f64 = output(&["brightnessctl", "get"])?.trim().parse().ok()?;
     let max: f64 = output(&["brightnessctl", "max"])?.trim().parse().ok()?;
     Some((cur * 100.0 / max).round() as u32)
 }
 
+/// External monitors that answer DDC/CI: (display number, model name).
+pub fn ddc_displays() -> Vec<(u32, String)> {
+    let Some(s) = output(&["ddcutil", "detect", "--brief"]) else { return vec![] };
+    let mut v = vec![];
+    let mut cur: Option<u32> = None;
+    for l in s.lines() {
+        let t = l.trim();
+        if let Some(n) = t.strip_prefix("Display ") { cur = n.trim().parse().ok(); }
+        else if t.starts_with("Invalid display") { cur = None; }
+        else if let (Some(n), Some(m)) = (cur, t.strip_prefix("Monitor:")) {
+            // "Monitor: DEL:DELL U2415:XXXX" → "DELL U2415"
+            let model = m.trim().split(':').nth(1).unwrap_or(m.trim()).trim().to_string();
+            v.push((n, model));
+            cur = None;
+        }
+    }
+    v
+}
+
+/// Brightness (VCP feature 0x10) of a DDC display: (current, max).
+pub fn ddc_get(display: u32) -> Option<(u32, u32)> {
+    let s = output(&["ddcutil", "--display", &display.to_string(), "getvcp", "10", "--brief"])?;
+    let f: Vec<&str> = s.split_whitespace().collect();
+    // "VCP 10 C <cur> <max>"
+    Some((f.get(3)?.parse().ok()?, f.get(4)?.parse().ok()?))
+}
+
+pub fn ddc_set(display: u32, pct: u32) {
+    let d = display.to_string();
+    let v = pct.min(100).to_string();
+    std::thread::spawn(move || { let _ = std::process::Command::new("ddcutil").args(["--display", &d, "--noverify", "setvcp", "10", &v]).status(); });
+}
+
+/// Brightness of the "main" screen: laptop backlight, else the first DDC monitor.
+pub fn brightness() -> Option<u32> {
+    backlight().or_else(|| {
+        let (n, _) = ddc_displays().into_iter().next()?;
+        let (cur, max) = ddc_get(n)?;
+        Some(cur * 100 / max.max(1))
+    })
+}
+
+/// Set every screen we can control.
 pub fn set_brightness(pct: u32) {
-    spawn(&["brightnessctl", "set", &format!("{}%", pct.clamp(1, 100))]);
+    if backlight().is_some() { spawn(&["brightnessctl", "set", &format!("{}%", pct.clamp(1, 100))]); }
+    for (n, _) in ddc_displays() { ddc_set(n, pct); }
 }
 
 // ---------------------------------------------------------------- power
