@@ -202,7 +202,7 @@ impl Decor {
         // reflection streak (part 34 when themed)
         if let Some(refl) = self.parts.get(&34) {
             cr.set_source_surface(&refl.surf, 0.0, 0.0).ok();
-            cr.paint_with_alpha(if p.active { 0.9 } else { 0.6 }).ok();
+            cr.paint_with_alpha(if p.composited { if p.active { 0.32 } else { 0.2 } } else if p.active { 0.9 } else { 0.6 }).ok();
         } else {
             let g = cairo::LinearGradient::new(0.0, 0.0, w * 0.4, h * 0.4);
             g.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.35);

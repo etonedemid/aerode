@@ -25,6 +25,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     w.set_skip_pager_hint(true);
     w.set_keep_above(true);
     w.set_app_paintable(true);
+    crate::glass::enable_rgba(&w);
     w.style_context().add_class("aero7");
     let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
     frame.set_margin_start(7);

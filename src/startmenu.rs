@@ -52,6 +52,7 @@ impl StartMenu {
         win.set_skip_pager_hint(true);
         win.set_keep_above(true);
         win.set_app_paintable(true);
+        crate::glass::enable_rgba(&win);
         win.set_size_request(W, H);
         win.style_context().add_class("aero7");
         win.style_context().add_class("startmenu");

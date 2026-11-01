@@ -66,6 +66,7 @@ impl Taskbar {
         win.stick();
         win.set_keep_above(true);
         win.set_app_paintable(true);
+        crate::glass::enable_rgba(&win);
         win.set_size_request(geo.width(), h);
         win.move_(geo.x(), geo.y() + geo.height() - h);
         win.style_context().add_class("aero7");

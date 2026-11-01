@@ -189,16 +189,46 @@ pub fn rounded(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
 }
 
 /// Paint an Aero glass panel of size w×h whose top-left is at screen (sx, sy).
+/// True when a compositor is running: glass surfaces then paint translucent
+/// pixels and let the compositor (picom) blur what is behind them.
+pub fn composited() -> bool {
+    gtk::gdk::Screen::default().map(|s| s.is_composited()).unwrap_or(false)
+}
+
+/// Give a toplevel an RGBA visual so it can be truly translucent.
+pub fn enable_rgba(w: &gtk::Window) {
+    use gtk::prelude::*;
+    if let Some(v) = gtk::prelude::WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }
+    w.connect_screen_changed(|w, _| {
+        if let Some(v) = gtk::prelude::WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }
+    });
+    if let Some(s) = gtk::prelude::WidgetExt::screen(w) {
+        let w2 = w.clone();
+        s.connect_composited_changed(move |_| w2.queue_draw());
+    }
+}
+
 pub fn paint_glass(cr: &cairo::Context, w: f64, h: f64, sx: f64, sy: f64, radius: f64, border: bool) {
-    let wp = wallpaper();
     let t = config::get().tint;
+    let real = composited();
     cr.save().ok();
+    cr.set_operator(cairo::Operator::Source);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+    cr.paint().ok();
+    cr.set_operator(cairo::Operator::Over);
     rounded(cr, 0.0, 0.0, w, h, radius);
     cr.clip();
-    cr.set_source_pixbuf(&wp.blurred, -sx, -sy);
-    cr.paint().ok();
-    cr.set_source_rgba(t[0], t[1], t[2], t[3]);
-    cr.paint().ok();
+    if real {
+        // the compositor blurs what is behind; just tint
+        cr.set_source_rgba(t[0], t[1], t[2], (t[3] * 0.85).min(0.85));
+        cr.paint().ok();
+    } else {
+        let wp = wallpaper();
+        cr.set_source_pixbuf(&wp.blurred, -sx, -sy);
+        cr.paint().ok();
+        cr.set_source_rgba(t[0], t[1], t[2], t[3]);
+        cr.paint().ok();
+    }
     // Aero diagonal streaks
     let mut x = -h;
     let mut i = 0;

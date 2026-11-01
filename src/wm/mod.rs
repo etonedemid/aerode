@@ -128,7 +128,7 @@ impl Wm {
             .check().context("another window manager is already running")?;
         let _ = conn.randr_select_input(root, x11rb::protocol::randr::NotifyMask::SCREEN_CHANGE);
         // repaint frames when a compositor starts/stops (glass vs. opaque)
-        if conn.xfixes_query_version(5, 0).is_ok() {
+        if conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some() {
             let _ = conn.xfixes_select_selection_input(root, atoms._NET_CM_S0,
                 x11rb::protocol::xfixes::SelectionEventMask::SET_SELECTION_OWNER
                     | x11rb::protocol::xfixes::SelectionEventMask::SELECTION_WINDOW_DESTROY
@@ -160,6 +160,7 @@ impl Wm {
         wm.keys.grab(&wm.conn, wm.root)?;
         wm.manage_existing()?;
         wm.conn.flush()?;
+        spawn_compositor_watch(wm.check_win);
         Ok(wm)
     }
 
@@ -849,6 +850,7 @@ impl Wm {
             Event::KeyRelease(e) => self.key(e, false),
             Event::MappingNotify(_) => { self.keys.grab(&self.conn, self.root)?; }
             Event::XfixesSelectionNotify(_) => {
+                eprintln!("aero7-wm: compositor change, composited={} argb={}", self.composited(), self.argb.is_some());
                 let ids: Vec<u32> = self.clients.keys().copied().collect();
                 for w in ids { self.redraw(w); }
             }
@@ -949,6 +951,10 @@ impl Wm {
                 let t = c.frame.unwrap_or(w);
                 if d[0] != self.current_desktop && d[0] != 0xffffffff { c.ignore_unmaps += 1; let _ = self.conn.unmap_window(t); }
             }
+        } else if e.type_ == a._AERO7_SNAP_PREVIEW && w == self.check_win {
+            // compositor started/stopped: repaint frames (glass vs. opaque)
+            let ids: Vec<u32> = self.clients.keys().copied().collect();
+            for w in ids { self.redraw(w); }
         } else if e.type_ == a._NET_REQUEST_FRAME_EXTENTS {
             self.set_frame_extents(w, [BORDER, BORDER, TOP, BORDER]);
         } else if e.type_ == a._NET_MOVERESIZE_WINDOW {
@@ -1242,6 +1248,25 @@ impl Wm {
         if let Some(i) = v.iter().position(|w| *w == self.active) { let a = v.remove(i); v.insert(0, a); }
         v
     }
+}
+
+/// Watch the _NET_CM_S0 owner on a separate connection and poke the WM when it changes.
+fn spawn_compositor_watch(check_win: u32) {
+    std::thread::spawn(move || {
+        let Ok((conn, _)) = x11rb::connect(None) else { return };
+        let Ok(Ok(a)) = Atoms::new(&conn).map(|c| c.reply()) else { return };
+        let mut last = u32::MAX;
+        loop {
+            let owner = conn.get_selection_owner(a._NET_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner).unwrap_or(0);
+            if owner != last && last != u32::MAX {
+                let ev = ClientMessageEvent::new(32, check_win, a._AERO7_SNAP_PREVIEW, [0, 0, 0, 0, 0]);
+                let _ = conn.send_event(false, check_win, EventMask::NO_EVENT, ev);
+                let _ = conn.flush();
+            }
+            last = owner;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    });
 }
 
 fn c_kind_focusable(c: &Client) -> bool { !matches!(c.kind, Kind::Dock | Kind::Desktop) }
