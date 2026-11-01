@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Command Prompt
+Comment=Performs text-based (command-line) functions
+Exec=aero7-cmd
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;
+StartupWMClass=aero7-cmd
+Keywords=cmd;terminal;console;shell;fish;

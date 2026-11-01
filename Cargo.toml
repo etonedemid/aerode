@@ -16,6 +16,9 @@ cairo-rs = { version = "0.18", features = ["png"] }
 pangocairo = "0.18"
 zbus = "4"
 async-channel = "2"
+vte = "0.13"
+libc = "0.2"
+portable-pty = "0.8"
 
 [profile.release]
 opt-level = 3
