@@ -99,3 +99,17 @@ button.sm-power:hover { background-image: linear-gradient(to bottom, rgba(255,25
 button.desk-icon { background: none; border: 1px solid transparent; border-radius: 3px; box-shadow: none; padding: 2px; }
 button.desk-icon:hover { background-color: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.40); }
 button.desk-icon.selected { background-color: rgba(85,160,240,0.40); border-color: rgba(150,205,255,0.9); }
+
+/* Win7 flyouts (colours from aero.msstyles FlyoutStyle) */
+.flyout-body { background: transparent; padding: 10px 12px; }
+.flyout-body label { color: #000000; }
+.flyout-foot { background: transparent; padding: 9px 12px; }
+.flyout-foot button.link label, .fly-link { color: #0066cc; }
+.flyout-foot button.link:hover label { color: #3399ff; text-decoration: underline; }
+.fly-time { color: #1e1e1e; }
+.w7cal { background-color: #ffffff; color: #000; border: none; padding: 2px; font-size: 9pt; }
+.w7cal.header { background: none; border: none; }
+.w7cal.button { color: #1e395b; }
+.w7cal:selected { background-image: linear-gradient(to bottom, #dcebfc, #c1dbfc); border: 1px solid #7da2ce; color: #000; border-radius: 2px; }
+.w7cal.highlight { color: #1e395b; font-weight: bold; }
+button.link, .flyout-foot button { background: none; background-image: none; border: none; box-shadow: none; padding: 0; min-height: 0; }

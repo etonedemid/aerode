@@ -22,17 +22,29 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     w.set_decorated(false);
     w.set_type_hint(gdk::WindowTypeHint::Utility);
     w.set_skip_taskbar_hint(true);
+    w.set_skip_pager_hint(true);
     w.set_keep_above(true);
+    w.set_app_paintable(true);
     w.style_context().add_class("aero7");
     let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    frame.style_context().add_class("flyout");
+    frame.set_margin_start(7);
+    frame.set_margin_end(7);
+    frame.set_margin_top(7);
+    frame.set_margin_bottom(7);
     body.style_context().add_class("flyout-body");
     frame.pack_start(body, true, true, 0);
-    if let Some(f) = foot {
+    let foot_box = foot.map(|f| {
         f.style_context().add_class("flyout-foot");
         frame.pack_start(f, false, false, 0);
-    }
+        f.clone()
+    });
     w.add(&frame);
+    w.connect_draw(move |w, cr| {
+        let (x, y) = w.position();
+        let fh = foot_box.as_ref().map(|f| f.allocated_height() as f64).unwrap_or(0.0);
+        crate::glass::paint_flyout(cr, w.allocated_width() as f64, w.allocated_height() as f64, x as f64, y as f64, fh);
+        glib::Propagation::Proceed
+    });
     w.connect_focus_out_event(|w, _| { w.close(); glib::Propagation::Proceed });
     w.connect_key_press_event(|w, e| {
         if e.keyval() == gdk::keys::constants::Escape { w.close(); }
@@ -47,7 +59,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
         .unwrap_or((0, 0));
     let alloc = anchor.allocation();
     let x = (ax + alloc.x() + alloc.width() / 2 - nat.width / 2).clamp(geo.x() + 4, geo.x() + geo.width() - nat.width - 4);
-    let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 6;
+    let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 4;
     w.move_(x, y);
     w.show_all();
     w.present();
@@ -114,27 +126,70 @@ fn clock(tb: &Rc<Taskbar>) {
     glib::timeout_add_seconds_local(1, move || { update(); glib::ControlFlow::Continue });
     b.connect_clicked(|b| {
         if close_open() { return; }
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let now = chrono::Local::now();
-        let big = gtk::Label::new(Some(&now.format("%-I:%M:%S %p").to_string()));
-        big.style_context().add_class("big");
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let date = gtk::Label::new(Some(&now.format("%A, %B %-d, %Y").to_string()));
-        date.style_context().add_class("link");
+        date.style_context().add_class("fly-link");
+        date.set_halign(gtk::Align::Start);
         body.pack_start(&date, false, false, 0);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         let cal = gtk::Calendar::new();
-        body.pack_start(&cal, false, false, 0);
-        body.pack_start(&big, false, false, 0);
+        cal.style_context().add_class("w7cal");
+        row.pack_start(&cal, false, false, 0);
+        let right = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let face = gtk::DrawingArea::new();
+        face.set_size_request(130, 130);
+        let pb = |n: &str| config::data_file(&format!("clock/{n}.png")).and_then(|p| gtk::gdk_pixbuf::Pixbuf::from_file(p).ok());
+        let (dial, glassov) = (pb("5000"), pb("5001"));
+        face.connect_draw(move |_, cr| { draw_clock(cr, 130.0, dial.as_ref(), glassov.as_ref()); glib::Propagation::Proceed });
+        right.pack_start(&face, false, false, 0);
+        let digital = gtk::Label::new(Some(&now.format("%-I:%M:%S %p").to_string()));
+        digital.style_context().add_class("fly-time");
+        right.pack_start(&digital, false, false, 0);
+        row.pack_start(&right, false, false, 0);
+        body.pack_start(&row, false, false, 0);
         {
-            let big = big.clone();
-            glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-                if !big.is_mapped() { return glib::ControlFlow::Break; }
-                big.set_text(&chrono::Local::now().format("%-I:%M:%S %p").to_string());
+            let (face, digital) = (face.clone(), digital.clone());
+            glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                if !face.is_mapped() { return glib::ControlFlow::Break; }
+                face.queue_draw();
+                digital.set_text(&chrono::Local::now().format("%-I:%M:%S %p").to_string());
                 glib::ControlFlow::Continue
             });
         }
         let foot = link("Change date and time settings...", || control("datetime"));
         popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
     });
+}
+
+/// Analog clock: Win7 dial + glass overlay with hands drawn in between.
+fn draw_clock(cr: &gtk::cairo::Context, size: f64, dial: Option<&gtk::gdk_pixbuf::Pixbuf>, glass_ov: Option<&gtk::gdk_pixbuf::Pixbuf>) {
+    use chrono::Timelike;
+    use gtk::gdk::prelude::GdkContextExt;
+    let c = size / 2.0;
+    if let Some(d) = dial { cr.set_source_pixbuf(d, 0.0, 0.0); cr.paint().ok(); } else {
+        cr.arc(c, c, c - 2.0, 0.0, std::f64::consts::TAU);
+        cr.set_source_rgb(0.97, 0.97, 0.98);
+        cr.fill_preserve().ok();
+        cr.set_source_rgb(0.6, 0.62, 0.66);
+        cr.stroke().ok();
+    }
+    let t = chrono::Local::now();
+    let (h, m, s) = (t.hour() % 12, t.minute(), t.second());
+    let hand = |angle: f64, len: f64, width: f64, rgba: (f64, f64, f64, f64)| {
+        let a = angle - std::f64::consts::FRAC_PI_2;
+        cr.set_line_cap(gtk::cairo::LineCap::Round);
+        cr.set_line_width(width);
+        cr.set_source_rgba(rgba.0, rgba.1, rgba.2, rgba.3);
+        cr.move_to(c - a.cos() * len * 0.18, c - a.sin() * len * 0.18);
+        cr.line_to(c + a.cos() * len, c + a.sin() * len);
+        cr.stroke().ok();
+    };
+    let tau = std::f64::consts::TAU;
+    hand(tau * (h as f64 + m as f64 / 60.0) / 12.0, size * 0.25, 3.5, (0.15, 0.16, 0.18, 0.95));
+    hand(tau * (m as f64 + s as f64 / 60.0) / 60.0, size * 0.36, 2.5, (0.15, 0.16, 0.18, 0.95));
+    hand(tau * s as f64 / 60.0, size * 0.38, 1.0, (0.75, 0.10, 0.10, 0.95));
+    if let Some(g) = glass_ov { cr.set_source_pixbuf(g, 0.0, 0.0); cr.paint().ok(); }
 }
 
 // ---------------------------------------------------------------- volume

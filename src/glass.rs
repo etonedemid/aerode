@@ -308,3 +308,46 @@ pub fn rounded_top(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64, 
     cr.arc(x + r.max(0.01), y + r.max(0.01), r.max(0.01), PI, 1.5 * PI);
     cr.close_path();
 }
+
+thread_local! {
+    static THEME: Option<std::rc::Rc<crate::msstyles::Theme>> =
+        crate::msstyles::Theme::open(&config::data_dir().join("theme/aero.msstyles")).ok().map(std::rc::Rc::new);
+}
+
+/// The user's extracted aero.msstyles, if present.
+pub fn theme() -> Option<std::rc::Rc<crate::msstyles::Theme>> { THEME.with(|t| t.clone()) }
+
+/// An IMAGE resource from aero.msstyles as a pixbuf.
+pub fn theme_pixbuf(id: u16) -> Option<Pixbuf> {
+    let img = theme()?.image_res(id)?;
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    Some(Pixbuf::from_bytes(&glib::Bytes::from_owned(img.into_raw()), Colorspace::Rgb, true, 8, w, h, w * 4))
+}
+
+/// Win7 flyout chrome: glass border, white body, footer band (Flyout part 7 image).
+pub fn paint_flyout(cr: &cairo::Context, w: f64, h: f64, sx: f64, sy: f64, foot_h: f64) {
+    const B: f64 = 7.0;
+    paint_glass(cr, w, h, sx, sy, 6.0, true);
+    // white content panel with a 1px dark edge, like the Win7 flyout
+    cr.rectangle(B - 0.5, B - 0.5, w - 2.0 * B + 1.0, h - 2.0 * B + 1.0);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.45);
+    cr.set_line_width(1.0);
+    cr.stroke().ok();
+    cr.rectangle(B, B, w - 2.0 * B, h - 2.0 * B);
+    cr.set_source_rgb(1.0, 1.0, 1.0);
+    cr.fill().ok();
+    if foot_h > 0.0 {
+        let fy = h - B - foot_h;
+        if let Some(band) = theme_pixbuf(780).and_then(|p| p.scale_simple((w - 2.0 * B) as i32, foot_h as i32, InterpType::Bilinear)) {
+            cr.set_source_pixbuf(&band, B, fy);
+            cr.paint().ok();
+        } else {
+            cr.rectangle(B, fy, w - 2.0 * B, foot_h);
+            cr.set_source_rgb(0.945, 0.961, 0.984);
+            cr.fill().ok();
+            cr.rectangle(B, fy, w - 2.0 * B, 1.0);
+            cr.set_source_rgb(0.85, 0.88, 0.92);
+            cr.fill().ok();
+        }
+    }
+}

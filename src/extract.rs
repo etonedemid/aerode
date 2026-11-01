@@ -17,8 +17,8 @@ const WANTED: &[&str] = &[
     "Windows/System32/imageres.dll", "Windows/System32/shell32.dll", "Windows/explorer.exe",
     "Windows/System32/cmd.exe", "Windows/System32/notepad.exe", "Windows/System32/calc.exe",
     "Windows/System32/mspaint.exe", "Windows/System32/SndVol.exe", "Windows/System32/taskmgr.exe",
-    "Windows/System32/control.exe", "Windows/System32/pnidui.dll", "Windows/System32/SnippingTool.exe",
-    "Windows/System32/DeviceCenter.dll", "Windows/System32/wscui.cpl", "Windows/System32/powercpl.dll",
+    "Windows/System32/control.exe", "Windows/System32/timedate.cpl", "Windows/System32/pnidui.dll", "Windows/System32/SnippingTool.exe",
+    "Windows/System32/DeviceCenter.dll", "Windows/System32/SndVolSSO.dll", "Windows/System32/batmeter.dll", "Windows/System32/wscui.cpl", "Windows/System32/powercpl.dll",
     "Windows/System32/timedate.cpl", "Windows/System32/mmsys.cpl", "Windows/System32/main.cpl",
     "Windows/System32/desk.cpl", "Windows/System32/themecpl.dll", "Windows/System32/sysdm.cpl",
     "Windows/System32/appwiz.cpl", "Windows/System32/inetcpl.cpl", "Windows/System32/netcenter.dll",
@@ -75,8 +75,23 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("multimedia-player", "Program Files/Windows Media Player/wmplayer.exe", None, &["vlc", "totem", "org.gnome.Totem", "mpv", "multimedia-video-player", "celluloid", "smplayer", "haruna", "org.kde.haruna"]),
     ("accessories-word-processor", "Program Files/Windows NT/Accessories/wordpad.exe", None, &["libreoffice-writer", "abiword"]),
     ("utilities-system-monitor", "Windows/System32/taskmgr.exe", None, &["gnome-system-monitor", "org.gnome.SystemMonitor", "lxtask", "xfce4-taskmanager", "htop", "ksysguard", "plasma-systemmonitor", "aero7-taskmgr"]),
-    ("audio-volume-high", "Windows/System32/SndVol.exe", None, &["multimedia-volume-control", "pavucontrol", "audio-card", "org.pulseaudio.pavucontrol"]),
-    ("network-wired", "Windows/System32/pnidui.dll", None, &["network-transmit-receive", "network-idle", "preferences-system-network"]),
+    ("multimedia-volume-control", "Windows/System32/SndVol.exe", None, &["pavucontrol", "audio-card", "org.pulseaudio.pavucontrol"]),
+    // notification-area icons (the real Win7 tray art)
+    ("audio-volume-muted", "Windows/System32/SndVolSSO.dll", Some(120), &["audio-volume-muted-blocking"]),
+    ("audio-volume-zero", "Windows/System32/SndVolSSO.dll", Some(121), &[]),
+    ("audio-volume-low", "Windows/System32/SndVolSSO.dll", Some(122), &[]),
+    ("audio-volume-medium", "Windows/System32/SndVolSSO.dll", Some(123), &[]),
+    ("audio-volume-high", "Windows/System32/SndVolSSO.dll", Some(124), &["audio-speakers"]),
+    ("audio-volume-error", "Windows/System32/SndVolSSO.dll", Some(125), &[]),
+    ("network-wired", "Windows/System32/pnidui.dll", Some(3048), &["network-transmit-receive", "network-idle", "network-wired-symbolic"]),
+    ("network-offline", "Windows/System32/pnidui.dll", Some(3020), &["network-wired-disconnected", "network-wireless-disconnected"]),
+    ("network-error", "Windows/System32/pnidui.dll", Some(3051), &["network-wired-no-route", "network-wireless-no-route"]),
+    ("network-wireless-signal-none", "Windows/System32/pnidui.dll", Some(3021), &[]),
+    ("network-wireless-signal-weak", "Windows/System32/pnidui.dll", Some(3022), &[]),
+    ("network-wireless-signal-ok", "Windows/System32/pnidui.dll", Some(3023), &[]),
+    ("network-wireless-signal-good", "Windows/System32/pnidui.dll", Some(3024), &[]),
+    ("network-wireless-signal-excellent", "Windows/System32/pnidui.dll", Some(3026), &["network-wireless"]),
+    ("preferences-system-network", "Windows/System32/pnidui.dll", Some(2402), &["network-workgroup-sharing"]),
     ("accessories-screenshot", "Windows/System32/SnippingTool.exe", None, &["org.gnome.Screenshot", "gnome-screenshot", "xfce4-screenshooter", "flameshot", "spectacle", "org.kde.spectacle", "aero7-snip"]),
     ("accessories-notes", "Windows/System32/StikyNot.exe", None, &["xpad", "knotes"]),
     ("preferences-desktop-accessibility", "Windows/System32/magnify.exe", None, &[]),
@@ -212,6 +227,14 @@ fn extract_orb(root: &Path, data: &Path) {
     for (id, name) in [(6801u16, "orb.png"), (6805, "orb-120.png"), (6809, "orb-144.png")] {
         if let Some(img) = pe.get(pe::RT_BITMAP, id).and_then(|d| pe::decode_dib(d, false).ok()) {
             let _ = save_png(&img, &data.join(name));
+        }
+    }
+    // clock flyout faces (timedate.cpl PNGFILE 5000-5011)
+    if let Some(td) = find_ci(root, "Windows/System32/timedate.cpl").and_then(|p| Pe::open(&p).ok()) {
+        let dir = data.join("clock");
+        let _ = std::fs::create_dir_all(&dir);
+        for n in td.names("PNGFILE") {
+            if let ResId::Id(i) = n { if let Some(d) = td.get("PNGFILE", i) { let _ = std::fs::write(dir.join(format!("{i}.png")), d); } }
         }
     }
     // dump every bitmap in explorer.exe too (taskbar/start menu pieces) for the renderer
