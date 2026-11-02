@@ -5,6 +5,10 @@ export XDG_SESSION_DESKTOP=aerode
 export DESKTOP_SESSION=aerode
 export GTK_THEME=Aerode
 export QT_QPA_PLATFORMTHEME=gtk3
+# Chromium/Electron (Brave, Discord, Claude...) only use KWallet when the desktop says KDE; otherwise
+# they read an empty keyring, can't decrypt cookies and drop every login.
+# ponytail: also makes portals/xdg-open treat us as KDE; use per-app --password-store flags if that bites
+KWALLET=; [ -f "$HOME/.local/share/kwalletd/kdewallet.kwl" ] && KWALLET=1 && export XDG_CURRENT_DESKTOP=Aerode:KDE KDE_SESSION_VERSION=6
 [ -d "$HOME/.local/share/icons/Aerode-cursors" ] && export XCURSOR_THEME=Aerode-cursors
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 mkdir -p "$CONF"
@@ -32,7 +36,7 @@ xsetroot -cursor_name left_ptr 2>/dev/null
 [ -f "$CONF/keyboard.sh" ] && sh "$CONF/keyboard.sh"
 [ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && { xset -dpms; xset s off; } || { xset +dpms dpms "$t" "$t" "$t"; xset s "$t"; }; }
 
-dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP 2>/dev/null
+dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP KDE_SESSION_VERSION 2>/dev/null
 # helpers Plasma would provide (all optional)
 # UAC-style polkit agent (falls back to other agents if ours is missing)
 if command -v aerode-polkit >/dev/null; then aerode-polkit &
@@ -42,7 +46,7 @@ command -v xss-lock >/dev/null && xss-lock -- aerode lock &
 PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/picom.conf"
 command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$PICOM_CONF" -b
 command -v udiskie >/dev/null && udiskie --no-tray &
-command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
+[ -z "$KWALLET" ] && command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
 
 aerode shell &
 # the window manager is the session leader: logging off ends it
