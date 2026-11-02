@@ -33,11 +33,11 @@ pub struct Params<'a> {
     pub maximized: bool,
     pub buttons: &'a [(Btn, BState)],
     pub composited: bool,
-    /// colourisation (r,g,b,alpha 0..1)
-    pub color: [f64; 4],
-    /// for the non-composited fallback: painter of what lies behind (screen coords)
-    pub backdrop: Option<&'a dyn Fn(&Context, f64, f64)>,
+    /// fills the current clip with this frame's glass (`wm::glass::Glass::fill`), returns the
+    /// reflection opacity
+    pub glass: &'a dyn Fn(&Context) -> f64,
     pub screen_pos: (i32, i32),
+    pub screen_size: (i32, i32),
 }
 
 struct Part {
@@ -49,6 +49,8 @@ struct Part {
 
 pub struct Decor {
     parts: HashMap<i32, Part>,
+    /// DWMWindow glass opacity / reflection opacity per state (TOPFRAME 56 prop 2432, REFLECTIONMAP 40 prop 2430)
+    pub theme_glass: crate::dwmcolor::ThemeGlass,
 }
 
 fn rgba_to_surface(img: &image::RgbaImage) -> ImageSurface {
@@ -74,8 +76,13 @@ pub fn rgba_surface(img: &image::RgbaImage) -> ImageSurface { rgba_to_surface(im
 impl Decor {
     pub fn load() -> Decor {
         let mut parts = HashMap::new();
+        let mut theme_glass = crate::dwmcolor::ThemeGlass::default();
         let path = crate::config::data_dir().join("theme/aero.msstyles");
         if let Ok(t) = Theme::open(&path) {
+            for st in 1..=4 {
+                if let Some(v) = t.int("DWMWindow", 56, st, 2432) { theme_glass.opacity[st as usize - 1] = v as f64 / 100.0; }
+                if let Some(v) = t.int("DWMWindow", 40, st, 2430) { theme_glass.reflection[st as usize - 1] = v as f64 / 100.0; }
+            }
             if let Some(atlas) = t.stream(971).or_else(|| {
                 // the atlas id differs between builds: take the biggest STREAM
                 None
@@ -101,7 +108,7 @@ impl Decor {
                 }
             }
         }
-        Decor { parts }
+        Decor { parts, theme_glass }
     }
 
     pub fn themed(&self) -> bool { self.parts.contains_key(&7) }
@@ -163,6 +170,33 @@ impl Decor {
         out
     }
 
+    /// DWMWindow part 40 (REFLECTIONMAP) stretched over the screen and shifted by 13 % of the
+    /// frame's distance from the screen centre, like DWM; plain diagonal streaks without a theme.
+    fn reflection(&self, cr: &Context, opacity: f64, p: &Params) {
+        if opacity <= 0.0 { return; }
+        let (sx, sy) = (p.screen_pos.0 as f64, p.screen_pos.1 as f64);
+        let (scr_w, scr_h) = (p.screen_size.0.max(1) as f64, p.screen_size.1.max(1) as f64);
+        if let Some(map) = self.parts.get(&40) {
+            let (mw, mh) = (map.surf.width() as f64, map.surf.height() as f64);
+            let shift = ((sx + p.w as f64 / 2.0) - scr_w / 2.0) * 0.13;
+            cr.save().ok();
+            cr.translate(shift - sx, -sy);
+            cr.scale(scr_w / mw, scr_h / mh);
+            cr.set_source_surface(&map.surf, 0.0, 0.0).ok();
+            cr.source().set_extend(cairo::Extend::Pad);
+            cr.source().set_filter(cairo::Filter::Bilinear);
+            cr.paint_with_alpha(opacity).ok();
+            cr.restore().ok();
+            return;
+        }
+        let (w, h) = (p.w as f64, p.h as f64);
+        let g = cairo::LinearGradient::new(0.0, 0.0, w * 0.4, h * 0.4);
+        g.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.35 * opacity);
+        g.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.0);
+        cr.set_source(&g).ok();
+        cr.paint().ok();
+    }
+
     pub fn render(&self, cr: &Context, p: &Params) {
         let (w, h) = (p.w as f64, p.h as f64);
         let top = if p.maximized { MAX_TOP } else { TOP } as f64;
@@ -177,38 +211,20 @@ impl Decor {
             cr.paint().ok();
             cr.set_operator(cairo::Operator::Over);
         }
-        // ---- glass body
+        // ---- glass body: only the border strips (the client covers the rest), then the DWM
+        // reflection map over it
         crate::glass::rounded_top(cr, 0.0, 0.0, w, h, r, 2.0);
         cr.save().ok();
-        cr.clip_preserve();
-        cr.new_path();
-        let [cr_, cg, cb, ca] = p.color;
-        if !p.composited {
-            if let Some(bd) = p.backdrop { bd(cr, p.screen_pos.0 as f64, p.screen_pos.1 as f64); }
-            let a = if p.active { 0.55 } else { 0.35 };
-            cr.set_source_rgba(cr_, cg, cb, a);
-            cr.paint().ok();
-            cr.set_source_rgba(1.0, 1.0, 1.0, if p.active { 0.18 } else { 0.38 });
-            cr.paint().ok();
-        } else {
-            let a = if p.active { ca } else { ca * 0.55 };
-            cr.set_source_rgba(cr_ * 0.9, cg * 0.9, cb * 0.9, a);
-            cr.paint().ok();
-            if !p.active {
-                cr.set_source_rgba(0.85, 0.88, 0.92, 0.35);
-                cr.paint().ok();
-            }
-        }
-        // reflection streak (part 34 when themed)
-        if let Some(refl) = self.parts.get(&34) {
-            cr.set_source_surface(&refl.surf, 0.0, 0.0).ok();
-            cr.paint_with_alpha(if p.composited { if p.active { 0.32 } else { 0.2 } } else if p.active { 0.9 } else { 0.6 }).ok();
-        } else {
-            let g = cairo::LinearGradient::new(0.0, 0.0, w * 0.4, h * 0.4);
-            g.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.35);
-            g.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.0);
-            cr.set_source(&g).ok();
-            cr.paint().ok();
+        cr.clip();
+        let strips = [(0.0, 0.0, w, top), (0.0, top, b, h - top - b), (w - b, top, b, h - top - b), (0.0, h - b, w, b)];
+        for (x, y, sw, sh) in strips {
+            if sw <= 0.0 || sh <= 0.0 { continue; }
+            cr.save().ok();
+            cr.rectangle(x, y, sw, sh);
+            cr.clip();
+            let refl = (p.glass)(cr);
+            self.reflection(cr, refl, p);
+            cr.restore().ok();
         }
         cr.restore().ok();
         // ---- outer dark border + inner highlight

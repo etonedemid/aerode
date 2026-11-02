@@ -207,8 +207,8 @@ impl Colorization {
 }
 
 impl Config {
-    /// Compatibility for code that still reads the old `tint` ([r, g, b, intensity] 0..1, the input of
-    /// `wm::colorization`), derived from the saved colourisation.
+    /// Compatibility for code that still reads the old `tint` ([r, g, b, intensity] 0..1), derived
+    /// from the saved colourisation.
     pub fn tint(&self) -> [f64; 4] {
         let c = self.colorization.color;
         if c == crate::dwmcolor::SWATCHES[0].1 { return [0.10, 0.22, 0.36, 0.52]; } // Sky, the old default
