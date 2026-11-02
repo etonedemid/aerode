@@ -208,7 +208,7 @@ fn restart_session() {
         let user = aerode::config::conf_dir().join("picom.conf");
         // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off)
         if let Ok(old) = std::fs::read_to_string(&user) {
-            if !old.contains("_AERODE_GLASS") {
+            if !old.contains("# aerode-picom 2") {
                 match std::fs::read_to_string("/usr/share/aerode/picom.conf") {
                     Ok(base) if old.contains("vsync = false") => { let _ = std::fs::write(&user, base.replace("vsync = true;", "vsync = false;")); }
                     Ok(_) => { let _ = std::fs::remove_file(&user); }

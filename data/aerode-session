@@ -44,7 +44,7 @@ else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr
   [ -x "$agent" ] && { "$agent" & break; }; done; fi
 command -v xss-lock >/dev/null && xss-lock -- aerode lock &
 # a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping VSync off)
-if [ -f "$CONF/picom.conf" ] && ! grep -q _AERODE_GLASS "$CONF/picom.conf"; then
+if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 2" "$CONF/picom.conf"; then
   if grep -q "vsync = false" "$CONF/picom.conf"; then sed 's/vsync = true;/vsync = false;/' "$SHARE/picom.conf" > "$CONF/picom.conf"; else rm -f "$CONF/picom.conf"; fi
 fi
 PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/picom.conf"
