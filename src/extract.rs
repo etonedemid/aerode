@@ -135,6 +135,7 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("go-down", "Windows/System32/xpsrchvw.exe", Some(118), &[]),
     ("preferences-desktop-font", "Windows/System32/imageres.dll", Some(77), &["gnome-font-viewer", "org.gnome.font-viewer"]),
     ("preferences-desktop-default-applications", "Windows/System32/sud.dll", None, &[]),
+    ("aerode-gadgets", "Program Files/Windows Sidebar/sidebar.exe", None, &["preferences-desktop-gadgets"]),
     ("system-search", "Windows/System32/imageres.dll", Some(8), &[]),
     ("printer", "Windows/System32/DeviceCenter.dll", None, &["preferences-devices-printer", "document-print", "system-config-printer", "printer-network"]),
     ("help-browser", "Windows/HelpPane.exe", None, &["help-contents", "system-help", "yelp"]),
@@ -563,6 +564,22 @@ pub fn run(args: &[String]) -> Result<()> {
     if let Some(i) = args.iter().position(|a| a == "--sheet-only") {
         let out = args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("iconsheet"));
         return icon_sheet(&src, &out);
+    }
+    // developer aid: aerode-extract <aero.msstyles> --msstyles-dump CLASS <out dir>
+    if let Some(i) = args.iter().position(|a| a == "--msstyles-dump") {
+        let class = args.get(i + 1).cloned().unwrap_or_default();
+        let out = args.get(i + 2).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("msdump"));
+        std::fs::create_dir_all(&out)?;
+        let th = crate::msstyles::Theme::open(&src)?;
+        for p in th.props.iter().filter(|p| p.class.eq_ignore_ascii_case(&class)) {
+            println!("part {:>2} state {:>2} prop {:>5} type {:>3} = {:?}", p.part, p.state, p.name, p.ty, p.value);
+            if p.name == crate::msstyles::IMAGEFILE || p.name == crate::msstyles::IMAGEFILE1 {
+                if let crate::msstyles::Value::Image(id) = p.value {
+                    if let Some(img) = th.image_res(id) { save_png(&img, &out.join(format!("{class}_{}_{}_{id}.png", p.part, p.state)))?; }
+                }
+            }
+        }
+        return Ok(());
     }
     // developer aid: aerode-extract <extracted dir> --icons-only <out dir>
     if let Some(i) = args.iter().position(|a| a == "--icons-only") {

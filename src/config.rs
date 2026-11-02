@@ -21,6 +21,9 @@ pub struct Config {
     /// sound scheme overrides: event key -> file name/path ("" = none)
     pub sounds: HashMap<String, String>,
     pub sounds_muted: bool,
+    /// desktop "Sort by": name | size | type | date
+    pub desktop_sort: String,
+    pub desktop_sort_desc: bool,
 }
 
 impl Default for Config {
@@ -37,6 +40,8 @@ impl Default for Config {
             taskbar_height: 40,
             sounds: HashMap::new(),
             sounds_muted: false,
+            desktop_sort: "name".into(),
+            desktop_sort_desc: false,
         }
     }
 }

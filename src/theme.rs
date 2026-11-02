@@ -8,8 +8,16 @@ use crate::{config, glass};
 pub const SHELL_CSS: &str = include_str!("../data/shell.css");
 pub const APP_CSS: &str = include_str!("../data/gtk.css");
 
+/// Where the theme's image assets live: the installed GTK theme, else the source tree.
+pub fn assets_dir() -> PathBuf {
+    let installed = PathBuf::from("/usr/share/themes/Aerode/gtk-3.0/assets");
+    if installed.is_dir() { installed } else { PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/gtk-assets")) }
+}
+
 pub fn load_css(css: &str) {
     let p = gtk::CssProvider::new();
+    // CSS loaded from memory has no base for relative urls (and GTK 3 ignores data: urls)
+    let css = css.replace("url(\"assets/", &format!("url(\"file://{}/", assets_dir().display()));
     if let Err(e) = p.load_from_data(css.as_bytes()) {
         eprintln!("aerode: css error: {e}");
     }
