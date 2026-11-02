@@ -166,6 +166,20 @@ fn main() -> glib::ExitCode {
     app.run_with_args(&args)
 }
 
+/// Is this display's aerode-wm running from a binary that has since been replaced on disk
+/// (/proc/<pid>/exe reads "… (deleted)" after ./install.sh)?
+fn wm_binary_replaced() -> bool {
+    // ":0.0" and ":0" are the same display
+    let norm = |d: &str| match d.rsplit_once(':') { Some((h, n)) => format!("{h}:{}", n.split('.').next().unwrap_or(n)), None => d.to_string() };
+    let ours = norm(std::env::var("DISPLAY").unwrap_or_default().as_str());
+    util::output(&["pgrep", "-x", "aerode-wm"]).unwrap_or_default().lines().any(|pid| {
+        let pid = pid.trim();
+        let replaced = std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.to_string_lossy().ends_with(" (deleted)")).unwrap_or(false);
+        let env = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+        replaced && env.split(|b| *b == 0).any(|kv| kv.strip_prefix(b"DISPLAY=").map(|d| norm(&*String::from_utf8_lossy(d)) == ours).unwrap_or(false))
+    })
+}
+
 /// `aerode restart`: restart the window manager in place, the shell and the compositor,
 /// without logging out (open windows are kept).
 fn restart_session() {
@@ -178,7 +192,7 @@ fn restart_session() {
             .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).process_group(0).spawn();
     };
     // 1. window manager
-    let mut wm_ok = false;
+    let (mut wm_ok, mut wm_stale) = (false, false);
     if let Ok((conn, screen)) = x11rb::connect(None) {
         let root = conn.setup().roots[screen].root;
         let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
@@ -187,12 +201,21 @@ fn restart_session() {
         let win = conn.get_property(false, root, check, AtomEnum::WINDOW, 0, 1).ok().and_then(|c| c.reply().ok())
             .and_then(|r| r.value32().and_then(|mut v| v.next())).unwrap_or(0);
         let name = conn.get_property(false, win, atom("_NET_WM_NAME"), atom("UTF8_STRING"), 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
-        if win != 0 && name == b"Aerode" {
+        // a WM built before it published its pid here cannot re-exec a binary that ./install.sh replaced: it
+        // would tear down every frame, fail to exec "aerode-wm (deleted)" and keep running the OLD code
+        let reexec_ok = conn.get_property(false, win, atom("_NET_WM_PID"), AtomEnum::CARDINAL, 0, 1).ok()
+            .and_then(|c| c.reply().ok()).map(|r| r.value_len > 0).unwrap_or(false);
+        if win != 0 && name == b"Aerode" && !reexec_ok && wm_binary_replaced() {
+            wm_stale = true;
+        } else if win != 0 && name == b"Aerode" {
             let ev = ClientMessageEvent::new(32, win, restart, [0u32; 5]);
             wm_ok = conn.send_event(false, win, EventMask::NO_EVENT, ev).is_ok() && conn.flush().is_ok();
         }
     }
-    if wm_ok { println!("aerode: window manager restarting"); } else { println!("aerode: window manager not running, starting it"); detached(&["aerode-wm"]); }
+    if wm_stale {
+        println!("aerode: the running window manager is an older build that cannot load the new one in place;");
+        println!("        log out and back in once (the window manager was left alone)");
+    } else if wm_ok { println!("aerode: window manager restarting"); } else { println!("aerode: window manager not running, starting it"); detached(&["aerode-wm"]); }
     // 2. shell (taskbar, desktop, start menu)
     let _ = std::process::Command::new(&exe).arg("quit").status();
     std::thread::sleep(std::time::Duration::from_millis(600));

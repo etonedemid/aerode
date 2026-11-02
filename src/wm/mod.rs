@@ -247,6 +247,9 @@ impl Wm {
         let c = &self.conn;
         c.change_property32(PropMode::REPLACE, self.check_win, a._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, &[self.check_win])?;
         c.change_property8(PropMode::REPLACE, self.check_win, a._NET_WM_NAME, a.UTF8_STRING, b"Aerode")?;
+        // our pid on the check window also tells `aerode restart` that this build can re-exec a binary that
+        // ./install.sh replaced (older builds tear every frame down and then fail to exec "… (deleted)")
+        c.change_property32(PropMode::REPLACE, self.check_win, a._NET_WM_PID, AtomEnum::CARDINAL, &[std::process::id()])?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, &[self.check_win])?;
         let sup = [a._NET_SUPPORTED, a._NET_SUPPORTING_WM_CHECK, a._NET_WM_NAME, a._NET_CLIENT_LIST, a._NET_CLIENT_LIST_STACKING,
             a._NET_ACTIVE_WINDOW, a._NET_CLOSE_WINDOW, a._NET_WORKAREA, a._NET_NUMBER_OF_DESKTOPS, a._NET_CURRENT_DESKTOP,
@@ -874,7 +877,8 @@ impl Wm {
         let c = &self.clients[&w];
         if c.desktop != self.current_desktop && c.desktop != 0xffffffff { let d = c.desktop; self.desktop_set(d, false); }
         let old = self.active;
-        if old != w && old != 0 { self.prev_active = old; }
+        // also when nothing was active (0): a stale older window must not be "the one before" the new one
+        if old != w { self.prev_active = old; }
         self.active = w;
         let c = &self.clients[&w];
         if c.protocols.contains(&self.atoms.WM_TAKE_FOCUS) {
