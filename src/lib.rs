@@ -22,6 +22,7 @@ pub mod startmenu;
 pub mod sys;
 pub mod taskbar;
 pub mod theme;
+pub mod thumbs;
 pub mod tray;
 pub mod util;
 pub mod wincolor;

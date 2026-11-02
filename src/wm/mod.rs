@@ -39,7 +39,7 @@ x11rb::atom_manager! {
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
-        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS, _AERODE_COLORIZATION,
+        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_WM_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS, _AERODE_COLORIZATION, _AERODE_PEEK,
     }
 }
 
@@ -177,6 +177,8 @@ pub struct Wm {
     shake: Shake,
     /// windows the last Aero Shake / Win+Home minimised (shaking again restores them)
     shaken: Vec<u32>,
+    /// Aero Peek in progress: (faded-out top-level windows, their glass outline windows)
+    peeking: Option<(Vec<u32>, Vec<u32>)>,
 }
 
 fn frame_events() -> EventMask {
@@ -196,7 +198,7 @@ impl Wm {
         let _ = conn.randr_select_input(root, x11rb::protocol::randr::NotifyMask::SCREEN_CHANGE);
         // repaint frames when a compositor starts/stops (glass vs. opaque)
         if conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some() {
-            let _ = conn.xfixes_select_selection_input(root, atoms._NET_CM_S0,
+            let _ = conn.xfixes_select_selection_input(root, atoms._NET_WM_CM_S0,
                 x11rb::protocol::xfixes::SelectionEventMask::SET_SELECTION_OWNER
                     | x11rb::protocol::xfixes::SelectionEventMask::SELECTION_WINDOW_DESTROY
                     | x11rb::protocol::xfixes::SelectionEventMask::SELECTION_CLIENT_CLOSE);
@@ -221,7 +223,7 @@ impl Wm {
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
-            glass, glass_dirty: false, shake: Shake::default(), shaken: vec![],
+            glass, glass_dirty: false, shake: Shake::default(), shaken: vec![], peeking: None,
         };
         {
             let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
@@ -303,7 +305,7 @@ impl Wm {
     fn composited(&self) -> bool {
         let (t, v) = self.composited_cache.get();
         if t.elapsed().as_millis() < 1000 { return v; }
-        let v = self.argb.is_some() && self.conn.get_selection_owner(self.atoms._NET_CM_S0).ok()
+        let v = self.argb.is_some() && self.conn.get_selection_owner(self.atoms._NET_WM_CM_S0).ok()
             .and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
         self.composited_cache.set((Instant::now(), v));
         v
@@ -591,6 +593,8 @@ impl Wm {
     fn unmanage(&mut self, w: u32, destroyed: bool) {
         if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.remove(&w) else { return };
+        // the taskbar went away in the middle of a peek: never leave windows invisible
+        if c.kind == Kind::Dock { self.peek_end(); }
         if let Some(f) = c.frame {
             self.frames.remove(&f);
             if !destroyed {
@@ -1249,7 +1253,7 @@ impl Wm {
             Event::PropertyNotify(e) => self.property(e),
             Event::ClientMessage(e) => self.client_message(e),
             Event::Expose(e) if e.count == 0 => { if let Some(w) = self.frames.get(&e.window).copied() { self.redraw(w); } }
-            Event::ButtonPress(e) => self.button_press(e)?,
+            Event::ButtonPress(e) => { self.peek_end(); self.button_press(e)? }
             Event::ButtonRelease(e) => self.button_release(e),
             Event::MotionNotify(e) => self.motion(e),
             Event::LeaveNotify(e) => {
@@ -1391,6 +1395,9 @@ impl Wm {
         } else if cfg!(debug_assertions) && e.type_ == a._AERODE_RESTART && w == self.check_win && d[0] == 0xDEAD {
             // debug builds only: exercise the crash recovery in run()
             panic!("test panic requested through _AERODE_RESTART");
+        } else if e.type_ == a._AERODE_PEEK && w == self.check_win {
+            // from the taskbar: d[0] = the window to show (0: the desktop), d[1] = 1 on / 0 off
+            self.peek(d[0], d[1] != 0);
         } else if e.type_ == a._AERODE_RESTART && w == self.check_win {
             self.restart();
         } else if e.type_ == a._AERODE_SNAP_PREVIEW && w == self.check_win {
@@ -1600,7 +1607,6 @@ impl Wm {
                     if let Some(c) = self.clients.get_mut(&w) { if c.snapped == Some(2) { c.restore = Some(start); } }
                 }
             }
-            _ => {}
         }
     }
 
@@ -1737,6 +1743,82 @@ impl Wm {
         self.update_net_state(w);
         self.layout_zones(w);
         self.redraw(w);
+    }
+
+    /// Aero Peek: with a compositor, every window but `target` (0: all of them, peeking at the
+    /// desktop) fades out and leaves a glass outline where it was, until `peek(_, false)`.
+    fn peek(&mut self, target: u32, on: bool) {
+        self.peek_end();
+        if !on || !self.composited() { return; }
+        let Some((vis, cmap)) = self.argb else { return };
+        let mut tops = vec![];
+        let mut outlines = vec![];
+        let order = self.stack.clone();
+        for w in order {
+            let Some(c) = self.clients.get(&w) else { continue };
+            if w == target || !is_app(c) || c.minimized || c.wm_hidden || c.fullscreen { continue; }
+            let top = c.frame.unwrap_or(w);
+            let r = if c.frame.is_some() { self.frame_rect(c) } else {
+                let [l, rr, t, b] = c.csd;
+                Rect { x: c.geom.x + l, y: c.geom.y + t, w: c.geom.w - l - rr, h: c.geom.h - t - b }
+            };
+            let round = c.frame.is_some() && !c.maximized && !is_small(c);
+            let _ = self.conn.change_property32(PropMode::REPLACE, top, self.atoms._NET_WM_WINDOW_OPACITY, AtomEnum::CARDINAL, &[0]);
+            tops.push(top);
+            if r.w < 4 || r.h < 4 { continue; }
+            // the outline: Win7 leaves a faint sheet with the frame's dark and light rims
+            let win = self.conn.generate_id().unwrap();
+            let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).colormap(cmap);
+            if self.conn.create_window(32, win, self.root, r.x as i16, r.y as i16, r.w as u16, r.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { continue; }
+            // clicks go through
+            let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
+            let _ = self.conn.map_window(win);
+            if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r.w, r.h) {
+                {
+                    let cr = cairo::Context::new(&s).unwrap();
+                    let rad = if round { decor::RADIUS } else { 0.0 };
+                    let (w, h) = (r.w as f64, r.h as f64);
+                    crate::glass::rounded(&cr, 0.5, 0.5, w - 1.0, h - 1.0, rad);
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.06);
+                    cr.fill_preserve().ok();
+                    cr.set_line_width(1.0);
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.55);
+                    cr.stroke().ok();
+                    crate::glass::rounded(&cr, 1.5, 1.5, w - 3.0, h - 3.0, (rad - 1.0).max(0.0));
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+                    cr.stroke().ok();
+                }
+                self.put_surface(win, 32, &mut s);
+            }
+            outlines.push(win);
+        }
+        // the docks (taskbar) stay above the outlines
+        let docks: Vec<u32> = self.clients.values().filter(|c| c.kind == Kind::Dock).map(|c| c.frame.unwrap_or(c.win)).collect();
+        for d in docks { let _ = self.conn.configure_window(d, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)); }
+        self.peeking = Some((tops, outlines));
+    }
+
+    fn peek_end(&mut self) {
+        let Some((tops, outlines)) = self.peeking.take() else { return };
+        for t in tops { let _ = self.conn.delete_property(t, self.atoms._NET_WM_WINDOW_OPACITY); }
+        for o in outlines { let _ = self.conn.destroy_window(o); }
+        self.restack();
+    }
+
+    /// Upload an ARGB/RGB surface into a window of the given depth (in strips below the request limit).
+    fn put_surface(&self, win: u32, depth: u8, s: &mut cairo::ImageSurface) {
+        s.flush();
+        let (w, h, stride) = (s.width(), s.height(), s.stride() as usize);
+        let Ok(data) = s.data().map(|d| d.to_vec()) else { return };
+        let gc = self.conn.generate_id().unwrap();
+        let _ = self.conn.create_gc(gc, win, &CreateGCAux::new());
+        let depth = if depth == 32 { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
+        let rows = (200_000 / stride).max(1);
+        for y in (0..h as usize).step_by(rows) {
+            let n = rows.min(h as usize - y);
+            let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, win, gc, w as u16, n as u16, 0, y as i16, 0, depth, &data[y * stride..(y + n) * stride]);
+        }
+        let _ = self.conn.free_gc(gc);
     }
 
     fn show_snap_preview(&mut self, w: u32, side: i8) {
@@ -1920,14 +2002,14 @@ impl Wm {
     }
 }
 
-/// Watch the _NET_CM_S0 owner on a separate connection and poke the WM when it changes.
+/// Watch the _NET_WM_CM_S0 owner on a separate connection and poke the WM when it changes.
 fn spawn_compositor_watch(check_win: u32) {
     std::thread::spawn(move || {
         let Ok((conn, _)) = x11rb::connect(None) else { return };
         let Ok(Ok(a)) = Atoms::new(&conn).map(|c| c.reply()) else { return };
         let mut last = u32::MAX;
         loop {
-            let owner = conn.get_selection_owner(a._NET_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner).unwrap_or(0);
+            let owner = conn.get_selection_owner(a._NET_WM_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner).unwrap_or(0);
             if owner != last && last != u32::MAX {
                 let ev = ClientMessageEvent::new(32, check_win, a._AERODE_SNAP_PREVIEW, [0, 0, 0, 0, 0]);
                 let _ = conn.send_event(false, check_win, EventMask::NO_EVENT, ev);

@@ -30,7 +30,7 @@ impl Switcher {
         let h = rows * CELL + 2 * PAD + TITLE_H;
         let pos = (mon.x + (mon.w - w) / 2, mon.y + (mon.h - h) / 2);
         let win = wm.conn.generate_id().ok()?;
-        let composited = wm.conn.get_selection_owner(wm.atoms._NET_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
+        let composited = wm.conn.get_selection_owner(wm.atoms._NET_WM_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
         let (depth, vis, cmap) = match (composited, wm.argb) { (true, Some((v, c))) => (32, v, c), _ => (x11rb::COPY_DEPTH_FROM_PARENT, 0, 0) };
         let mut aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).event_mask(EventMask::EXPOSURE);
         if cmap != 0 { aux = aux.colormap(cmap); }
@@ -53,7 +53,7 @@ impl Switcher {
 
     pub fn draw(&self, wm: &Wm) {
         let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, self.w, self.h) else { return };
-        let composited = wm.conn.get_selection_owner(wm.atoms._NET_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
+        let composited = wm.conn.get_selection_owner(wm.atoms._NET_WM_CM_S0).ok().and_then(|c| c.reply().ok()).map(|r| r.owner != 0).unwrap_or(false);
         {
             let cr = cairo::Context::new(&s).unwrap();
             let (w, h) = (self.w as f64, self.h as f64);

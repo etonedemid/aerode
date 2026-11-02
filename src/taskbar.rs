@@ -144,8 +144,26 @@ impl Taskbar {
         sd.style_context().add_class("showdesk");
         sd.set_tooltip_text(Some("Show desktop"));
         {
+            // Aero Peek: resting on the button for half a second shows the desktop through the
+            // windows (Taskbar Properties > Use Aero Peek to preview the desktop)
+            let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+            let stop = { let p = pending.clone(); move || { if let Some(s) = p.borrow_mut().take() { s.remove(); } crate::thumbs::peek_desktop(false); } };
+            {
+                let p = pending.clone();
+                sd.connect_enter_notify_event(move |_, _| {
+                    if config::get().taskbar.aero_peek {
+                        let p2 = p.clone();
+                        *p.borrow_mut() = Some(glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                            p2.borrow_mut().take();
+                            crate::thumbs::peek_desktop(true);
+                        }));
+                    }
+                    glib::Propagation::Proceed
+                });
+            }
+            { let stop = stop.clone(); sd.connect_leave_notify_event(move |_, _| { stop(); glib::Propagation::Proceed }); }
             let wm = wm.clone();
-            sd.connect_clicked(move |_| wm.set_showing_desktop(!wm.showing_desktop()));
+            sd.connect_clicked(move |_| { stop(); wm.set_showing_desktop(!wm.showing_desktop()) });
         }
         tray.pack_end(&sd, false, false, 0);
         flyouts::build_tray(&tb);
@@ -258,7 +276,8 @@ impl Taskbar {
             } else {
                 g.windows.iter().map(|w| w.title.clone()).collect::<Vec<_>>().join("\n")
             };
-            g.button.set_tooltip_text(Some(&tip));
+            // running buttons show thumbnails instead (Win7); pinned ones keep the name tooltip
+            g.button.set_tooltip_text(if running { None } else { Some(&tip) });
             if g.button.child().is_none() {
                 // Taskbar Properties > Use small icons
                 let isz = if config::get().taskbar.small_icons { 16 } else { 32 };
@@ -297,17 +316,22 @@ impl Taskbar {
             match e.button() {
                 1 => {
                     if g.windows.is_empty() {
+                        crate::thumbs::hide();
                         if let Some(a) = &g.app { util::launch(a); }
                     } else if g.windows.len() == 1 {
+                        crate::thumbs::hide();
                         let w = &g.windows[0];
                         if w.id == tb.wm.active() && !w.minimized { tb.wm.minimize(w.id) } else { tb.wm.activate(w.id) }
+                    } else if crate::thumbs::visible_for(b.upcast_ref()) {
+                        crate::thumbs::hide();
                     } else {
-                        let m = tb.window_menu(&g.windows);
-                        m.popup_at_widget(b, gdk::Gravity::North, gdk::Gravity::South, Some(e));
+                        // several windows: their thumbnails, like Win7
+                        crate::thumbs::show_now(&tb.wm, b.upcast_ref(), tb.thumb_wins(&g.windows));
                     }
                 }
                 2 => { if let Some(a) = &g.app { util::launch(a); } }
                 3 => {
+                    crate::thumbs::hide();
                     let m = tb.jump_menu(g);
                     m.popup_at_widget(b, gdk::Gravity::North, gdk::Gravity::South, Some(e));
                 }
@@ -315,6 +339,22 @@ impl Taskbar {
             }
             glib::Propagation::Stop
         });
+        // live thumbnails when the pointer rests on a running button
+        let tb = Rc::downgrade(self);
+        button.connect_enter_notify_event(move |b, _| {
+            let Some(tb) = tb.upgrade() else { return glib::Propagation::Proceed };
+            let groups = tb.groups.borrow();
+            match groups.iter().find(|g| g.key == key) {
+                Some(g) if !g.windows.is_empty() => crate::thumbs::hover(&tb.wm, b.upcast_ref(), tb.thumb_wins(&g.windows)),
+                _ => crate::thumbs::leave(),
+            }
+            glib::Propagation::Proceed
+        });
+        button.connect_leave_notify_event(|_, _| { crate::thumbs::leave(); glib::Propagation::Proceed });
+    }
+
+    fn thumb_wins(&self, wins: &[Client]) -> Vec<crate::thumbs::Win> {
+        wins.iter().map(|c| crate::thumbs::Win { id: c.id, title: c.title.clone(), icon: self.wm.icon(c.id, 16), minimized: c.minimized }).collect()
     }
 
     /// Win+1..9: like clicking the Nth taskbar button; with several windows, cycle through them.
@@ -330,18 +370,6 @@ impl Taskbar {
                 self.wm.activate(g.windows[next].id);
             }
         }
-    }
-
-    fn window_menu(self: &Rc<Self>, wins: &[Client]) -> gtk::Menu {
-        let m = gtk::Menu::new();
-        for w in wins {
-            let it = gtk::MenuItem::with_label(&w.title);
-            let (wm, id) = (self.wm.clone(), w.id);
-            it.connect_activate(move |_| wm.activate(id));
-            m.append(&it);
-        }
-        m.show_all();
-        m
     }
 
     fn jump_menu(self: &Rc<Self>, g: &Group) -> gtk::Menu {
