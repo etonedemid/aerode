@@ -17,6 +17,7 @@ mod taskbar;
 
 pub use folders::page_folderoptions;
 pub use fonts::page_fonts;
+pub(crate) use fonts::cleartype_tuner;
 pub use screensaver::page_screensaver;
 pub use taskbar::page_taskbar;
 
@@ -143,16 +144,27 @@ pub(crate) fn reload_shell() { util::spawn(&["aerode", "reload"]); }
 pub(crate) fn write_xsettings() {
     let c = config::get();
     let f = &c.fonts;
-    let lines = vec![
+    let hw = &c.hw;
+    let mut lines = vec![
         format!("Xft/Antialias {}", f.antialias as u8),
         format!("Xft/Hinting {}", f.hinting as u8),
         format!("Xft/HintStyle \"{}\"", f.hintstyle),
         format!("Xft/RGBA \"{}\"", f.rgba),
         format!("Gtk/RecentFilesEnabled {}", c.taskbar.track_items as u8),
+        // Display (text size), Mouse (double-click speed), Keyboard (cursor blink rate),
+        // Performance Options (animations)
+        format!("Xft/DPI {}", hw.dpi.max(48) * 1024),
+        format!("Net/DoubleClickTime {}", hw.mouse.double_click.clamp(100, 2000)),
+        format!("Net/CursorBlink {}", (hw.keyboard.blink > 0) as u8),
+        format!("Net/CursorBlinkTime {}", if hw.keyboard.blink > 0 { hw.keyboard.blink * 2 } else { 1200 }),
+        format!("Gtk/EnableAnimations {}", ["animate_controls", "menu_fade", "combo_slide"].iter().any(|k| hw.effect(k)) as u8),
     ];
+    // the session exports XCURSOR_THEME from cursor-theme, so this one only goes to the live config
+    let live_only = (!hw.mouse.cursor_theme.is_empty()).then(|| format!("Gtk/CursorThemeName \"{}\"", hw.mouse.cursor_theme));
     let dir = config::conf_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(dir.join("xsettings-cp.conf"), lines.join("\n") + "\n");
+    lines.extend(live_only);
     // the live config the session generated: replace our keys, keep everything else
     let live = dir.join("xsettingsd.conf");
     if let Ok(cur) = std::fs::read_to_string(&live) {
@@ -162,8 +174,9 @@ pub(crate) fn write_xsettings() {
         let _ = std::fs::write(&live, out.join("\n") + "\n");
     }
     hup_xsettingsd();
-    let xres = format!("Xft.antialias: {}\nXft.hinting: {}\nXft.hintstyle: {}\nXft.rgba: {}\nXft.lcdfilter: lcddefault\n",
-        f.antialias as u8, f.hinting as u8, f.hintstyle, f.rgba);
+    let mut xres = format!("Xft.antialias: {}\nXft.hinting: {}\nXft.hintstyle: {}\nXft.rgba: {}\nXft.lcdfilter: lcddefault\nXft.dpi: {}\n",
+        f.antialias as u8, f.hinting as u8, f.hintstyle, f.rgba, hw.dpi.max(48));
+    if !hw.mouse.cursor_theme.is_empty() { xres += &format!("Xcursor.theme: {}\n", hw.mouse.cursor_theme); }
     let _ = std::fs::write(dir.join("Xresources"), &xres);
     util::spawn(&["xrdb", "-merge", &dir.join("Xresources").to_string_lossy()]);
     // this process follows straight away
@@ -172,6 +185,9 @@ pub(crate) fn write_xsettings() {
         s.set_gtk_xft_hinting(f.hinting as i32);
         s.set_gtk_xft_hintstyle(Some(&f.hintstyle));
         s.set_gtk_xft_rgba(Some(&f.rgba));
+        s.set_gtk_double_click_time(hw.mouse.double_click.clamp(100, 2000) as i32);
+        s.set_gtk_cursor_blink(hw.keyboard.blink > 0);
+        if hw.keyboard.blink > 0 { s.set_gtk_cursor_blink_time(hw.keyboard.blink as i32 * 2); }
     }
     // GNOME programs keep their own switch for recent files
     if util::which("gsettings") {

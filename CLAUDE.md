@@ -28,7 +28,9 @@ Shared: `src/glass.rs` (wallpaper + fake/real Aero glass), `src/msstyles.rs` (ae
 `src/dwmcolor.rs` (Win7 colourisation maths), `src/theme.rs` (CSS), `src/sounds.rs` (Win7 sound scheme),
 `src/sys.rs` (audio/network/battery/brightness incl. DDC/CI via ddcutil), `src/x11.rs` (EWMH client used
 by the taskbar), `src/thumbs.rs` (taskbar thumbnails + Aero Peek requests), `src/actioncenter.rs`
-(tray flag), `src/autoplay.rs`, `src/notify.rs`, `src/tray/`, `src/kbdlayout.rs`.
+(tray flag), `src/autoplay.rs`, `src/notify.rs`, `src/tray/`, `src/kbdlayout.rs`,
+`src/power.rs` (Win7 power plans on power-profiles-daemon + the shell's display-off/sleep watcher;
+auto-sleep only in a real logind session), `src/tzinfo.rs` (TZif/POSIX-TZ reader for other zones' times).
 Data: `data/` (session script, picom.conf, GTK css, .desktop files). Installer: `install.sh`.
 
 ## Build / test / run

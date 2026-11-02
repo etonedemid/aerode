@@ -272,6 +272,9 @@ impl Cp {
             ("All Control Panel Items".into(), self.page_all(page == "all-small"))
         } else if let Some(q) = page.strip_prefix("search:") {
             (format!("Search Results for \"{q}\""), self.page_search(q))
+        } else if let Some((c, w)) = pages::hw::subpage(self, page) {
+            // pages inside an applet (Screen Resolution, Change plan settings, a tab of a sheet …)
+            (c, w)
         } else if let Some(a) = all.iter().find(|a| a.id == page) {
             (format!("{} ▸ {}", registry::category_name(a.cat), a.name), (a.build)(self))
         } else {
@@ -320,7 +323,7 @@ impl Cp {
             ("System and Security", "security-high", "system", &[("Review your computer's status", "system"), ("Startup programs", "startup"), ("Find and fix problems", "services")]),
             ("User Accounts and Family Safety", "user-home", "users", &[("Add or remove user accounts", "users"), ("Change your account picture", "users")]),
             ("Network and Internet", "network-workgroup", "network", &[("View network status and tasks", "network"), ("Choose homegroup and sharing options", "network")]),
-            ("Appearance and Personalization", "preferences-desktop-wallpaper", "appearance", &[("Change the theme", "personalization"), ("Change desktop background", "personalization"), ("Adjust screen resolution", "display")]),
+            ("Appearance and Personalization", "preferences-desktop-wallpaper", "appearance", &[("Change the theme", "personalization"), ("Change desktop background", "personalization"), ("Adjust screen resolution", "resolution")]),
             ("Hardware and Sound", "printer", "hardware", &[("View devices and printers", "devices"), ("Add a device", "devices")]),
             ("Clock, Language, and Region", "preferences-system-time", "clock", &[("Change keyboards or other input methods", "region")]),
             ("Programs", "system-software-install", "programs", &[("Uninstall a program", "programs")]),
@@ -453,6 +456,8 @@ fn build(app: &gtk::Application, page: String) {
     theme::load_css(CSS);
     // Event Viewer, Device Manager, Disk Management… have their own window, like MMC consoles
     if pages::admin::standalone(app, &page) { return; }
+    // System Properties and Performance Options also open on their own (SystemPropertiesAdvanced.exe …)
+    if pages::hw::standalone(app, &page) { return; }
     let win = gtk::ApplicationWindow::new(app);
     win.set_default_size(880, 620);
     win.set_icon_name(Some(util::first_icon(&["preferences-system"])));

@@ -463,7 +463,8 @@ pub fn command(args: &[String]) {
         return;
     }
     // xss-lock runs us before suspend too: lock straight away then
-    if std::env::var_os("XSS_SLEEP_LOCK_FD").is_some() { crate::lock::lock(); return; }
+    // (unless Power Options says not to require a password on wakeup)
+    if std::env::var_os("XSS_SLEEP_LOCK_FD").is_some() { if config::get().hw.power.require_password { crate::lock::lock(); } return; }
     if !o.name.is_empty() { run(&o.name, true); }
     if o.lock { crate::lock::lock(); }
 }
