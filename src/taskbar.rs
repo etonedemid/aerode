@@ -150,7 +150,8 @@ impl Taskbar {
 
         // the task band starts 4 px right of the orb's 54 px: first button frame at x = 59 (Win7)
         let tasks = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        tasks.set_margin_start(3);
+        // native Win7: the first task button's outline is at x = 57 (orb 54 + 1 + the 2 px button margin)
+        tasks.set_margin_start(1);
         row.pack_start(&tasks, true, true, 0);
 
         let tray = gtk::Box::new(gtk::Orientation::Horizontal, 0);
