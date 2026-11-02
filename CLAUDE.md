@@ -63,8 +63,11 @@ extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/A
   (xrandr without --rate, motion events not coalesced, console polling).
 - Verify on real hardware: real glass under picom, polkit agent with real polkitd, DDC/CI brightness,
   fish inside aerode-cmd, multi-monitor/high-refresh behaviour.
-- Not done yet: verify on real hardware everything below; Win7 metrics still taken from user
-  feedback rather than measurements (caption text offset, 58 px task buttons at a 62 px pitch).
+- Not done yet: verify on real hardware everything below. Task buttons are 58 px with 4 px gaps at
+  the owner's request; native Win7 (learn.microsoft.com shell/images/taskbar/taskbar.png) measures
+  60 px buttons (incl. the 1 px dark outline) with 2 px gaps, 62 px pitch, first button at x=57.
+  Caption text/icon positions are measured from a native Win7 frame (see the decor.rs comment).
+  `examples/strdump` reads PE/MUI string tables (Win7 UI strings).
 - Done since the handoff (verify on real hardware): taskbar/Start menu from msstyles (`src/shellstyle.rs`)
   with colour hot-track, Win7 animations (`src/anim.rs`, `src/wm/anim.rs`, picom 12 config from
   `src/picomconf.rs`), desktop icon drag and drop, taskbar/tray context menus, Win7 event sound scheme +
