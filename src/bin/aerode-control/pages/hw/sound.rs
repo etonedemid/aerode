@@ -778,12 +778,30 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
     let muted = Rc::new(Cell::new(c0.sounds_muted));
     v.pack_start(&lbl("Sound Sc_heme:"), false, false, 0);
     let sr = hbox(6);
+    // Win7's 15 schemes (the named ones once aerode-extract copied their Media folders); an edited
+    // scheme shows as "<scheme> (modified)" like Windows does
     let scheme = gtk::ComboBoxText::new();
-    scheme.append(Some("default"), "Windows Default");
-    scheme.append(Some("none"), "No Sounds");
-    scheme.append(Some("modified"), "Windows Default (modified)");
-    let scheme_id = |m: &std::collections::HashMap<String, String>, muted: bool| if muted { "none" } else if m.is_empty() { "default" } else { "modified" };
-    scheme.set_active_id(Some(scheme_id(&map.borrow(), muted.get())));
+    for id in sounds::SCHEMES.iter().filter(|id| sounds::scheme_available(id)) { scheme.append(Some(id), sounds::scheme_label(id)); }
+    let base_scheme: Rc<RefCell<String>> = Rc::new(RefCell::new(".Default".into()));
+    let scheme_id = { move |m: &std::collections::HashMap<String, String>, muted: bool| -> String {
+        if muted { return ".None".into(); }
+        if m.is_empty() { return ".Default".into(); }
+        let assigned = |e: &sounds::Event| m.get(e.key()).cloned().unwrap_or_else(|| e.default_file().to_string());
+        if let Some(id) = sounds::SCHEMES.iter().find(|id| **id != ".None" && sounds::Event::ALL.iter().all(|e| assigned(e) == sounds::scheme_file(id, *e))) {
+            return id.to_string();
+        }
+        "modified".into()
+    } };
+    let set_scheme = { let (scheme, base) = (scheme.clone(), base_scheme.clone()); move |id: &str| {
+        // the "<scheme> (modified)" row exists only while the scheme is edited (the last row)
+        let n = scheme.model().map(|m| m.iter_n_children(None)).unwrap_or(0);
+        let has_modified = n > 0 && scheme.model().and_then(|m| m.iter_nth_child(None, n - 1).and_then(|it| m.value(&it, 1).get::<String>().ok())).as_deref() == Some("modified");
+        if has_modified { gtk::prelude::ComboBoxTextExt::remove(&scheme, n - 1); }
+        if id == "modified" { scheme.append(Some("modified"), &format!("{} (modified)", sounds::scheme_label(&base.borrow()))); }
+        else { *base.borrow_mut() = id.to_string(); }
+        scheme.set_active_id(Some(id));
+    } };
+    set_scheme(&scheme_id(&map.borrow(), muted.get()));
     scheme.set_hexpand(true);
     sr.pack_start(&scheme, true, true, 0);
     let save_as = gtk::Button::with_mnemonic("Sa_ve As...");
@@ -808,8 +826,15 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
     } };
     let fill = { let (store, f, sp) = (store.clone(), file_of.clone(), speaker.clone()); Rc::new(move || {
         store.clear();
-        let root = store.insert_with_values(None, None, &[(0, &"Windows"), (2, &u32::MAX)]);
+        // grouped by program like Win7: Windows, Windows Explorer, Windows Speech Recognition
+        let mut root = None;
+        let mut app = None;
         for (i, ev) in sounds::Event::ALL.iter().enumerate() {
+            if app != Some(ev.app()) {
+                app = Some(ev.app());
+                root = Some(store.insert_with_values(None, None, &[(0, &ev.app().label()), (2, &u32::MAX)]));
+            }
+            let root = root.clone().unwrap();
             let file = f(*ev);
             let shown = file.as_deref().map(|p| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default();
             let it = store.insert_with_values(Some(&root), None, &[(0, &ev.label()), (1, &shown), (2, &(i as u32))]);
@@ -864,12 +889,14 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
         let file = f(sounds::Event::ALL[i as usize]).unwrap_or_default();
         let base = std::path::Path::new(&file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         setting.set(true);
-        if !pick.set_active_id(Some(&base)) { if file.is_empty() { pick.set_active_id(Some("")); } else { pick.append(Some(&file), &base); pick.set_active_id(Some(&file)); } }
+        // root Media files are listed by name; a scheme's own file ("Afternoon/…") or a browsed
+        // one is added under its file name
+        if !pick.set_active_id(Some(&file)) { if file.is_empty() { pick.set_active_id(Some("")); } else { pick.append(Some(&file), &base); pick.set_active_id(Some(&file)); } }
         setting.set(false);
     }); }
-    let changed = { let (scheme, map, muted, fill, dirty, setting) = (scheme.clone(), map.clone(), muted.clone(), fill.clone(), dirty.clone(), setting.clone()); Rc::new(move || {
+    let changed = { let (map, muted, fill, dirty, setting, sid, set_scheme) = (map.clone(), muted.clone(), fill.clone(), dirty.clone(), setting.clone(), scheme_id.clone(), set_scheme.clone()); Rc::new(move || {
         setting.set(true);
-        scheme.set_active_id(Some(scheme_id(&map.borrow(), muted.get())));
+        set_scheme(&sid(&map.borrow(), muted.get()));
         setting.set(false);
         fill();
         dirty();
@@ -878,21 +905,25 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
         if setting.get() { return; }
         let (Some(i), Some(id)) = (sel.get(), c.active_id()) else { return };
         let ev = sounds::Event::ALL[i];
-        // a pick in "No Sounds" starts a modified default scheme
-        if muted.get() { muted.set(false); map.borrow_mut().clear(); for e in sounds::Event::ALL { map.borrow_mut().insert(e.key().to_string(), String::new()); } }
+        // a pick in "No Sounds" starts a modified "No Sounds"
+        if muted.get() { muted.set(false); *map.borrow_mut() = sounds::scheme_map(".None"); }
         if id.as_str() == ev.default_file() { map.borrow_mut().remove(ev.key()); } else { map.borrow_mut().insert(ev.key().to_string(), id.to_string()); }
         let path = tv.selection().selected().and_then(|(m, it)| m.path(&it));
         ch();
         tv.expand_all();
         if let Some(p) = path { tv.selection().select_path(&p); }
     }); }
-    { let (scheme, map, muted, setting, fill, dirty, tv) = (scheme.clone(), map.clone(), muted.clone(), setting.clone(), fill.clone(), dirty.clone(), tv.clone()); scheme.connect_changed(move |c| {
+    { let (map, muted, setting, fill, dirty, tv, set_scheme) = (map.clone(), muted.clone(), setting.clone(), fill.clone(), dirty.clone(), tv.clone(), set_scheme.clone()); scheme.connect_changed(move |c| {
         if setting.get() { return; }
-        match c.active_id().as_deref() {
-            Some("none") => muted.set(true),
-            Some("default") => { muted.set(false); map.borrow_mut().clear(); }
-            _ => muted.set(false),
+        let id = c.active_id().map(|s| s.to_string());
+        match id.as_deref() {
+            Some(".None") => muted.set(true),
+            Some(".Default") => { muted.set(false); map.borrow_mut().clear(); }
+            Some("modified") | None => { muted.set(false); return; }
+            Some(id) => { muted.set(false); *map.borrow_mut() = sounds::scheme_map(id); }
         }
+        // a whole scheme chosen: the "(modified)" row goes away
+        if let Some(id) = id { setting.set(true); set_scheme(&id); setting.set(false); }
         fill();
         tv.expand_all();
         dirty();
@@ -900,8 +931,9 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
     { let (pick, sel) = (pick.clone(), sel.clone()); test.connect_clicked(move |_| {
         let Some(_) = sel.get() else { return };
         let Some(id) = pick.active_id().filter(|s| !s.is_empty()) else { return };
-        let p = if id.starts_with('/') { std::path::PathBuf::from(id.as_str()) } else { config::data_dir().join("sounds").join(id.as_str()) };
-        for pl in ["pw-play", "paplay", "aplay"] { if util::spawn(&[pl, &p.to_string_lossy()]) { break; } }
+        let p = if id.starts_with('/') { std::path::PathBuf::from(id.as_str()) } else { sounds::sounds_dir().join(id.as_str()) };
+        // as "System Sounds", replacing a test still playing (like Windows' PlaySound)
+        sounds::play_file(&p);
     }); }
     { let (pick, w) = (pick.clone(), sheet.nb.clone()); browse.connect_clicked(move |_| {
         let parent = w.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok());
