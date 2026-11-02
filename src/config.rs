@@ -15,8 +15,10 @@ pub struct Config {
     pub pinned: Option<Vec<String>>,
     pub usage: HashMap<String, u32>,
     pub clock_24h: bool,
-    /// Aero glass colour (r, g, b, intensity)
-    pub tint: [f64; 4],
+    /// Aero glass colourisation (Personalize > Window Color): Win7's HKCU\Software\Microsoft\Windows\DWM
+    /// values. Replaces the old `"tint": [r, g, b, intensity]` (migrated in `load`). While a session runs
+    /// the live value is the root property `_AERODE_COLORIZATION` (see `glass::colorization`).
+    pub colorization: Colorization,
     pub taskbar_height: i32,
     /// sound scheme overrides: event key -> file name/path ("" = none)
     pub sounds: HashMap<String, String>,
@@ -45,7 +47,7 @@ impl Default for Config {
             pinned: None,
             usage: HashMap::new(),
             clock_24h: false,
-            tint: [0.10, 0.22, 0.36, 0.52],
+            colorization: Colorization::default(),
             taskbar_height: 40,
             sounds: HashMap::new(),
             sounds_muted: false,
@@ -80,8 +82,137 @@ pub fn data_file(name: &str) -> Option<PathBuf> {
 fn load() -> Config {
     std::fs::read_to_string(conf_dir().join("config.json"))
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|mut v| {
+            migrate(&mut v);
+            serde_json::from_value(v).unwrap_or_default()
+        })
         .unwrap_or_default()
+}
+
+/// Older configs kept the glass colour as `"tint": [r, g, b, intensity]`: turn it into `"colorization"`.
+fn migrate(v: &mut serde_json::Value) {
+    let Some(o) = v.as_object_mut() else { return };
+    let Some(tint) = o.remove("tint") else { return };
+    if o.contains_key("colorization") { return; }
+    let t: Option<[f64; 4]> = serde_json::from_value(tint).ok();
+    if let Some(c) = t.map(Colorization::from_tint).and_then(|c| serde_json::to_value(c).ok()) {
+        o.insert("colorization".into(), c);
+    }
+}
+
+/// `config.json`'s `"colorization"`: what Win7 keeps under HKCU\Software\Microsoft\Windows\DWM,
+/// colours as "#AARRGGBB".
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
+pub struct Colorization {
+    #[serde(with = "argb_hex")]
+    pub color: u32,
+    #[serde(with = "argb_hex")]
+    pub afterglow: u32,
+    pub color_balance: u32,
+    pub afterglow_balance: u32,
+    pub blur_balance: u32,
+    pub reflection_intensity: u32,
+    /// "Enable transparency" (Win7's ColorizationOpaqueBlend = !transparency)
+    pub transparency: bool,
+}
+
+impl Default for Colorization {
+    fn default() -> Self { crate::dwmcolor::Colorization::default().into() }
+}
+
+impl From<crate::dwmcolor::Colorization> for Colorization {
+    fn from(c: crate::dwmcolor::Colorization) -> Self {
+        Colorization { color: c.color, afterglow: c.afterglow, color_balance: c.color_balance,
+            afterglow_balance: c.afterglow_balance, blur_balance: c.blur_balance,
+            reflection_intensity: c.reflection_intensity, transparency: !c.opaque }
+    }
+}
+
+impl From<Colorization> for crate::dwmcolor::Colorization {
+    fn from(c: Colorization) -> Self {
+        crate::dwmcolor::Colorization { color: c.color, afterglow: c.afterglow, color_balance: c.color_balance.min(100),
+            afterglow_balance: c.afterglow_balance.min(100), blur_balance: c.blur_balance.min(100),
+            reflection_intensity: c.reflection_intensity.min(100), opaque: !c.transparency }
+    }
+}
+
+/// The swatches of the old Personalize page (`tint` rgb), in the order of `dwmcolor::SWATCHES`.
+const OLD_SWATCHES: [[f64; 3]; 16] = [
+    [0.10, 0.22, 0.36], [0.05, 0.13, 0.35], [0.03, 0.33, 0.38], [0.13, 0.35, 0.10], [0.40, 0.52, 0.05], [0.62, 0.55, 0.05],
+    [0.62, 0.32, 0.04], [0.50, 0.04, 0.06], [0.52, 0.05, 0.40], [0.62, 0.35, 0.48], [0.30, 0.10, 0.50], [0.48, 0.45, 0.62],
+    [0.42, 0.37, 0.28], [0.24, 0.12, 0.05], [0.25, 0.27, 0.30], [0.82, 0.86, 0.90],
+];
+
+impl Colorization {
+    /// Migration of the old tint: its default and the old swatches become that Win7 swatch;
+    /// a custom colour keeps its rgb with the intensity as alpha.
+    pub fn from_tint(t: [f64; 4]) -> Colorization {
+        use crate::dwmcolor::{intensity_to_alpha, SWATCHES};
+        let same = |a: &[f64; 3]| (0..3).all(|k| (a[k] - t[k]).abs() < 1e-6);
+        if let Some(i) = OLD_SWATCHES.iter().position(same) {
+            return crate::dwmcolor::Colorization::from_cpl(SWATCHES[i].1, false).into();
+        }
+        let b = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let alpha = intensity_to_alpha((t[3] * 100.0).round().max(0.0) as u32);
+        crate::dwmcolor::Colorization::from_cpl(alpha << 24 | b(t[0]) << 16 | b(t[1]) << 8 | b(t[2]), false).into()
+    }
+
+    pub fn dwm(&self) -> crate::dwmcolor::Colorization { (*self).into() }
+}
+
+impl Config {
+    /// Compatibility for code that still reads the old `tint` ([r, g, b, intensity] 0..1, the input of
+    /// `wm::colorization`), derived from the saved colourisation.
+    pub fn tint(&self) -> [f64; 4] {
+        let c = self.colorization.color;
+        if c == crate::dwmcolor::SWATCHES[0].1 { return [0.10, 0.22, 0.36, 0.52]; } // Sky, the old default
+        let ch = |s: u32| ((c >> s) & 0xFF) as f64 / 255.0;
+        [ch(16), ch(8), ch(0), (((c >> 24) as f64 / 255.0 - 0.30) / 0.25).clamp(0.0, 1.0)]
+    }
+}
+
+mod argb_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &u32, s: S) -> Result<S::Ok, S::Error> { s.serialize_str(&format!("#{v:08X}")) }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+        let s = String::deserialize(d)?;
+        let h = s.trim().trim_start_matches('#');
+        let v = u32::from_str_radix(h, 16).map_err(serde::de::Error::custom)?;
+        // "#RRGGBB" = opaque
+        Ok(if h.len() <= 6 { 0xFF00_0000 | v } else { v })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tint_migration() {
+        let sky = crate::dwmcolor::Colorization::default();
+        let mut v = serde_json::json!({"tint": [0.10, 0.22, 0.36, 0.52], "clock_24h": true});
+        migrate(&mut v);
+        let c: Config = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(c.colorization.dwm(), sky);
+        assert!(c.clock_24h && v.get("tint").is_none());
+        // an old swatch at any intensity -> that Win7 swatch
+        assert_eq!(Colorization::from_tint([0.50, 0.04, 0.06, 0.3]).color, 0xA8CE0F0F);
+        // custom colour: rgb kept, intensity -> alpha
+        let c = Colorization::from_tint([0.2, 0.4, 0.6, 0.5]);
+        assert_eq!(c.color, 0x8033_6699);
+        assert!(c.transparency);
+        // round trip through config.json
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(s.contains("\"color\":\"#80336699\""));
+        assert_eq!(serde_json::from_str::<Colorization>(&s).unwrap(), c);
+        // a config that already has "colorization" ignores a stale tint
+        let mut v = serde_json::json!({"tint": [0.2, 0.4, 0.6, 0.5], "colorization": {"color": "#A8CE0F0F"}});
+        migrate(&mut v);
+        let c: Config = serde_json::from_value(v).unwrap();
+        assert_eq!(c.colorization.color, 0xA8CE0F0F);
+    }
 }
 
 pub fn reload() {

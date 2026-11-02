@@ -6,7 +6,7 @@ use gtk::{gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aerode::{config, theme, util};
+use aerode::{theme, util};
 
 mod pages;
 mod registry;
@@ -475,18 +475,20 @@ fn build(app: &gtk::Application, page: String) {
     search.style_context().add_class("exp-search");
     search.set_icon_from_icon_name(gtk::EntryIconPosition::Secondary, Some("system-search-symbolic"));
     header.pack_end(&search, false, false, 0);
+    // the frame's glass continued into the window, translucent under a compositor; redrawn when
+    // Personalize changes the window colour (enable_rgba) and when the window gains/loses focus
+    aerode::glass::enable_rgba(win.upcast_ref());
     header.connect_draw(|h, cr| {
-        use gtk::gdk::prelude::GdkContextExt;
-        let (x, y) = h.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
-        cr.set_source_pixbuf(&aerode::glass::wallpaper().blurred, -x as f64, -y as f64);
-        cr.paint().ok();
-        let c = aerode::wm::colorization(&config::get().tint);
-        cr.set_source_rgba(c[0], c[1], c[2], 0.55);
-        cr.paint().ok();
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.18);
-        cr.paint().ok();
+        aerode::glass::paint_widget_glass(h, cr);
         glib::Propagation::Proceed
     });
+    {
+        let h = header.clone();
+        win.connect_window_state_event(move |_, e| {
+            if e.changed_mask().intersects(gdk::WindowState::FOCUSED | gdk::WindowState::MAXIMIZED) { h.queue_draw(); }
+            glib::Propagation::Proceed
+        });
+    }
     { let h = header.clone(); win.connect_configure_event(move |_, _| { h.queue_draw(); false }); }
     root.pack_start(&header, false, false, 0);
     let main = gtk::Box::new(gtk::Orientation::Horizontal, 0);

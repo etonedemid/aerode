@@ -173,9 +173,9 @@ impl Wm {
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
-            wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint[3].clamp(0.2, 0.8)],
+            wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint()[3].clamp(0.2, 0.8)],
         };
-        wm.color = colorization(&cfg.tint);
+        wm.color = colorization(&cfg.tint());
         {
             let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
             let cur = wm.prop32(wm.root, wm.atoms._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL).first().copied().unwrap_or(0);

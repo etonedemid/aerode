@@ -1,9 +1,10 @@
-//! Aerode – a Windows 7 style desktop environment for Linux (X11 + Openbox).
+//! Aerode – a Windows 7 style desktop environment for Linux (X11).
 pub mod cmdshell;
 pub mod config;
 pub mod console;
 pub mod desktop;
 pub mod dialogs;
+pub mod dwmcolor;
 pub mod flyouts;
 pub mod gadgets;
 pub mod explorer;
@@ -22,5 +23,6 @@ pub mod taskbar;
 pub mod theme;
 pub mod tray;
 pub mod util;
+pub mod wincolor;
 pub mod wm;
 pub mod x11;

@@ -1,6 +1,6 @@
 //! Run dialog and Personalization (wallpaper + window colour).
 use gtk::prelude::*;
-use gtk::{gdk, gdk_pixbuf::Pixbuf, glib};
+use gtk::{gdk_pixbuf::Pixbuf, glib};
 use std::path::PathBuf;
 
 use crate::{config, glass, util};
@@ -78,15 +78,6 @@ pub fn run_dialog() {
     d.present();
 }
 
-const COLORS: &[(&str, [f64; 3])] = &[
-    ("Sky", [0.10, 0.22, 0.36]), ("Twilight", [0.05, 0.13, 0.35]), ("Sea", [0.03, 0.33, 0.38]),
-    ("Leaf", [0.13, 0.35, 0.10]), ("Lime", [0.40, 0.52, 0.05]), ("Sun", [0.62, 0.55, 0.05]),
-    ("Pumpkin", [0.62, 0.32, 0.04]), ("Ruby", [0.50, 0.04, 0.06]), ("Fuchsia", [0.52, 0.05, 0.40]),
-    ("Blush", [0.62, 0.35, 0.48]), ("Violet", [0.30, 0.10, 0.50]), ("Lavender", [0.48, 0.45, 0.62]),
-    ("Taupe", [0.42, 0.37, 0.28]), ("Chocolate", [0.24, 0.12, 0.05]), ("Slate", [0.25, 0.27, 0.30]),
-    ("Frost", [0.82, 0.86, 0.90]),
-];
-
 fn wallpaper_dirs() -> Vec<PathBuf> {
     vec![
         config::data_dir().join("wallpapers"),
@@ -114,7 +105,7 @@ pub fn personalize() {
     let w = gtk::Window::new(gtk::WindowType::Toplevel);
     w.set_title("Personalization");
     w.set_icon_name(Some("preferences-desktop-wallpaper"));
-    w.set_default_size(760, 560);
+    w.set_default_size(780, 640);
     let nb = gtk::Notebook::new();
     w.add(&nb);
 
@@ -188,50 +179,8 @@ pub fn personalize() {
     }
     nb.append_page(&bg, Some(&gtk::Label::new(Some("Desktop Background"))));
 
-    // ---- window colour
-    let col = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    col.set_border_width(12);
-    let h = gtk::Label::new(None);
-    h.set_markup("<span size='large' foreground='#1e3287'>Change the color of your window borders, Start menu, and taskbar</span>");
-    h.set_xalign(0.0);
-    col.pack_start(&h, false, false, 0);
-    let grid = gtk::FlowBox::new();
-    grid.set_max_children_per_line(8);
-    grid.set_selection_mode(gtk::SelectionMode::None);
-    let intensity = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.15, 0.9, 0.01);
-    intensity.set_value(config::get().tint[3]);
-    for (name, rgb) in COLORS {
-        let b = gtk::Button::new();
-        let da = gtk::DrawingArea::new();
-        da.set_size_request(48, 48);
-        let rgb = *rgb;
-        da.connect_draw(move |_, cr| {
-            glass::rounded(cr, 1.0, 1.0, 46.0, 46.0, 5.0);
-            cr.set_source_rgb(rgb[0], rgb[1], rgb[2]);
-            cr.fill_preserve().ok();
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.5);
-            cr.stroke().ok();
-            glib::Propagation::Proceed
-        });
-        b.add(&da);
-        b.set_tooltip_text(Some(name));
-        let inten = intensity.clone();
-        b.connect_clicked(move |_| {
-            let a = inten.value();
-            config::update(|c| c.tint = [rgb[0], rgb[1], rgb[2], a]);
-            apply_tint();
-        });
-        grid.insert(&b, -1);
-    }
-    col.pack_start(&grid, false, false, 0);
-    let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    r.pack_start(&gtk::Label::new(Some("Color intensity:")), false, false, 0);
-    r.pack_start(&intensity, true, true, 0);
-    intensity.connect_value_changed(|s| { let v = s.value(); config::update(|c| c.tint[3] = v); apply_tint(); });
-    col.pack_start(&r, false, false, 0);
-    let sounds = gtk::Label::new(Some("Tip: sounds, screen saver and mouse pointers are in Control Panel."));
-    sounds.set_xalign(0.0);
-    col.pack_end(&sounds, false, false, 0);
+    // ---- window colour: previews live, reverts unless saved (also when the window is closed)
+    let col = crate::wincolor::page(&w);
     nb.append_page(&col, Some(&gtk::Label::new(Some("Window Color"))));
 
     w.connect_destroy(|_| PERS.with(|p| *p.borrow_mut() = None));
@@ -239,10 +188,10 @@ pub fn personalize() {
     PERS.with(|p| *p.borrow_mut() = Some(w));
 }
 
-/// Push the tint to every glass surface and the window-frame theme.
-fn apply_tint() {
-    glass::reload();
-    crate::theme::write_openbox_theme();
-    util::spawn(&["openbox", "--reconfigure"]);
-    let _ = gdk::Display::default();
+/// Open Personalization at its Window Color page.
+pub fn window_color() {
+    personalize();
+    if let Some(nb) = PERS.with(|p| p.borrow().clone()).and_then(|w| w.child()).and_then(|c| c.downcast::<gtk::Notebook>().ok()) {
+        nb.set_current_page(Some(1));
+    }
 }
