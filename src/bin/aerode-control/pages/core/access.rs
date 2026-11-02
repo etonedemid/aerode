@@ -402,7 +402,11 @@ fn page_items(id: &str) -> Option<(&'static str, &'static str, Vec<It>)> {
             Link("Set up Mouse Keys", "access/mousekeys"),
             H("Make it easier to manage windows"),
             Off("Activate a window by hovering over it with the mouse", no_wm),
-            Off("Prevent windows from being automatically arranged when moved to the edge of the screen", no_wm),
+            Check("noarrange", "Prevent windows from being automatically arranged when moved to the edge of the screen"),
+            Text("Turns off Aero Snap and Aero Shake."),
+            Combo("shake", "Aero Shake (shake a window by its title bar to minimize the others):", &[
+                ("0", "Off"), ("4", "Very easy (2 shakes)"), ("6", "Easy (3 shakes)"),
+                ("8", "Normal (4 shakes)"), ("12", "Hard (6 shakes)"), ("16", "Very hard (8 shakes)")]),
             H("See also"),
             Link("Mouse settings", "mouse"),
         ]),
@@ -486,6 +490,7 @@ fn default_of(k: &str) -> &'static str {
         "sticky_shortcut" | "sticky_lock" | "sticky_two" | "sticky_sound" | "filter_shortcut" => "1",
         "hc_theme" => "black", "cursor_scheme" => "white", "cursor_size" => "regular", "filter_mode" => "bounce",
         "mouse_speed" => "30", "mouse_accel" => "100", "bounce_delay" => "500", "slow_delay" => "1000",
+        "shake" => "8",
         _ => "0",
     }
 }
