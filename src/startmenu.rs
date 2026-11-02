@@ -13,6 +13,49 @@ thread_local! {
 /// Hide the Start menu if it is open (used when clicking the desktop).
 pub fn hide_all() { if let Some(f) = HIDE_ALL.with(|h| h.borrow().clone()) { f(); } }
 
+/// Customize Start Menu items: (key, Win7 label, "link" = link / menu / don't display or "check", default)
+pub const START_ITEMS: &[(&str, &str, &str, &str)] = &[
+    ("computer", "Computer", "link", "link"),
+    ("control", "Control Panel", "link", "link"),
+    ("defaults", "Default Programs", "check", "on"),
+    ("devices", "Devices and Printers", "check", "on"),
+    ("documents", "Documents", "link", "link"),
+    ("downloads", "Downloads", "link", "hide"),
+    ("dragdrop", "Enable context menus and dragging and dropping", "check", "on"),
+    ("games", "Games", "link", "link"),
+    ("help", "Help", "check", "on"),
+    ("highlight", "Highlight newly installed programs", "check", "on"),
+    ("music", "Music", "link", "link"),
+    ("network", "Network", "check", "off"),
+    ("hoveropen", "Open submenus when I pause on them with the mouse pointer", "check", "on"),
+    ("user", "Personal folder", "link", "link"),
+    ("pictures", "Pictures", "link", "link"),
+    ("recent", "Recent Items", "check", "off"),
+    ("run", "Run command", "check", "on"),
+    ("searchcp", "Search programs and Control Panel", "check", "on"),
+    ("sortname", "Sort All Programs menu by name", "check", "on"),
+    ("largeicons", "Use large icons", "check", "on"),
+    ("videos", "Videos", "link", "hide"),
+];
+
+/// The Customize Start Menu value of `key` ("link" | "menu" | "hide" | "on" | "off").
+pub fn start_item(key: &str) -> String {
+    config::get().taskbar.start_items.get(key).cloned()
+        .unwrap_or_else(|| START_ITEMS.iter().find(|i| i.0 == key).map(|i| i.3.to_string()).unwrap_or_else(|| "on".into()))
+}
+
+/// Taskbar and Start Menu Properties > Power button action: (id, label), in the Win7 list order
+pub const POWER_ACTIONS: &[(&str, &str)] = &[("switchuser", "Switch user"), ("logoff", "Log off"), ("lock", "Lock"), ("restart", "Restart"),
+    ("sleep", "Sleep"), ("hibernate", "Hibernate"), ("shutdown", "Shut down")];
+
+fn power_action(id: &str) -> fn() {
+    match id {
+        "switchuser" => || { util::spawn(&["dm-tool", "switch-to-greeter"]); },
+        "logoff" => sys::log_off, "lock" => sys::lock, "restart" => sys::restart,
+        "sleep" => sys::sleep, "hibernate" => sys::hibernate, _ => sys::shutdown,
+    }
+}
+
 const W: i32 = 400;
 const H: i32 = 535;
 const LEFT_W: i32 = 252;
@@ -29,6 +72,9 @@ pub struct StartMenu {
     hidden_at: Cell<Option<std::time::Instant>>,
     /// the menu got keyboard focus since it was last shown (see the window-state handler)
     armed: Cell<bool>,
+    /// right-column links by Customize Start Menu key, shown or hidden on every open
+    links: RefCell<Vec<(&'static str, gtk::Widget)>>,
+    power_btn: RefCell<Option<gtk::Button>>,
 }
 
 const CATS: &[(&str, &str, &str)] = &[
@@ -125,6 +171,7 @@ impl StartMenu {
             win: win.clone(), list, search: search.clone(), avatar: avatar.clone(), mode: Cell::new(0),
             all_btn_label: all_lbl, expanded: RefCell::new(vec![]), on_hide: RefCell::new(None), hidden_at: Cell::new(None),
             armed: Cell::new(false),
+            links: RefCell::new(vec![]), power_btn: RefCell::new(None),
         });
 
         let user = glib::real_name().to_string_lossy().into_owned();
@@ -133,25 +180,46 @@ impl StartMenu {
         type Act = Rc<dyn Fn()>;
         let ex = |p: std::path::PathBuf| -> Act { Rc::new(move || util::explore(&p.to_string_lossy())) };
         let ctrl = |page: &'static str| -> Act { Rc::new(move || { util::spawn(&["aerode-control", page]); }) };
-        let links: Vec<Option<(String, &str, Act)>> = vec![
-            Some((user.clone(), "user-home", ex(home.clone()))),
-            Some(("Documents".into(), "folder-documents", ex(util::special_dir(glib::UserDirectory::Documents, "Documents")))),
-            Some(("Pictures".into(), "folder-pictures", ex(util::special_dir(glib::UserDirectory::Pictures, "Pictures")))),
-            Some(("Music".into(), "folder-music", ex(util::special_dir(glib::UserDirectory::Music, "Music")))),
+        let recent: Act = Rc::new(|| {
+            // Recent Items: the files GTK programs recorded, newest first
+            let Some(rm) = gtk::RecentManager::default() else { return };
+            let mut items = rm.items();
+            items.sort_by_key(|i| std::cmp::Reverse(i.modified()));
+            let m = gtk::Menu::new();
+            for i in items.iter().take(config::get().taskbar.jump_items.max(1) as usize) {
+                let Some(uri) = i.uri() else { continue };
+                let it = gtk::MenuItem::with_label(&i.display_name().map(|s| s.to_string()).unwrap_or_else(|| uri.to_string()));
+                let u = uri.to_string();
+                it.connect_activate(move |_| { util::open_uri(&u); });
+                m.append(&it);
+            }
+            if m.children().is_empty() { let e = gtk::MenuItem::with_label("(Empty)"); e.set_sensitive(false); m.append(&e); }
+            m.show_all();
+            m.popup_at_pointer(None);
+        });
+        let links: Vec<Option<(&'static str, String, &str, Act)>> = vec![
+            Some(("user", user.clone(), "user-home", ex(home.clone()))),
+            Some(("documents", "Documents".into(), "folder-documents", ex(util::special_dir(glib::UserDirectory::Documents, "Documents")))),
+            Some(("pictures", "Pictures".into(), "folder-pictures", ex(util::special_dir(glib::UserDirectory::Pictures, "Pictures")))),
+            Some(("music", "Music".into(), "folder-music", ex(util::special_dir(glib::UserDirectory::Music, "Music")))),
+            Some(("videos", "Videos".into(), "folder-videos", ex(util::special_dir(glib::UserDirectory::Videos, "Videos")))),
+            Some(("downloads", "Downloads".into(), "folder-download", ex(util::special_dir(glib::UserDirectory::Downloads, "Downloads")))),
             None,
-            Some(("Games".into(), util::first_icon(&["folder-games", "applications-games"]), Rc::new(|| util::explore("aerode:games")))),
-            Some(("Computer".into(), "computer", Rc::new(|| util::explore("computer:///")))),
+            Some(("games", "Games".into(), util::first_icon(&["folder-games", "applications-games"]), Rc::new(|| util::explore("aerode:games")))),
+            Some(("recent", "Recent Items".into(), util::first_icon(&["document-open-recent", "folder-recent"]), recent)),
+            Some(("computer", "Computer".into(), "computer", Rc::new(|| util::explore("computer:///")))),
+            Some(("network", "Network".into(), "network-workgroup", Rc::new(|| util::explore("network:///")))),
             None,
-            Some(("Control Panel".into(), "preferences-system", ctrl(""))),
-            Some(("Devices and Printers".into(), "printer", ctrl("devices"))),
-            Some(("Default Programs".into(), "preferences-desktop-default-applications", ctrl("defaults"))),
-            Some(("Help and Support".into(), "help-browser", Rc::new(|| { util::open_uri("https://wiki.archlinux.org/"); }))),
-            Some(("Run...".into(), "system-run", Rc::new(|| crate::dialogs::run_dialog()))),
+            Some(("control", "Control Panel".into(), "preferences-system", ctrl(""))),
+            Some(("devices", "Devices and Printers".into(), "printer", ctrl("devices"))),
+            Some(("defaults", "Default Programs".into(), "preferences-desktop-default-applications", ctrl("defaults"))),
+            Some(("help", "Help and Support".into(), "help-browser", Rc::new(|| { util::open_uri("https://wiki.archlinux.org/"); }))),
+            Some(("run", "Run...".into(), "system-run", Rc::new(|| crate::dialogs::run_dialog()))),
         ];
         for l in links {
             match l {
                 None => right.pack_start(&gtk::Separator::new(gtk::Orientation::Horizontal), false, false, 0),
-                Some((label, icon, act)) => {
+                Some((key, label, icon, act)) => {
                     let b = gtk::Button::with_label(&label);
                     b.style_context().add_class("sm-link");
                     if let Some(l) = b.child().and_then(|c| c.downcast::<gtk::Label>().ok()) { l.set_xalign(0.0); }
@@ -163,6 +231,7 @@ impl StartMenu {
                     let av = avatar.clone();
                     b.connect_leave_notify_event(move |_, _| { if let Some(p) = avatar_pixbuf(48) { av.set_from_pixbuf(Some(&p)); } glib::Propagation::Proceed });
                     right.pack_start(&b, false, false, 1);
+                    sm.links.borrow_mut().push((key, b.upcast()));
                 }
             }
         }
@@ -176,18 +245,21 @@ impl StartMenu {
         let arrow = gtk::Button::with_label("▸");
         arrow.style_context().add_class("sm-power");
         arrow.style_context().add_class("arrow");
-        { let s = sm.clone(); shut.connect_clicked(move |_| { s.hide(); sys::shutdown(); }); }
+        // Taskbar and Start Menu Properties > Power button action
+        { let s = sm.clone(); shut.connect_clicked(move |_| { s.hide(); power_action(&config::get().taskbar.power_button)(); }); }
+        *sm.power_btn.borrow_mut() = Some(shut.clone());
         {
             let s = sm.clone();
             arrow.connect_clicked(move |a| {
                 let m = gtk::Menu::new();
-                let items: Vec<(&str, fn())> = vec![
-                    ("Switch user", || { util::spawn(&["dm-tool", "switch-to-greeter"]); }),
-                    ("Log off", sys::log_off), ("Lock", sys::lock), ("", || {}),
-                    ("Restart", sys::restart), ("Sleep", sys::sleep), ("Hibernate", sys::hibernate),
-                ];
-                for (l, f) in items {
+                // the menu offers every action except the button's own
+                let cur = config::get().taskbar.power_button;
+                let mut items: Vec<(&str, &str)> = vec![("switchuser", "Switch user"), ("logoff", "Log off"), ("lock", "Lock"), ("", ""),
+                    ("restart", "Restart"), ("sleep", "Sleep"), ("hibernate", "Hibernate"), ("shutdown", "Shut down")];
+                items.retain(|i| i.0 != cur.as_str() && !(i.0 == "shutdown" && cur.is_empty()));
+                for (id, l) in items {
                     if l.is_empty() { m.append(&gtk::SeparatorMenuItem::new()); continue; }
+                    let f = power_action(id);
                     let it = gtk::MenuItem::with_label(l);
                     let s = s.clone();
                     it.connect_activate(move |_| { s.hide(); f(); });
@@ -278,6 +350,7 @@ impl StartMenu {
         self.mode.set(0);
         self.search.set_text("");
         self.expanded.borrow_mut().clear();
+        self.apply_options();
         self.populate();
         let g = util::primary_geometry();
         self.win.move_(g.x(), g.y() + g.height() - config::get().taskbar_height - H);
@@ -285,6 +358,18 @@ impl StartMenu {
         self.win.show();
         self.win.present_with_time(gtk::current_event_time());
         self.search.grab_focus();
+    }
+
+    /// Customize Start Menu items and the power button label (set in Control Panel).
+    fn apply_options(&self) {
+        let tb = config::get().taskbar;
+        for (key, w) in self.links.borrow().iter() {
+            let v = start_item(key);
+            w.set_visible(v != "hide" && v != "off" && !(*key == "recent" && !tb.track_items));
+        }
+        if let Some(b) = self.power_btn.borrow().as_ref() {
+            b.set_label(POWER_ACTIONS.iter().find(|a| a.0 == tb.power_button).map(|a| a.1).unwrap_or("Shut down"));
+        }
     }
 
     pub fn hide(&self) {
@@ -343,18 +428,22 @@ impl StartMenu {
         match self.mode.get() {
             0 => {
                 self.all_btn_label.set_text("All Programs");
+                // Privacy: "Store and display recently opened programs" off = an empty list, like Win7
+                let tb = config::get().taskbar;
+                let n = if tb.track_programs { tb.recent_programs as usize } else { 0 };
+                let isz = if start_item("largeicons") == "off" { 16 } else { 32 };
                 let usage = config::get().usage;
                 let mut freq: Vec<_> = apps.iter().filter(|a| a.id().map(|i| usage.contains_key(i.as_str())).unwrap_or(false)).cloned().collect();
                 freq.sort_by_key(|a| std::cmp::Reverse(usage.get(a.id().unwrap().as_str()).copied().unwrap_or(0)));
                 // seed with sensible defaults on first run
                 let seeds = ["aerode-explorer.desktop", "aerode-notepad.desktop", "aerode-calc.desktop", "aerode-mspaint.desktop", "aerode-taskmgr.desktop"];
                 for s in seeds {
-                    if freq.len() >= 10 { break; }
+                    if freq.len() >= n { break; }
                     if let Some(a) = util::app_by_id(s) { if !freq.iter().any(|f| f.id() == a.id()) { freq.push(a); } }
                 }
-                if let Some(t) = util::terminal() { if freq.len() < 10 && !freq.iter().any(|f| f.id() == t.id()) { freq.push(t); } }
-                for a in freq.iter().take(10) {
-                    self.list.pack_start(&self.item(a, 32, 0), false, false, 1);
+                if let Some(t) = util::terminal() { if freq.len() < n && !freq.iter().any(|f| f.id() == t.id()) { freq.push(t); } }
+                for a in freq.iter().take(n) {
+                    self.list.pack_start(&self.item(a, isz, 0), false, false, 1);
                 }
             }
             1 => {

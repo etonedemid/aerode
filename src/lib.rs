@@ -15,6 +15,7 @@ pub mod lock;
 pub mod msstyles;
 pub mod notify;
 pub mod pe;
+pub mod screensaver;
 pub mod sounds;
 pub mod sysmenu;
 pub mod startmenu;

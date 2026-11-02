@@ -37,6 +37,140 @@ pub struct Config {
     pub tray_show_all: bool,
     /// Control Panel ▸ System and Security: Windows Update, Action Center, Backup, Experience Index
     pub maintenance: Maintenance,
+    /// Taskbar and Start Menu Properties (Control Panel)
+    pub taskbar: TaskbarOptions,
+    /// Folder Options (Explorer and the desktop)
+    pub folder: FolderOptions,
+    /// Screen Saver Settings
+    pub screensaver: ScreenSaverOptions,
+    /// Fonts: rendering (Xft/xsettings), hidden families
+    pub fonts: FontOptions,
+    /// Desktop Icon Settings > Change Icon: item ("computer", "home", "network", "trash", "trash-full", "control") -> icon name or file
+    pub desktop_icon_art: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct TaskbarOptions {
+    pub locked: bool,
+    pub autohide: bool,
+    pub small_icons: bool,
+    /// bottom | left | right | top
+    pub location: String,
+    /// always | full | never
+    pub buttons: String,
+    pub aero_peek: bool,
+    /// shutdown | switchuser | logoff | lock | restart | sleep | hibernate
+    pub power_button: String,
+    /// Privacy: store and display recently opened programs / items
+    pub track_programs: bool,
+    pub track_items: bool,
+    /// Customize Start Menu: number of recent programs / Jump List items
+    pub recent_programs: u32,
+    pub jump_items: u32,
+    /// Customize Start Menu items: key -> link | menu | hide | on | off (missing = default)
+    pub start_items: HashMap<String, String>,
+    /// taskbar toolbars: address | links | tabletpc | desktop
+    pub toolbars: Vec<String>,
+}
+
+impl Default for TaskbarOptions {
+    fn default() -> Self {
+        TaskbarOptions { locked: true, autohide: false, small_icons: false, location: "bottom".into(), buttons: "always".into(), aero_peek: true,
+            power_button: "shutdown".into(), track_programs: true, track_items: true, recent_programs: 10, jump_items: 10,
+            start_items: HashMap::new(), toolbars: vec![] }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct FolderOptions {
+    pub own_window: bool,
+    pub single_click: bool,
+    /// single-click mode: underline titles only when pointed at (else always, "consistent with my browser")
+    pub underline_hover: bool,
+    pub nav_all_folders: bool,
+    pub nav_expand: bool,
+    pub icons_only: bool,
+    pub always_menus: bool,
+    pub file_icon_on_thumbs: bool,
+    pub size_in_tips: bool,
+    pub full_path_title: bool,
+    pub show_hidden: bool,
+    pub hide_empty_drives: bool,
+    pub hide_ext: bool,
+    pub hide_protected: bool,
+    pub separate_process: bool,
+    pub restore_windows: bool,
+    pub drive_letters: bool,
+    pub color_compressed: bool,
+    pub popup_desc: bool,
+    pub preview_handlers: bool,
+    pub checkboxes: bool,
+    pub sharing_wizard: bool,
+    /// when typing into list view: true = type into the search box, false = select the typed item
+    pub type_to_search: bool,
+    /// Search tab
+    pub search_contents: bool,
+    pub search_subfolders: bool,
+    pub search_partial: bool,
+    pub search_natural: bool,
+    pub search_no_index: bool,
+    pub search_system_dirs: bool,
+    pub search_compressed: bool,
+}
+
+impl Default for FolderOptions {
+    fn default() -> Self {
+        FolderOptions { own_window: false, single_click: false, underline_hover: false, nav_all_folders: false, nav_expand: false,
+            icons_only: false, always_menus: false, file_icon_on_thumbs: true, size_in_tips: true, full_path_title: false, show_hidden: false,
+            hide_empty_drives: true, hide_ext: true, hide_protected: true, separate_process: false, restore_windows: false, drive_letters: true,
+            color_compressed: false, popup_desc: true, preview_handlers: true, checkboxes: false, sharing_wizard: true, type_to_search: false,
+            search_contents: false, search_subfolders: true, search_partial: true, search_natural: false, search_no_index: false,
+            search_system_dirs: true, search_compressed: false }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct ScreenSaverOptions {
+    /// "" = (None) | blank | bubbles | mystify | photos | ribbons
+    pub name: String,
+    /// minutes of inactivity
+    pub wait: u32,
+    /// On resume, display logon screen
+    pub lock: bool,
+    /// Photos: folder ("" = Pictures), slow | medium | fast, shuffle
+    pub photos_dir: String,
+    pub photos_speed: String,
+    pub photos_shuffle: bool,
+}
+
+impl Default for ScreenSaverOptions {
+    fn default() -> Self {
+        ScreenSaverOptions { name: String::new(), wait: 10, lock: true, photos_dir: String::new(), photos_speed: "medium".into(), photos_shuffle: false }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct FontOptions {
+    pub antialias: bool,
+    pub hinting: bool,
+    /// hintnone | hintslight | hintmedium | hintfull
+    pub hintstyle: String,
+    /// rgb | bgr | vrgb | vbgr | none (ClearType off = grayscale)
+    pub rgba: String,
+    /// families hidden with Fonts > Hide (rejected through fontconfig)
+    pub hidden: Vec<String>,
+    pub hide_by_language: bool,
+    pub install_as_shortcut: bool,
+}
+
+impl Default for FontOptions {
+    fn default() -> Self {
+        FontOptions { antialias: true, hinting: true, hintstyle: "hintfull".into(), rgba: "rgb".into(), hidden: vec![], hide_by_language: true, install_as_shortcut: false }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -101,6 +235,11 @@ impl Default for Config {
             tray_icons: HashMap::new(),
             tray_show_all: false,
             maintenance: Maintenance::default(),
+            taskbar: TaskbarOptions::default(),
+            folder: FolderOptions::default(),
+            screensaver: ScreenSaverOptions::default(),
+            fonts: FontOptions::default(),
+            desktop_icon_art: HashMap::new(),
         }
     }
 }
@@ -268,7 +407,9 @@ pub fn get() -> Config {
 }
 
 pub fn update(f: impl FnOnce(&mut Config)) {
-    CONFIG.with(|c| f(&mut c.borrow_mut()));
+    // read-modify-write against the file: several processes (shell, Control Panel, Explorer) share
+    // it, and saving a stale in-memory copy would undo what another one just changed
+    CONFIG.with(|c| { let mut c = c.borrow_mut(); if conf_dir().join("config.json").exists() { *c = load(); } f(&mut c); });
     save();
 }
 

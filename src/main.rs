@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11};
 
-const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|reload|lock|quit|restart]
-       aerode sysmenu WINDOW X Y | taskbar-launch N
+const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|gadgets|reload|lock|quit|restart]
+       aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME]
        aerode query-volume | query-network";
 
 struct Shell {
@@ -113,9 +113,11 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             aerode::config::reload();
             glass::reload();
             glass::publish(Some(&aerode::config::get().colorization.dwm()));
-            SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.taskbar.refresh() });
+            // settings changed in Control Panel (desktop icons, folder options, taskbar size...)
+            SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s._desktop.rebuild(); s.taskbar.resize(); s.taskbar.refresh() });
             aerode::tray::reload();
         }
+        "gadgets" => { build(app); aerode::gadgets::show_gallery(); }
         "quit" => app.quit(),
         "sysmenu" => {
             build(app);
@@ -151,6 +153,11 @@ fn main() -> glib::ExitCode {
         Some("lock") => {
             gtk::init().expect("gtk");
             aerode::lock::lock();
+            return glib::ExitCode::SUCCESS;
+        }
+        Some("screensaver") => {
+            gtk::init().expect("gtk");
+            aerode::screensaver::command(&args);
             return glib::ExitCode::SUCCESS;
         }
         Some("restart") => { restart_session(); return glib::ExitCode::SUCCESS; }
