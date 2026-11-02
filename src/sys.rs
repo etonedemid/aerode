@@ -103,18 +103,63 @@ pub struct Battery {
     pub status: String,
 }
 
+/// The computer's battery as Win7 sees it: every system battery pack together (the composite
+/// battery), never a wireless mouse's or keyboard's (power_supply scope "Device").
 pub fn battery() -> Option<Battery> {
     let rd = std::fs::read_dir("/sys/class/power_supply").ok()?;
-    for e in rd.flatten() {
+    let read = |p: &std::path::Path, f: &str| std::fs::read_to_string(p.join(f)).ok().map(|s| s.trim().to_string());
+    let packs: Vec<Pack> = rd.flatten().filter_map(|e| {
         let p = e.path();
-        let ty = std::fs::read_to_string(p.join("type")).unwrap_or_default();
-        if ty.trim() == "Battery" {
-            let percent = std::fs::read_to_string(p.join("capacity")).ok()?.trim().parse().ok()?;
-            let status = std::fs::read_to_string(p.join("status")).unwrap_or_default().trim().to_string();
-            return Some(Battery { percent, status });
-        }
+        if read(&p, "type")? != "Battery" { return None; }
+        if read(&p, "scope").as_deref() == Some("Device") || read(&p, "present").as_deref() == Some("0") { return None; }
+        let num = |f: &str| read(&p, f).and_then(|v| v.parse::<u64>().ok());
+        let (now, full) = match (num("energy_now"), num("energy_full")) {
+            (Some(n), Some(f)) => (Some(n), Some(f)),
+            _ => (num("charge_now"), num("charge_full")),
+        };
+        Some(Pack { capacity: num("capacity").map(|c| c as u32), now, full, status: read(&p, "status").unwrap_or_default() })
+    }).collect();
+    composite(&packs)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Pack { pub capacity: Option<u32>, pub now: Option<u64>, pub full: Option<u64>, pub status: String }
+
+/// Several packs as one battery: charge summed over capacity (average capacity when a pack has no
+/// energy/charge readings); discharging when any pack is, charging when any is, full when all are.
+pub fn composite(packs: &[Pack]) -> Option<Battery> {
+    if packs.is_empty() { return None; }
+    let all_measured = packs.iter().all(|p| p.now.is_some() && p.full.map(|f| f > 0).unwrap_or(false));
+    let percent = if all_measured {
+        let (n, f) = packs.iter().fold((0u64, 0u64), |a, p| (a.0 + p.now.unwrap(), a.1 + p.full.unwrap()));
+        ((n * 100 + f / 2) / f).min(100) as u32
+    } else {
+        let caps: Vec<u32> = packs.iter().filter_map(|p| p.capacity).collect();
+        if caps.is_empty() { return None; }
+        caps.iter().sum::<u32>() / caps.len() as u32
+    };
+    let any = |s: &str| packs.iter().any(|p| p.status == s);
+    let status = if any("Discharging") { "Discharging" } else if any("Charging") { "Charging" }
+        else if packs.iter().all(|p| p.status == "Full") { "Full" } else { packs[0].status.as_str() };
+    Some(Battery { percent, status: status.to_string() })
+}
+
+#[cfg(test)]
+mod battery_tests {
+    use super::*;
+    fn pack(now: u64, full: u64, status: &str) -> Pack { Pack { capacity: Some((now * 100 / full) as u32), now: Some(now), full: Some(full), status: status.into() } }
+    #[test]
+    fn two_packs_are_one_battery() {
+        let b = composite(&[pack(10, 50, "Discharging"), pack(40, 50, "Unknown")]).unwrap();
+        assert_eq!((b.percent, b.status.as_str()), (50, "Discharging"));
     }
-    None
+    #[test]
+    fn capacity_only() {
+        let b = composite(&[Pack { capacity: Some(30), status: "Charging".into(), ..Default::default() }]).unwrap();
+        assert_eq!((b.percent, b.status.as_str()), (30, "Charging"));
+    }
+    #[test]
+    fn none_without_packs() { assert!(composite(&[]).is_none()); }
 }
 
 /// Icon names for the battery, best first: the 10 %-step Win7 icons (built from batmeter.dll by
