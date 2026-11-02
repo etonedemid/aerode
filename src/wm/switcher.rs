@@ -1,5 +1,6 @@
 //! Alt+Tab window switcher (Windows 7 style: glass panel, icons, title above).
 use x11rb::connection::Connection;
+use x11rb::wrapper::ConnectionExt as _;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
@@ -34,6 +35,7 @@ impl Switcher {
         let mut aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).event_mask(EventMask::EXPOSURE);
         if cmap != 0 { aux = aux.colormap(cmap); }
         wm.conn.create_window(depth, win, wm.root, pos.0 as i16, pos.1 as i16, w as u16, h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).ok()?;
+        let _ = wm.conn.change_property32(PropMode::REPLACE, win, wm.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
         wm.conn.map_window(win).ok()?;
         let _ = wm.conn.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
         Some(Switcher { win, wins, sel: 0, w, h, pos, _held: held })
