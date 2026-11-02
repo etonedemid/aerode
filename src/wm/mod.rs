@@ -30,7 +30,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_HIDDEN, _NET_WM_STATE_ABOVE, _NET_WM_STATE_BELOW,
         _NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_DEMANDS_ATTENTION,
         _NET_WM_STATE_MODAL, _NET_WM_STATE_STICKY, _NET_WM_STATE_FOCUSED,
-        _NET_WM_WINDOW_TYPE, _NET_WM_WINDOW_TYPE_DESKTOP, _NET_WM_WINDOW_TYPE_DOCK,
+        _NET_WM_WINDOW_TYPE, _NET_WM_WINDOW_TYPE_DESKTOP, _NET_WM_WINDOW_TYPE_DOCK, _NET_WM_WINDOW_TYPE_DND,
         _NET_WM_WINDOW_TYPE_TOOLBAR, _NET_WM_WINDOW_TYPE_MENU, _NET_WM_WINDOW_TYPE_UTILITY,
         _NET_WM_WINDOW_TYPE_SPLASH, _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_WINDOW_TYPE_NORMAL,
         _NET_WM_WINDOW_TYPE_NOTIFICATION, _NET_WM_WINDOW_TYPE_DROPDOWN_MENU, _NET_WM_WINDOW_TYPE_POPUP_MENU,
@@ -1770,7 +1770,8 @@ impl Wm {
             let win = self.conn.generate_id().unwrap();
             let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).colormap(cmap);
             if self.conn.create_window(32, win, self.root, r.x as i16, r.y as i16, r.w as u16, r.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { continue; }
-            // clicks go through
+            // no compositor shadow (picom's rules leave DND windows alone), clicks go through
+            let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
             let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
             let _ = self.conn.map_window(win);
             if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r.w, r.h) {
@@ -1840,6 +1841,8 @@ impl Wm {
         let r2 = Rect { x: r.x + 8, y: r.y + 8, w: r.w - 16, h: r.h - 16 };
         if self.conn.create_window(depth, win, self.root, r2.x as i16, r2.y as i16, r2.w as u16, r2.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return; }
         let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
+        // like Win7, the preview casts no shadow (picom leaves DND-type windows without one)
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
         let _ = self.conn.map_window(win);
         // paint: glass rectangle with white edge (Win7 "peek" outline)
         if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r2.w, r2.h) {
