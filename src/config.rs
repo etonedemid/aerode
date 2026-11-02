@@ -24,6 +24,10 @@ pub struct Config {
     /// desktop "Sort by": name | size | type | date
     pub desktop_sort: String,
     pub desktop_sort_desc: bool,
+    /// keyboard layouts ("us", "de(nodeadkeys)"…); empty = whatever the system set up
+    pub kbd_layouts: Vec<String>,
+    /// XKB option switching input languages; None = Alt+Shift (Windows default), Some("") = none
+    pub kbd_switch: Option<String>,
 }
 
 impl Default for Config {
@@ -42,6 +46,8 @@ impl Default for Config {
             sounds_muted: false,
             desktop_sort: "name".into(),
             desktop_sort_desc: false,
+            kbd_layouts: vec![],
+            kbd_switch: None,
         }
     }
 }
