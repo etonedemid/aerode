@@ -38,6 +38,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE_TOOLTIP,
         _NET_WM_STRUT, _NET_WM_STRUT_PARTIAL, _NET_WM_ICON, _NET_WM_PID, _NET_FRAME_EXTENTS,
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
+        _NET_WM_SYNC_REQUEST, _NET_WM_SYNC_REQUEST_COUNTER,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
         _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_WM_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS, _AERODE_COLORIZATION, _AERODE_PEEK,
@@ -97,6 +98,13 @@ pub struct Client {
     pub focus_fade: Option<anim::Tween>,
     /// the next hide is a minimise that picom animates: unmap a moment later (`anim::MIN_UNMAP_DELAY`)
     pub defer_unmap: bool,
+    /// interactive resize pacing: the client's _NET_WM_SYNC_REQUEST_COUNTER, the last value we
+    /// asked for and when, the newest size waiting for the client, when we last resized it
+    pub sync_counter: Option<u32>,
+    pub sync_sent: i64,
+    pub sync_wait: Option<Instant>,
+    pub resize_pending: Option<Rect>,
+    pub last_resize: Option<Instant>,
 }
 
 fn is_app(c: &Client) -> bool { matches!(c.kind, Kind::Normal | Kind::Dialog | Kind::Utility) }
@@ -108,11 +116,12 @@ enum Drag {
     Button { btn: Btn },
 }
 
-/// Aero Shake: a title-bar drag that reverses direction (by at least `SHAKE_MIN` px) `SHAKE_FLIPS`
-/// times within `SHAKE_MS` minimises every other window; shaking again brings them back.
-const SHAKE_MIN: i32 = 18;
-const SHAKE_FLIPS: usize = 4;
-const SHAKE_MS: u128 = 1000;
+/// Aero Shake: a title-bar drag that reverses direction (by at least `SHAKE_MIN` px) a number of
+/// times (Ease of Access > Make the mouse easier to use > Aero Shake, 8 by default) within
+/// `SHAKE_MS_PER_FLIP` per reversal minimises every other window; shaking again brings them back.
+const SHAKE_MIN: i32 = 24;
+const SHAKE_DEFAULT_FLIPS: usize = 8;
+const SHAKE_MS_PER_FLIP: u128 = 250;
 
 #[derive(Default)]
 struct Shake {
@@ -125,7 +134,7 @@ struct Shake {
 
 impl Shake {
     /// Feed a pointer position of a move drag of `w`; true when the window was shaken.
-    fn step(&mut self, w: u32, x: i32, y: i32) -> bool {
+    fn step(&mut self, w: u32, x: i32, y: i32, flips: usize) -> bool {
         let now = Instant::now();
         let stale = self.t.map(|t| now.duration_since(t).as_millis() > 400).unwrap_or(true);
         if self.w != w || stale { *self = Shake { w, t: Some(now), dir: [0, 0], extreme: [x, y], flips: vec![] }; return false; }
@@ -142,8 +151,9 @@ impl Shake {
                 self.flips.push(now);
             }
         }
-        self.flips.retain(|t| now.duration_since(*t).as_millis() < SHAKE_MS);
-        if self.flips.len() >= SHAKE_FLIPS { self.flips.clear(); self.dir = [0, 0]; self.extreme = [x, y]; return true; }
+        let window = SHAKE_MS_PER_FLIP * flips as u128;
+        self.flips.retain(|t| now.duration_since(*t).as_millis() < window);
+        if self.flips.len() >= flips { self.flips.clear(); self.dir = [0, 0]; self.extreme = [x, y]; return true; }
         false
     }
 }
@@ -226,6 +236,7 @@ impl Wm {
             .check().context("another window manager is already running")?;
         let _ = conn.randr_select_input(root, x11rb::protocol::randr::NotifyMask::SCREEN_CHANGE);
         xbell_init(&conn);
+        { use x11rb::protocol::sync::ConnectionExt as _; let _ = conn.sync_initialize(3, 1).ok().and_then(|c| c.reply().ok()); }
         // repaint frames when a compositor starts/stops (glass vs. opaque)
         if conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some() {
             let _ = conn.xfixes_select_selection_input(root, atoms._NET_WM_CM_S0,
@@ -358,7 +369,8 @@ impl Wm {
             a._NET_WM_STATE_MAXIMIZED_HORZ, a._NET_WM_STATE_FULLSCREEN, a._NET_WM_STATE_HIDDEN, a._NET_WM_STATE_ABOVE,
             a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_DEMANDS_ATTENTION, a._NET_WM_STATE_FOCUSED, a._NET_WM_WINDOW_TYPE,
             a._NET_WM_STRUT, a._NET_WM_STRUT_PARTIAL, a._NET_FRAME_EXTENTS, a._NET_REQUEST_FRAME_EXTENTS, a._NET_WM_MOVERESIZE,
-            a._NET_MOVERESIZE_WINDOW, a._NET_WM_ALLOWED_ACTIONS, a._GTK_FRAME_EXTENTS, a._GTK_WORKAREAS];
+            a._NET_MOVERESIZE_WINDOW, a._NET_WM_ALLOWED_ACTIONS, a._GTK_FRAME_EXTENTS, a._GTK_WORKAREAS,
+            a._NET_WM_SYNC_REQUEST];
         c.change_property32(PropMode::REPLACE, self.root, a._NET_SUPPORTED, AtomEnum::ATOM, &sup)?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL, &[self.num_desktops])?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL, &[self.current_desktop])?;
@@ -553,6 +565,7 @@ impl Wm {
             hover: None, pressed: None, ignore_unmaps: 0, snapped: None, mapped_once: false,
             wm_hidden: false, ext: [-1; 4], csd, gravity_static, zones: vec![],
             glow: anim::Glow::default(), focus_fade: None, defer_unmap: false,
+            sync_counter: None, sync_sent: 0, sync_wait: None, resize_pending: None, last_resize: None,
         };
         let _ = self.conn.change_window_attributes(w, &ChangeWindowAttributesAux::new()
             .event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY | EventMask::FOCUS_CHANGE));
@@ -745,7 +758,11 @@ impl Wm {
         if let Some(f) = c.frame {
             let fr = self.frame_rect(c);
             let _ = self.conn.configure_window(f, &ConfigureWindowAux::new().x(fr.x).y(fr.y).width(fr.w as u32).height(fr.h as u32));
-            let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(b).y(t).width(g.w as u32).height(g.h as u32));
+            // a move only moves the frame: reconfiguring the client too makes heavy apps
+            // (browsers, Electron) handle a ConfigureNotify per pixel of the drag
+            if size_changed || c.ext != [b, b, t, b] {
+                let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(b).y(t).width(g.w as u32).height(g.h as u32));
+            }
             self.write_extents(w);
         } else {
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(g.x).y(g.y).width(g.w as u32).height(g.h as u32));
@@ -977,6 +994,16 @@ impl Wm {
         let c = self.clients.get_mut(&w).unwrap();
         if !framed { c.ignore_unmaps += 1; }
         let _ = self.conn.unmap_window(top);
+    }
+
+    /// Ease of Access > Make the mouse easier to use: (Aero Snap on, Aero Shake reversals needed
+    /// or 0 for off). "Prevent windows from being automatically arranged…" turns off both, as in Win7.
+    fn arrange_options(&self) -> (bool, usize) {
+        let _ = self.effect("");
+        let c = crate::config::get();
+        if c.ease_of_access.get("noarrange").map(|v| v == "1").unwrap_or(false) { return (false, 0); }
+        let flips = c.ease_of_access.get("shake").and_then(|v| v.parse().ok()).unwrap_or(SHAKE_DEFAULT_FLIPS);
+        (true, flips)
     }
 
     /// Is a Visual Effects switch (Control Panel > System > Performance Options) on? Re-reads the
@@ -1595,6 +1622,7 @@ impl Wm {
         } else if e.atom == a.WM_PROTOCOLS {
             let p = self.prop32(e.window, a.WM_PROTOCOLS, AtomEnum::ATOM);
             self.clients.get_mut(&e.window).unwrap().protocols = p;
+            self.clients.get_mut(&e.window).unwrap().sync_counter = None;
         } else if e.atom == a._NET_WM_WINDOW_TYPE || e.atom == a.WM_TRANSIENT_FOR {
             // some apps (Electron) map a window first and set its type/owner afterwards
             let kind = self.window_kind(e.window);
@@ -1773,7 +1801,60 @@ impl Wm {
     }
 
     /// Abort any drag in progress (always removes the snap preview).
+    /// Interactive resize at the client's pace. With _NET_WM_SYNC_REQUEST (GTK, Qt, Firefox,
+    /// Chromium/Electron) the next size goes out only once the client has drawn the previous one
+    /// (or after 200 ms, for a client that stopped answering); others get at most one size per
+    /// 16 ms frame. Meanwhile only the newest size is kept, so a slow app never works through a
+    /// backlog of sizes after the mouse has stopped – that backlog is what dragging felt like.
+    fn resize_paced(&mut self, w: u32, g: Rect) {
+        let now = Instant::now();
+        let a = self.atoms;
+        let Some(c) = self.clients.get(&w) else { return };
+        let sizing = g.w != c.geom.w || g.h != c.geom.h;
+        let counter = if c.protocols.contains(&a._NET_WM_SYNC_REQUEST) {
+            c.sync_counter.or_else(|| self.prop32(w, a._NET_WM_SYNC_REQUEST_COUNTER, AtomEnum::CARDINAL).first().copied().filter(|v| *v != 0))
+        } else { None };
+        let busy = match (c.sync_wait, counter) {
+            (Some(t), Some(ctr)) => now.duration_since(t) < std::time::Duration::from_millis(200) && self.sync_value(ctr).map(|v| v < c.sync_sent).unwrap_or(false),
+            (_, None) => c.last_resize.map(|t| now.duration_since(t) < std::time::Duration::from_millis(16)).unwrap_or(false),
+            _ => false,
+        };
+        let c = self.clients.get_mut(&w).unwrap();
+        c.sync_counter = counter;
+        if busy {
+            c.resize_pending = Some(g);
+            self.timers.set(std::time::Duration::from_millis(8), anim::Timer::ResizeFlush(w));
+            return;
+        }
+        c.resize_pending = None;
+        c.sync_wait = None;
+        c.last_resize = Some(now);
+        if let (Some(ctr), true) = (counter, sizing) {
+            // ask for a value above whatever the client's counter holds now
+            let cur = self.sync_value(ctr).unwrap_or(0);
+            let c = self.clients.get_mut(&w).unwrap();
+            c.sync_sent = c.sync_sent.max(cur) + 1;
+            c.sync_wait = Some(now);
+            let v = c.sync_sent;
+            let ev = ClientMessageEvent::new(32, w, a.WM_PROTOCOLS, [a._NET_WM_SYNC_REQUEST, CURRENT_TIME, v as u32, (v >> 32) as u32, 0]);
+            let _ = self.conn.send_event(false, w, EventMask::NO_EVENT, ev);
+        }
+        self.configure(w, g);
+    }
+
+    fn sync_value(&self, counter: u32) -> Option<i64> {
+        use x11rb::protocol::sync::ConnectionExt as _;
+        let r = self.conn.sync_query_counter(counter).ok()?.reply().ok()?;
+        Some(((r.counter_value.hi as i64) << 32) | r.counter_value.lo as i64)
+    }
+
     fn end_drag(&mut self) {
+        if let Some((w, Drag::Resize { .. })) = self.drag {
+            if let Some(c) = self.clients.get_mut(&w) {
+                c.sync_wait = None;
+                if let Some(g) = c.resize_pending.take() { self.configure(w, g); }
+            }
+        }
         if let Some((w, Drag::Button { .. })) = self.drag {
             if let Some(c) = self.clients.get_mut(&w) { c.pressed = None; }
             self.redraw(w);
@@ -1908,10 +1989,11 @@ impl Wm {
                 let floor = if c.frame.is_some() { min_y + TOP / 2 } else { min_y - c.csd[2] };
                 let g = Rect { x: ox + rx - cx, y: (oy + ry - cy).max(floor), ..c.geom };
                 self.configure(w, g);
-                if self.kbd_drag.is_none() && self.shake.step(w, rx, ry) { self.aero_shake(w); }
+                let (arrange, flips) = self.arrange_options();
+                if self.kbd_drag.is_none() && flips > 0 && self.shake.step(w, rx, ry, flips) { self.aero_shake(w); }
                 // Aero Snap preview when touching a screen edge
                 let m = self.monitors.get(self.monitors.iter().position(|m| m.contains(rx, ry)).unwrap_or(0)).copied().unwrap_or_default();
-                let side = if self.kbd_drag.is_some() { None } else if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
+                let side = if self.kbd_drag.is_some() || !arrange { None } else if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
                 if side != self.snap_preview.map(|s| s.1) {
                     match side {
                         // a sheet already showing morphs to the new zone
@@ -1932,10 +2014,10 @@ impl Wm {
                 if g.w < min.0.max(100) { if edges & 1 != 0 { g.x = start.x + start.w - min.0.max(100); } g.w = min.0.max(100); }
                 if g.h < min.1.max(30) { if edges & 4 != 0 { g.y = start.y + start.h - min.1.max(30); } g.h = min.1.max(30); }
                 if let Some(c) = self.clients.get_mut(&w) { c.snapped = None; c.maximized = false; }
-                self.configure(w, g);
+                self.resize_paced(w, g);
                 // top or bottom border at the screen edge: preview of the vertical maximise
                 let m = self.monitors.iter().copied().find(|m| m.contains(rx, ry)).unwrap_or_default();
-                let vert = self.kbd_drag.is_none() && ((edges == 4 && ry <= m.y + 1) || (edges == 8 && ry >= m.y + m.h - 2));
+                let vert = self.kbd_drag.is_none() && self.arrange_options().0 && ((edges == 4 && ry <= m.y + 1) || (edges == 8 && ry >= m.y + m.h - 2));
                 if vert != (self.snap_preview.map(|s| s.1) == Some(2)) {
                     self.hide_snap_preview();
                     if vert && self.clients.get(&w).map(|c| c.resizable && is_app(c)).unwrap_or(false) { self.show_snap_preview(w, 2); }
@@ -2286,6 +2368,12 @@ impl Wm {
             match t {
                 anim::Timer::Unmap(w) => self.unmap_now(w),
                 anim::Timer::DelProp { win, atom } => { let _ = self.conn.delete_property(win, atom); }
+                anim::Timer::ResizeFlush(w) => {
+                    if let Some(g) = self.clients.get(&w).and_then(|c| c.resize_pending) {
+                        if matches!(self.drag, Some((d, Drag::Resize { .. })) if d == w) { self.resize_paced(w, g); }
+                        else { self.clients.get_mut(&w).unwrap().resize_pending = None; self.configure(w, g); }
+                    }
+                }
                 anim::Timer::SwitchPeek => {
                     if let Some(sel) = self.switcher.as_ref().and_then(|s| s.selected()) {
                         self.peek(sel, true);
