@@ -1,7 +1,7 @@
 //! Network, hardware and other applets: Recovery, Troubleshooting, HomeGroup, Internet Options,
 //! AutoPlay, Windows Mobility Center, Color Management and Credential Manager (one file each in
 //! extras/, shared helpers in extras/common.rs).
-mod common;
+pub(crate) mod common;
 mod autoplay;
 mod colormgmt;
 mod credentials;

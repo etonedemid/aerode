@@ -21,7 +21,7 @@ mod devmgr;
 mod diskmgmt;
 mod eventvwr;
 mod firewall;
-mod mmc;
+pub(crate) mod mmc;
 mod perfinfo;
 mod sysinfo;
 mod taskschd;
@@ -52,6 +52,7 @@ pub fn standalone(app: &gtk::Application, page: &str) -> bool {
         "sysinfo" => sysinfo::window,
         "cleanmgr" => cleanup::window,
         "mdsched" => tools::mdsched_window,
+        "services" => super::core::services_window,
         _ => return false,
     };
     css();
