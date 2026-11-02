@@ -3127,7 +3127,7 @@ fn recent_folders() -> Vec<PathBuf> {
 
 /// Which action a drop does (Win7): Ctrl copies, Shift moves, Alt (or Ctrl+Shift) makes shortcuts;
 /// without keys: move on the same drive, copy to another drive.
-fn drop_action(w: &gtk::Widget, ctx: &gdk::DragContext, dest: &Path, sources: &[PathBuf]) -> gdk::DragAction {
+pub(crate) fn drop_action(w: &gtk::Widget, ctx: &gdk::DragContext, dest: &Path, sources: &[PathBuf]) -> gdk::DragAction {
     use std::os::unix::fs::MetadataExt;
     let dev = ctx.device();
     let mods = w.window().map(|gw| gw.device_position(&dev).3).unwrap_or_else(gdk::ModifierType::empty);

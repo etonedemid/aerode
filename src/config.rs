@@ -26,6 +26,11 @@ pub struct Config {
     /// desktop "Sort by": name | size | type | date
     pub desktop_sort: String,
     pub desktop_sort_desc: bool,
+    /// where each desktop icon was dragged (key: path or special URI → top-left in pixels)
+    pub desktop_positions: HashMap<String, (i32, i32)>,
+    /// desktop View > Auto arrange icons / Align icons to grid
+    pub desktop_auto_arrange: bool,
+    pub desktop_align_grid: bool,
     /// keyboard layouts ("us", "de(nodeadkeys)"…); empty = whatever the system set up
     pub kbd_layouts: Vec<String>,
     /// XKB option switching input languages; None = Alt+Shift (Windows default), Some("") = none
@@ -409,6 +414,9 @@ impl Default for Config {
             sounds_muted: false,
             desktop_sort: "name".into(),
             desktop_sort_desc: false,
+            desktop_positions: HashMap::new(),
+            desktop_auto_arrange: false,
+            desktop_align_grid: true,
             kbd_layouts: vec![],
             kbd_switch: None,
             tray_icons: HashMap::new(),
