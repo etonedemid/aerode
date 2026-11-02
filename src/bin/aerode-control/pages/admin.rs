@@ -13,7 +13,7 @@ use std::rc::Rc;
 use super::super::Cp;
 use aerode::util;
 
-mod actioncenter;
+pub(crate) mod actioncenter;
 mod backup;
 mod bitlocker;
 mod cleanup;

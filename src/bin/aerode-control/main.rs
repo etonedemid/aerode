@@ -529,7 +529,28 @@ fn build(app: &gtk::Application, page: String) {
 
 fn main() -> glib::ExitCode {
     let page = std::env::args().nth(1).unwrap_or_default();
+    if page == "--action-center-summary" { return action_center_summary(); }
     let app = gtk::Application::new(Some("org.aerode.ControlPanel"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(move |app| build(app, page.clone()));
     app.run_with_args::<&str>(&[])
+}
+
+/// `aerode-control --action-center-summary`: Action Center's current messages, one per line
+/// (`important<TAB>kind<TAB>title<TAB>text`), for the flag in the notification area.
+fn action_center_summary() -> glib::ExitCode {
+    if gtk::init().is_err() { return glib::ExitCode::FAILURE; }
+    let app = gtk::Application::new(None, gio::ApplicationFlags::NON_UNIQUE);
+    let _ = app.register(None::<&gio::Cancellable>);
+    // the messages' buttons want a Control Panel to open pages in; this one is never shown
+    let cp = Rc::new(Cp {
+        win: gtk::ApplicationWindow::new(&app), side: gtk::Box::new(gtk::Orientation::Vertical, 0),
+        body: gtk::Box::new(gtk::Orientation::Vertical, 0), crumb: gtk::Label::new(None), history: RefCell::new(vec![]),
+    });
+    let s = pages::admin::actioncenter::gather();
+    let (sec, mnt) = pages::admin::actioncenter::messages(&cp, &s, Rc::new(|| {}));
+    let clean = |t: &str| t.replace(['\t', '\n'], " ");
+    for m in sec.iter().chain(mnt.iter()) {
+        println!("{}\t{}\t{}\t{}", m.red as u8, m.key, clean(m.title.trim_end_matches("  (Important)")), clean(&m.text));
+    }
+    glib::ExitCode::SUCCESS
 }

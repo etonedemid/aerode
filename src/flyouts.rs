@@ -90,11 +90,15 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     w.move_(x, y);
     w.show_all();
     w.present();
+    // the icon's tooltip would pop up over its own flyout (Win7 suppresses it while open)
+    let had_tip = anchor.has_tooltip();
+    anchor.set_has_tooltip(false);
+    { let a = anchor.clone(); w.connect_destroy(move |_| a.set_has_tooltip(had_tip)); }
     OPEN.with(|o| *o.borrow_mut() = Some(w.clone()));
     w
 }
 
-fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Image) {
+pub(crate) fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Image) {
     let b = gtk::Button::new();
     crate::tray::themed_tray_button(&b);
     let img = util::image(icon, 16);
@@ -104,7 +108,7 @@ fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Im
     (b, img)
 }
 
-fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
+pub(crate) fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
     let b = gtk::Button::with_label(text);
     b.style_context().add_class("link");
     b.set_halign(gtk::Align::Start);
@@ -112,20 +116,21 @@ fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
     b
 }
 
-fn control(page: &str) {
+pub(crate) fn control(page: &str) {
     if !util::spawn(&["aerode-control", page]) {
         util::error("Control Panel is not installed.", "");
     }
 }
 
 pub fn build_tray(tb: &Rc<Taskbar>) {
-    // packed from the right: clock, then the system icons in Win7's order (power, network, volume)
+    // packed from the right: clock, then the system icons in Win7's order (Action Center, power, network, volume)
     clock(tb);
     volume(tb);
     network(tb);
     if sys::battery().is_some() {
         battery(tb);
     }
+    crate::actioncenter::attach(tb);
     // programs' icons and the "Show hidden icons" arrow
     crate::tray::attach(tb);
     brightness();
