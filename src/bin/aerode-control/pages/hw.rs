@@ -37,6 +37,7 @@ pub fn subpage(cp: &Rc<Cp>, id: &str) -> Option<(String, gtk::Widget)> {
     let hs = "Hardware and Sound";
     let (crumb, w): (String, gtk::Widget) = match id {
         "resolution" => ("Appearance and Personalization ▸ Display ▸ Screen Resolution".to_string(), display::page_resolution(cp)),
+        p if p.starts_with("sound-properties:") => { sound::open_properties_for(&p["sound-properties:".len()..]); (format!("{hs} ▸ Sound"), sound::page_tab(cp, 0)) }
         "sound-recording" => (format!("{hs} ▸ Sound"), sound::page_tab(cp, 1)),
         "sound-sounds" => (format!("{hs} ▸ Sound"), sound::page_tab(cp, 2)),
         "sound-comms" => (format!("{hs} ▸ Sound"), sound::page_tab(cp, 3)),

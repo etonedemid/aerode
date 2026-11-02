@@ -245,6 +245,14 @@ impl Filler {
     fn fill(&self) { if let Some(f) = self.f.borrow().clone() { f(); } }
 }
 
+thread_local! {
+    /// `aerode-control sound-properties:<sink>` (the Volume Mixer's device button): open this
+    /// device's Properties once the Playback list has it
+    static OPEN_PROPS: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+pub fn open_properties_for(name: &str) { OPEN_PROPS.with(|o| *o.borrow_mut() = Some(name.to_string())); }
+
 fn device_tab(cp: &Rc<Cp>, sinks: bool, snap: &Rc<RefCell<Snapshot>>, meters: &Rc<Meters>) -> (gtk::Box, Rc<Filler>) {
     let v = vbox(8);
     v.pack_start(&lbl(if sinks { "Select a playback device below to modify its settings:" } else { "Select a recording device below to modify its settings:" }), false, false, 0);
@@ -360,6 +368,13 @@ fn device_tab(cp: &Rc<Cp>, sinks: bool, snap: &Rc<RefCell<Snapshot>>, meters: &R
             }
             list.show_all();
             ub();
+            if let Some(want) = OPEN_PROPS.with(|o| o.borrow().clone()) {
+                if let Some(d) = rows.borrow().iter().map(|r| r.1.clone()).find(|d| d.sink == sinks && d.name == want) {
+                    OPEN_PROPS.with(|o| *o.borrow_mut() = None);
+                    let (w, cards, fw) = (win.clone(), s.cards.clone(), filler_weak.clone());
+                    glib::idle_add_local_once(move || { if let Some(f) = fw.upgrade() { properties(&w, &d, &cards, &f); } });
+                }
+            }
         })
     };
     // the rows hold the Filler weakly; the fill function goes in now

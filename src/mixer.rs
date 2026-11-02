@@ -332,9 +332,9 @@ pub fn flat_button(img: &gtk::Image) -> gtk::Button {
 }
 
 /// Open a device's Properties (Win7: `mmsys.cpl,,<device>,general`).
-pub fn device_properties(_sink: &str) {
-    // aerode-control has no per-device Properties entry point yet: the Playback tab
-    crate::flyouts::control("sound");
+pub fn device_properties(sink: &str) {
+    // the Playback tab with this device's Properties open, like SndVol's device button
+    crate::flyouts::control(&format!("sound-properties:{sink}"));
 }
 
 /// Start the Volume Mixer (its own process, like sndvol.exe).
