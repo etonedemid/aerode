@@ -285,7 +285,33 @@ impl Wm {
             .map(|r| String::from_utf8_lossy(&r.value).into_owned()).unwrap_or_default()
     }
 
+    /// The window's icon: _NET_WM_ICON, else the icon named after its WM_CLASS in the icon themes,
+    /// else the Win7 generic program icon (like Windows shows for programs without one).
     fn read_icon(&self, w: u32) -> Option<cairo::ImageSurface> {
+        self.read_net_icon(w).or_else(|| self.theme_icon(w))
+    }
+
+    fn theme_icon(&self, w: u32) -> Option<cairo::ImageSurface> {
+        let cls = self.conn.get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256).ok()?.reply().ok()
+            .map(|r| r.value).unwrap_or_default();
+        let mut names: Vec<String> = cls.split(|b| *b == 0).filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).to_lowercase()).collect();
+        names.push("application-x-executable".into());
+        let data = gtk::glib::user_data_dir();
+        let dirs = [data.join("icons/Aerode/48x48/apps"), data.join("icons/Aerode/32x32/apps"), data.join("icons/hicolor/48x48/apps"),
+            "/usr/share/icons/hicolor/48x48/apps".into(), "/usr/share/icons/hicolor/64x64/apps".into(), "/usr/share/pixmaps".into()];
+        for n in &names {
+            for d in &dirs {
+                let p = d.join(format!("{n}.png"));
+                if let Ok(mut f) = std::fs::File::open(&p) {
+                    if let Ok(img) = cairo::ImageSurface::create_from_png(&mut f) { return Some(img); }
+                }
+            }
+        }
+        None
+    }
+
+    fn read_net_icon(&self, w: u32) -> Option<cairo::ImageSurface> {
         let v = self.prop32(w, self.atoms._NET_WM_ICON, AtomEnum::CARDINAL);
         let (mut i, mut best): (usize, Option<(u32, u32, usize)>) = (0, None);
         while i + 2 <= v.len() {
@@ -1168,6 +1194,16 @@ impl Wm {
         } else if e.atom == a.WM_PROTOCOLS {
             let p = self.prop32(e.window, a.WM_PROTOCOLS, AtomEnum::ATOM);
             self.clients.get_mut(&e.window).unwrap().protocols = p;
+        } else if e.atom == a._NET_WM_WINDOW_TYPE || e.atom == a.WM_TRANSIENT_FOR {
+            // some apps (Electron) map a window first and set its type/owner afterwards
+            let kind = self.window_kind(e.window);
+            let tf = self.prop32(e.window, a.WM_TRANSIENT_FOR, AtomEnum::WINDOW).first().copied().unwrap_or(0);
+            let c = self.clients.get_mut(&e.window).unwrap();
+            // only re-type between ordinary window kinds; docks/desktops are set up at map time
+            let ordinary = |k: Kind| matches!(k, Kind::Normal | Kind::Dialog | Kind::Utility | Kind::Splash);
+            if ordinary(c.kind) && ordinary(kind) { c.kind = kind; }
+            c.transient_for = tf;
+            self.restack();
         }
     }
 
@@ -1621,7 +1657,14 @@ impl Wm {
 
     fn switch_order(&self) -> Vec<u32> {
         // most recently used first = top of stack first (minimised windows too, like Win7)
-        let mut v: Vec<u32> = self.stack.iter().rev().copied().filter(|w| self.clients.get(w).map(|c| matches!(c.kind, Kind::Normal | Kind::Dialog) && !c.skip_taskbar).unwrap_or(false)).collect();
+        // the windows that have a taskbar button (like Win7): not docks/desktop/menus/notifications, not
+        // skip-taskbar, not owned tool windows. Electron apps sometimes type their main window oddly.
+        let listed = |c: &Client| !c.skip_taskbar && match c.kind {
+            Kind::Normal | Kind::Dialog | Kind::Splash => true,
+            Kind::Utility => c.transient_for == 0,
+            _ => false,
+        };
+        let mut v: Vec<u32> = self.stack.iter().rev().copied().filter(|w| self.clients.get(w).map(listed).unwrap_or(false)).collect();
         if let Some(i) = v.iter().position(|w| *w == self.active) { let a = v.remove(i); v.insert(0, a); }
         v
     }
