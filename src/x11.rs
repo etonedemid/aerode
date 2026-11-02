@@ -214,6 +214,19 @@ impl Wm {
     pub fn set_desktop(&self, d: u32) {
         self.client_msg(self.root, self.atoms._NET_CURRENT_DESKTOP, [d, 0, 0, 0, 0]);
     }
+    /// _NET_FRAME_EXTENTS (left, right, top, bottom) the window manager put around a window.
+    pub fn frame_extents(&self, w: u32) -> [i32; 4] {
+        let atom = self.conn.intern_atom(false, b"_NET_FRAME_EXTENTS").ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
+        let v = self.prop32(w, atom, AtomEnum::CARDINAL);
+        if v.len() >= 4 { [v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32] } else { [0; 4] }
+    }
+
+    /// Place a window so that its frame (not just the client) fills (x, y, width, height).
+    pub fn place_outer(&self, w: u32, x: i32, y: i32, width: i32, height: i32) {
+        let [l, r, t, b] = self.frame_extents(w);
+        self.move_resize(w, x + l, y + t, (width - l - r).max(50), (height - t - b).max(30));
+    }
+
     pub fn move_resize(&self, w: u32, x: i32, y: i32, width: i32, height: i32) {
         // gravity static + x,y,w,h flags, source = pager
         self.set_maximized(w, false);

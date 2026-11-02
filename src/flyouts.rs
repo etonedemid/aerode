@@ -103,6 +103,44 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     w
 }
 
+/// A right-click menu on a notification-area icon (Win7: every system icon has one). The press
+/// is consumed so it doesn't also open the taskbar's own menu.
+pub(crate) fn tray_menu(b: &gtk::Button, items: Rc<dyn Fn() -> Vec<(String, Option<Rc<dyn Fn()>>)>>) {
+    b.connect_button_press_event(move |b, e| {
+        if e.button() != 3 { return glib::Propagation::Proceed; }
+        close_open();
+        let m = build_menu(items());
+        // no tooltip over the open menu (Win7 hides it)
+        b.set_has_tooltip(false);
+        let bb = b.clone();
+        m.connect_hide(move |_| bb.set_has_tooltip(true));
+        m.popup_at_widget(b, gdk::Gravity::North, gdk::Gravity::South, Some(e));
+        glib::Propagation::Stop
+    });
+}
+
+/// A popup menu from (mnemonic label, action) items: "" is a separator, no action greys the item
+/// out, and a leading ✓ makes it a checked item.
+pub(crate) fn build_menu(items: Vec<(String, Option<Rc<dyn Fn()>>)>) -> gtk::Menu {
+    let m = gtk::Menu::new();
+    for (label, act) in items {
+        if label.is_empty() { m.append(&gtk::SeparatorMenuItem::new()); continue; }
+        let it: gtk::MenuItem = match label.strip_prefix('\u{2713}') {
+            Some(l) => { let c = gtk::CheckMenuItem::with_mnemonic(l); c.set_active(true); c.upcast() }
+            None => gtk::MenuItem::with_mnemonic(&label),
+        };
+        match act {
+            Some(f) => { it.connect_activate(move |_| f()); }
+            None => it.set_sensitive(false),
+        }
+        m.append(&it);
+    }
+    m.show_all();
+    m
+}
+
+fn act(f: impl Fn() + 'static) -> Option<Rc<dyn Fn()>> { Some(Rc::new(f)) }
+
 pub(crate) fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Image) {
     let b = gtk::Button::new();
     crate::tray::themed_tray_button(&b);
@@ -155,6 +193,19 @@ fn clock(tb: &Rc<Taskbar>) {
     v.pack_start(&d, false, false, 0);
     b.add(&v);
     tb.tray.pack_end(&b, false, false, 0);
+    // Win7: the clock's menu is the taskbar's, with the date and notification-icon entries on top
+    {
+        let tbw = Rc::downgrade(tb);
+        tray_menu(&b, Rc::new(move || {
+            let mut v: Vec<(String, Option<Rc<dyn Fn()>>)> = vec![
+                ("A_djust date/time".into(), act(|| control("datetime"))),
+                ("_Customize notification icons".into(), act(|| { crate::tray::customize(); })),
+                (String::new(), None),
+            ];
+            if let Some(tb) = tbw.upgrade() { v.extend(tb.menu_items()); }
+            v
+        }));
+    }
     // Date and Time > Additional Clocks: (name, offset east of UTC) of the shown ones, refreshed
     // once a minute (offsets change with daylight saving time)
     let extra: Rc<RefCell<Vec<(String, i32)>>> = Rc::new(RefCell::new(vec![]));
@@ -342,6 +393,15 @@ pub fn draw_clock_at(cr: &gtk::cairo::Context, size: f64, dial: Option<&gtk::gdk
 // ---------------------------------------------------------------- volume
 fn volume(tb: &Rc<Taskbar>) {
     let (b, img) = tray_button(tb, "audio-volume-high", "Speakers");
+    // Win7's speaker menu: where outputs and inputs are switched (Playback / Recording devices)
+    tray_menu(&b, Rc::new(|| vec![
+        ("Open Volume _Mixer".into(), act(|| { if !(util::which("pavucontrol") && util::spawn(&["pavucontrol"])) { control("sound"); } })),
+        ("_Playback devices".into(), act(|| control("sound"))),
+        ("R_ecording devices".into(), act(|| control("sound-recording"))),
+        ("_Sounds".into(), act(|| control("sound-sounds"))),
+        (String::new(), None),
+        ("_Troubleshoot sound problems".into(), act(|| control("troubleshooting"))),
+    ]));
     let refresh = {
         let (img, b) = (img.clone(), b.clone());
         move || {
@@ -429,6 +489,10 @@ fn volume(tb: &Rc<Taskbar>) {
 // ---------------------------------------------------------------- network
 fn network(tb: &Rc<Taskbar>) {
     let (b, img) = tray_button(tb, "network-wired", "Network");
+    tray_menu(&b, Rc::new(|| vec![
+        ("_Troubleshoot problems".into(), act(|| control("troubleshooting"))),
+        ("Open Network and _Sharing Center".into(), act(|| control("network"))),
+    ]));
     let refresh = {
         let (img, b) = (img.clone(), b.clone());
         move || {
@@ -539,6 +603,10 @@ fn connect_wifi(w: &sys::Wifi) {
 // ---------------------------------------------------------------- battery
 fn battery(tb: &Rc<Taskbar>) {
     let (b, img) = tray_button(tb, "battery-good", "Battery");
+    tray_menu(&b, Rc::new(|| vec![
+        ("P_ower Options".into(), act(|| control("power"))),
+        ("Windows _Mobility Center".into(), act(|| control("mobility"))),
+    ]));
     let refresh = {
         let (img, b) = (img.clone(), b.clone());
         move || {
