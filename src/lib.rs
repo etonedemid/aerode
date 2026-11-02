@@ -19,6 +19,7 @@ pub mod notify;
 pub mod power;
 pub mod pe;
 pub mod screensaver;
+pub mod shellstyle;
 pub mod sounds;
 pub mod sysmenu;
 pub mod startmenu;

@@ -672,22 +672,27 @@ pub fn paint_glass(cr: &cairo::Context, w: f64, h: f64, sx: f64, sy: f64, radius
 }
 
 thread_local! {
-    static ORB: Option<Pixbuf> = config::data_file("orb.png").and_then(|p| Pixbuf::from_file(p).ok());
+    // explorer.exe bitmap 6801: three 54×54 states stacked, premultiplied alpha like every 32-bit
+    // bitmap Windows feeds to AlphaBlend (read as straight alpha its glow came out too dark)
+    static ORB: Option<cairo::ImageSurface> = config::data_file("orb.png")
+        .and_then(|p| image::open(p).ok())
+        .and_then(|i| crate::shellstyle::premul_surface(&i.to_rgba8()));
 }
 
 /// Draw the start orb (state 0 normal, 1 hover, 2 pressed) centred in a size×size box.
 pub fn paint_orb(cr: &cairo::Context, size: f64, state: i32) {
     if let Some(strip) = ORB.with(|o| o.clone()) {
-        let fh = strip.height() / 3;
-        if let Some(frame) = Pixbuf::new_subpixbuf(&strip, 0, fh * state, strip.width(), fh).into() {
-            let s = size / strip.width().max(fh) as f64;
-            cr.save().ok();
-            cr.scale(s, s);
-            cr.set_source_pixbuf(&frame, 0.0, 0.0);
-            cr.paint().ok();
-            cr.restore().ok();
-            return;
-        }
+        let (fw, fh) = (strip.width(), strip.height() / 3);
+        let s = size / fw.max(fh) as f64;
+        cr.save().ok();
+        cr.scale(s, s);
+        cr.rectangle(0.0, 0.0, fw as f64, fh as f64);
+        cr.clip();
+        cr.set_source_surface(&strip, 0.0, -(fh * state.clamp(0, 2)) as f64).ok();
+        if (s - 1.0).abs() > 0.01 { cr.source().set_filter(cairo::Filter::Good); }
+        cr.paint().ok();
+        cr.restore().ok();
+        return;
     }
     let c = size / 2.0;
     let r = size * 0.40;

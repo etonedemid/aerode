@@ -176,6 +176,8 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("aerode-gadgets", "Program Files/Windows Sidebar/sidebar.exe", None, &["preferences-desktop-gadgets"]),
     ("system-search", "Windows/System32/imageres.dll", Some(8), &[]),
     ("printer", "Windows/System32/DeviceCenter.dll", None, &["preferences-devices-printer", "document-print", "system-config-printer", "printer-network", "cups"]),
+    // the Start menu's Getting Started (the Welcome Center shortcut's icon: shellbrd.dll,-1075)
+    ("aerode-gettingstarted", "Windows/Branding/ShellBrd/shellbrd.dll", Some(1075), &[]),
     ("help-browser", "Windows/HelpPane.exe", None, &["help-contents", "help-faq", "system-help", "yelp", "org.gnome.Yelp", "khelpcenter", "org.kde.khelpcenter"]),
     ("preferences-system", "Windows/System32/control.exe", None, &["preferences-desktop", "preferences-other", "gnome-control-center", "org.gnome.Settings", "systemsettings", "xfce4-settings-manager", "org.xfce.settings.manager", "aerode-control"]),
     ("system-file-manager", "Windows/explorer.exe", None, &["org.gnome.Nautilus", "nautilus", "thunar", "Thunar", "org.xfce.thunar", "pcmanfm", "pcmanfm-qt", "nemo", "caja", "dolphin", "org.kde.dolphin", "spacefm", "aerode-explorer"]),

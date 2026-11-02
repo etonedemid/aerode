@@ -30,6 +30,11 @@
   border-color: rgba(255,255,255,0.45) rgba(0,0,0,0.5) rgba(0,0,0,0.5) rgba(0,0,0,0.5);
 }
 .taskbar button:active { background-image: linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(255,255,255,0.12)); }
+/* aero.msstyles extracted: the shell paints the task buttons from TaskBand2 (taskbar.rs); 60×40
+   buttons 2 px apart like Win7 (44 px with small icons) */
+.taskbar.w7 button.task.w7 { background: none; background-image: none; border-width: 0; border-radius: 0;
+  box-shadow: none; padding: 0; margin: 0 1px; min-width: 60px; }
+.taskbar.w7.small button.task.w7 { min-width: 44px; }
 .taskbar .clock { color: white; padding: 0 6px; }
 .taskbar .clock label { color: white; }
 /* notification area: 16px icons on a 24px pitch, like Win7 */
@@ -44,6 +49,8 @@
   background-image: linear-gradient(to right, rgba(0,0,0,0.35), rgba(255,255,255,0.10) 1px, rgba(255,255,255,0.05));
 }
 .taskbar button.showdesk:hover { background-image: linear-gradient(to bottom, rgba(255,255,255,0.45), rgba(255,255,255,0.15)); }
+/* aero.msstyles extracted: ShowDesktop::Button is painted by taskbar.rs */
+.taskbar.w7 button.showdesk.w7, .taskbar.w7 button.showdesk.w7:hover { background: none; background-image: none; border-width: 0; border-radius: 0; box-shadow: none; padding: 0; margin: 0 0 0 3px; min-width: 17px; }
 
 /* ---------- tooltips / menus on the shell ---------- */
 tooltip.background { background-color: #f9fbfd; border: 1px solid #767676; border-radius: 3px; }
@@ -81,6 +88,21 @@ button.sm-power label { color: white; text-shadow: 0 1px 2px black; }
 button.sm-power:hover { background-image: linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(160,210,255,0.35) 50%, rgba(60,140,220,0.4) 51%, rgba(140,210,255,0.5)); }
 .sm-allprogs label { color: black; }
 .sm-heading { color: #1e3287; padding: 4px 10px; }
+/* the Start menu's layout and chrome (startmenu.rs; msstyles hot-track when ".w7") */
+.startmenu scrolledwindow, .startmenu viewport, .startmenu .sm-list { background: none; border: none; box-shadow: none; }
+.startmenu button.sm-item { padding: 0 0 0 2px; margin: 0; border-width: 0; min-height: 0; }
+.startmenu button.sm-item label { color: #282828; }
+.startmenu button.sm-link { padding: 0 8px; margin: 0; border-width: 0; min-height: 0; }
+.startmenu entry.sm-search { background: none; background-image: none; border: none; box-shadow: none; outline: none;
+  min-height: 0; padding: 0; margin: 0; color: #000000; }
+.startmenu button.sm-power { padding: 0 8px; min-height: 0; }
+.startmenu button.sm-power.arrow { padding: 0; min-width: 0; }
+.startmenu.w7 button.sm-item, .startmenu.w7 button.sm-link, .startmenu.w7 button.sm-power {
+  background: none; background-image: none; border-color: transparent; border-width: 0; box-shadow: none; outline: none; }
+.startmenu.w7 button.sm-power label { color: #ffffff; text-shadow: 0 0 4px rgba(0,0,0,0.6); }
+.startmenu.w7.jump button.sm-power label { color: #000000; text-shadow: none; }
+.startmenu .sm-jump .sm-heading { padding: 0 8px 4px 8px; }
+.startmenu.w7 button.sm-link label { color: #ffffff; text-shadow: 0 0 5px rgba(0,0,0,0.55); }
 
 /* ---------- desktop ---------- */
 .desk-icon { background: none; border: 1px solid transparent; border-radius: 3px; padding: 2px; }

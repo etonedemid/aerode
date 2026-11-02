@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Getting Started
+Comment=Learn about aerode and set up your computer
+Exec=aerode-control gettingstarted
+Icon=aerode-gettingstarted
+Categories=Utility;
+OnlyShowIn=Aerode;

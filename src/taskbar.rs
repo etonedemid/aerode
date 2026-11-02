@@ -1,12 +1,12 @@
 //! The Windows 7 "superbar": start orb, pinned/running task buttons, tray, clock.
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
-use std::cell::RefCell;
+use gtk::{cairo, gdk, gdk_pixbuf::Pixbuf, gio, glib};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::x11::{Client, Wm};
-use crate::{config, flyouts, glass, util};
+use crate::{config, flyouts, glass, msstyles, shellstyle, util};
 
 pub struct Group {
     pub key: String,
@@ -14,6 +14,28 @@ pub struct Group {
     pub pinned: bool,
     pub windows: Vec<Client>,
     pub button: gtk::Button,
+    vis: Rc<BtnVis>,
+}
+
+/// What a task button's msstyles painter needs (kept current by `refresh`), plus its hot-track state.
+#[derive(Default)]
+struct BtnVis {
+    /// number of windows in the group (0 = pinned, not running)
+    count: Cell<usize>,
+    active: Cell<bool>,
+    urgent: Cell<bool>,
+    /// blink phase of a flashing button (false = shown as normal for this half-period)
+    flash_off: Cell<bool>,
+    flash: RefCell<Option<glib::SourceId>>,
+    hover: Cell<bool>,
+    pressed: Cell<bool>,
+    /// pointer x inside the button: the colour hot-track light follows it
+    x: Cell<f64>,
+    /// hot state opacity (0..1), faded in and out
+    fade: Cell<f64>,
+    anim: RefCell<Option<glib::SourceId>>,
+    /// the icon's dominant colour (Win7 "color hot-track")
+    color: Cell<[f64; 3]>,
 }
 
 pub struct Taskbar {
@@ -24,6 +46,16 @@ pub struct Taskbar {
     app_cache: RefCell<HashMap<String, Option<gio::AppInfo>>>,
     pub orb_cb: RefCell<Option<Rc<dyn Fn()>>>,
     pub tray: gtk::Box,
+    orb: Orb,
+}
+
+/// The start orb: 0 normal, 1 hot, 2 pressed (also while the Start menu is open, like Win7).
+struct Orb {
+    area: gtk::DrawingArea,
+    events: gtk::EventBox,
+    state: Rc<Cell<i32>>,
+    hover: Rc<Cell<bool>>,
+    menu_open: Rc<Cell<bool>>,
 }
 
 /// Key used to match an app to WM_CLASS.
@@ -86,29 +118,35 @@ impl Taskbar {
         orb.set_size_request(54, h);
         orb_box.add(&orb);
         orb_box.set_tooltip_text(Some("Start"));
-        let orb_state = Rc::new(std::cell::Cell::new(0));
+        let orb_state = Rc::new(Cell::new(0));
+        let orb_hover = Rc::new(Cell::new(false));
+        let menu_open = Rc::new(Cell::new(false));
         {
             let st = orb_state.clone();
             orb.connect_draw(move |w, cr| {
                 // Win7 lets the orb overhang the 40 px bar; with small icons it fits the 30 px bar
+                // explorer.exe's 54×54 orb at its own size, centred on the bar like Win7 (the glow
+                // above the bar is cut off: Win7 shows it in a separate window over the desktop)
                 let hh = w.allocated_height() as f64;
-                let size = if hh < 36.0 { hh + 2.0 } else { 46.0f64.min(hh + 8.0) };
+                let size = if hh < 36.0 { hh + 2.0 } else { 54.0 };
                 cr.translate((w.allocated_width() as f64 - size) / 2.0, (w.allocated_height() as f64 - size) / 2.0);
                 glass::paint_orb(cr, size, st.get());
                 glib::Propagation::Proceed
             });
         }
-        for (sig, val) in [(0, 1), (1, 0)] {
-            let st = orb_state.clone();
+        for inside in [true, false] {
+            let (st, hv, open) = (orb_state.clone(), orb_hover.clone(), menu_open.clone());
             let o = orb.clone();
-            let f = move || { st.set(val); o.queue_draw(); };
-            if sig == 0 { orb_box.connect_enter_notify_event(move |_, _| { f(); glib::Propagation::Proceed }); }
+            // the orb stays lit while the menu is open
+            let f = move || { hv.set(inside); if !open.get() { st.set(inside as i32); o.queue_draw(); } };
+            if inside { orb_box.connect_enter_notify_event(move |_, _| { f(); glib::Propagation::Proceed }); }
             else { orb_box.connect_leave_notify_event(move |_, _| { f(); glib::Propagation::Proceed }); }
         }
         row.pack_start(&orb_box, false, false, 0);
 
+        // the task band starts 4 px right of the orb's 54 px: first button frame at x = 59 (Win7)
         let tasks = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        tasks.set_margin_start(2);
+        tasks.set_margin_start(4);
         row.pack_start(&tasks, true, true, 0);
 
         let tray = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -122,6 +160,7 @@ impl Taskbar {
             app_cache: RefCell::new(HashMap::new()),
             orb_cb: RefCell::new(None),
             tray: tray.clone(),
+            orb: Orb { area: orb.clone(), events: orb_box.clone(), state: orb_state.clone(), hover: orb_hover, menu_open },
         });
 
         {
@@ -165,13 +204,33 @@ impl Taskbar {
             let wm = wm.clone();
             sd.connect_clicked(move |_| { stop(); wm.set_showing_desktop(!wm.showing_desktop()) });
         }
+        if shellstyle::available() {
+            // ShowDesktop::Button: the glass strip at the bar's right end (1 normal, 2 hot, 3 pressed)
+            sd.style_context().add_class("w7");
+            sd.connect_draw(|b, cr| {
+                let st = b.state_flags();
+                let s = if st.contains(gtk::StateFlags::ACTIVE) { 3 } else if st.contains(gtk::StateFlags::PRELIGHT) { 2 } else { 1 };
+                shellstyle::paint(cr, "ShowDesktop::Button", 0, s, 0.0, 0.0, b.allocated_width() as f64, b.allocated_height() as f64);
+                glib::Propagation::Proceed
+            });
+            // hover and press look the same to CSS here, so GTK would not repaint on its own
+            sd.connect_state_flags_changed(|b, _| b.queue_draw());
+        }
         tray.pack_end(&sd, false, false, 0);
         flyouts::build_tray(&tb);
 
+        if shellstyle::available() { win.style_context().add_class("w7"); }
+        let band = tb.tasks.clone();
         win.connect_draw(move |w, cr| {
             let g = util::primary_geometry();
             let (ww, hh) = (w.allocated_width() as f64, w.allocated_height() as f64);
-            glass::paint_glass(cr, ww, hh, g.x() as f64, (g.y() + g.height()) as f64 - hh, 0.0, false);
+            let (sx, sy) = (g.x() as f64, (g.y() + g.height()) as f64 - hh);
+            if shellstyle::available() {
+                let a = band.allocation();
+                paint_bar(cr, ww, hh, sx, sy, a.x() as f64, a.width() as f64);
+                return glib::Propagation::Proceed;
+            }
+            glass::paint_glass(cr, ww, hh, sx, sy, 0.0, false);
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.55);
             cr.rectangle(0.0, 0.0, ww, 1.0);
             cr.fill().ok();
@@ -252,8 +311,10 @@ impl Taskbar {
                 let button = gtk::Button::new();
                 button.style_context().add_class("task");
                 self.tasks.pack_start(&button, false, false, 0);
+                let vis = Rc::new(BtnVis::default());
+                if shellstyle::available() { themed_task_button(&button, &vis); }
                 self.wire(&button, key.clone());
-                groups.push(Group { key, app, pinned, windows, button });
+                groups.push(Group { key, app, pinned, windows, button, vis });
             }
             *self.groups.borrow_mut() = groups;
         } else {
@@ -268,8 +329,18 @@ impl Taskbar {
             let sc = g.button.style_context();
             let running = !g.windows.is_empty();
             let is_active = g.windows.iter().any(|w| w.id == active && !w.minimized);
-            for (cls, on) in [("running", running), ("active", is_active), ("urgent", g.windows.iter().any(|w| w.urgent))] {
+            let urgent = g.windows.iter().any(|w| w.urgent);
+            for (cls, on) in [("running", running), ("active", is_active), ("urgent", urgent)] {
                 if on { sc.add_class(cls) } else { sc.remove_class(cls) }
+            }
+            let v = &g.vis;
+            if (v.count.get(), v.active.get(), v.urgent.get()) != (g.windows.len(), is_active, urgent) {
+                let starts = urgent && !v.urgent.get();
+                v.count.set(g.windows.len());
+                v.active.set(is_active);
+                v.urgent.set(urgent);
+                if starts { start_flash(&g.button, v); }
+                g.button.queue_draw();
             }
             let tip = if g.windows.is_empty() {
                 g.app.as_ref().map(|a| a.display_name().to_string()).unwrap_or_default()
@@ -284,10 +355,19 @@ impl Taskbar {
                 let pb = g.app.as_ref().and_then(|a| util::gicon_pixbuf(a.icon().as_ref(), isz))
                     .or_else(|| g.windows.first().and_then(|w| self.wm.icon(w.id, isz as u32)).map(|p| util::scale(&p, isz)))
                     .or_else(|| util::pixbuf("application-x-executable", isz));
+                g.vis.color.set(pb.as_ref().and_then(dominant_color).unwrap_or_else(default_hot_color));
                 let ov = gtk::Overlay::new();
                 ov.add(&gtk::Image::from_pixbuf(pb.as_ref()));
                 g.button.add(&ov);
                 g.button.show_all();
+            }
+            if shellstyle::available() {
+                // a stacked button (several windows) is narrower: keep the icon centred on its front
+                if let Some(c) = g.button.child() {
+                    let e = stack_inset(g.windows.len()) as i32;
+                    if c.margin_end() != e { c.set_margin_end(e); }
+                }
+                continue;
             }
             // Win7 shows a stacked edge when several windows are grouped
             if let Some(ov) = g.button.child().and_then(|c| c.downcast::<gtk::Overlay>().ok()) {
@@ -426,6 +506,16 @@ impl Taskbar {
         for g in self.groups.borrow().iter() { if let Some(c) = g.button.child() { g.button.remove(&c); } }
     }
 
+    /// The Start menu opened or closed: the orb shows its pressed state while the menu is open and
+    /// its "Start" tooltip stays away (Win7 shows no tooltip over its own open menu).
+    pub fn set_start_open(&self, open: bool) {
+        let o = &self.orb;
+        o.menu_open.set(open);
+        o.state.set(if open { 2 } else { o.hover.get() as i32 });
+        o.area.queue_draw();
+        if open { o.events.set_has_tooltip(false); } else { o.events.set_tooltip_text(Some("Start")); }
+    }
+
     pub fn pin(self: &Rc<Self>, id: &str) {
         let mut p = util::pinned();
         if !p.iter().any(|x| x == id) {
@@ -433,5 +523,301 @@ impl Taskbar {
             config::update(|c| c.pinned = Some(p));
             self.refresh();
         }
+    }
+}
+
+// ------------------------------------------------------------------ msstyles painting
+
+/// The bar behind the buttons: glass, then aero.msstyles' TaskBar2Composited::TaskBar (bottom
+/// dock: the dark/light top edge and a 23 % darkening) over the bar, except over the task band,
+/// which gets TaskBand2Composited::TaskBand2 instead: the same edge, with the darkening fading out
+/// over 39 px at both ends of the band (clear glass in the middle, as in a Win7 capture).
+fn paint_bar(cr: &cairo::Context, w: f64, h: f64, sx: f64, sy: f64, band_x: f64, band_w: f64) {
+    cr.save().ok();
+    cr.set_operator(cairo::Operator::Source);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+    cr.paint().ok();
+    cr.restore().ok();
+    glass::paint_glass_fill(cr, w, h, sx, sy, true, false);
+    cr.save().ok();
+    cr.set_fill_rule(cairo::FillRule::EvenOdd);
+    cr.rectangle(0.0, 0.0, w, h);
+    cr.rectangle(band_x, 2.0, band_w, h - 2.0);
+    cr.clip();
+    shellstyle::paint(cr, "TaskBar2Composited::TaskBar", 1, 0, 0.0, 0.0, w, h);
+    cr.restore().ok();
+    cr.save().ok();
+    cr.rectangle(band_x, 2.0, band_w, h - 2.0);
+    cr.clip();
+    shellstyle::paint(cr, "TaskBand2Composited::TaskBand2", 1, 0, band_x, 0.0, band_w, h);
+    cr.restore().ok();
+}
+
+/// How much narrower the front button of a group is: TaskBand2 parts 13/14 (8 px) show one
+/// stacked edge behind it for 2 windows and two for 3 or more.
+fn stack_inset(windows: usize) -> f64 {
+    match windows { 0 | 1 => 0.0, 2 => 5.0, _ => 6.0 }
+}
+
+/// TaskBand2's HOTTRACKING colour: the glow of icons without a colour of their own.
+fn default_hot_color() -> [f64; 3] {
+    shellstyle::color("TaskBand2", 5, 0, msstyles::HOTTRACKING).unwrap_or([51.0 / 255.0, 194.0 / 255.0, 1.0])
+}
+
+/// Win7's colour hot-track colour: the predominant colour of the icon, where black, white and
+/// greys don't count as colours. Hue histogram (15° bins, weighted by saturation × value × alpha)
+/// over the opaque pixels; the winning bin and its neighbours are averaged and brought to full
+/// brightness (the glow is a light, not a paint). None for icons without colour.
+fn dominant_color(pb: &Pixbuf) -> Option<[f64; 3]> {
+    let (w, h, n, rs) = (pb.width() as usize, pb.height() as usize, pb.n_channels() as usize, pb.rowstride() as usize);
+    if n < 3 { return None; }
+    let px = pb.read_pixel_bytes();
+    let mut bins = [(0.0f64, [0.0f64; 3]); 24];
+    let mut opaque = 0.0;
+    for y in 0..h {
+        for x in 0..w {
+            let o = y * rs + x * n;
+            if o + n > px.len() { continue; }
+            let a = if n == 4 { px[o + 3] as f64 / 255.0 } else { 1.0 };
+            if a < 0.5 { continue; }
+            opaque += 1.0;
+            let (r, g, b) = (px[o] as f64 / 255.0, px[o + 1] as f64 / 255.0, px[o + 2] as f64 / 255.0);
+            let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+            let s = if mx > 0.0 { (mx - mn) / mx } else { 0.0 };
+            if s < 0.25 || mx < 0.2 { continue; }
+            let d = mx - mn;
+            let sector = if mx == r { ((g - b) / d).rem_euclid(6.0) } else if mx == g { (b - r) / d + 2.0 } else { (r - g) / d + 4.0 };
+            let wgt = s * mx * a;
+            let k = ((sector * 60.0 / 15.0) as usize).min(23);
+            bins[k].0 += wgt;
+            for (c, v) in bins[k].1.iter_mut().zip([r, g, b]) { *c += v * wgt; }
+        }
+    }
+    let around = |k: usize| [(k + 23) % 24, k, (k + 1) % 24];
+    let score = |k: usize| around(k).iter().map(|i| bins[*i].0).sum::<f64>();
+    let best = (0..24).max_by(|a, b| score(*a).total_cmp(&score(*b)))?;
+    let (mut wsum, mut c) = (0.0, [0.0; 3]);
+    for i in around(best) {
+        wsum += bins[i].0;
+        for j in 0..3 { c[j] += bins[i].1[j]; }
+    }
+    // a few coloured pixels in a grey icon don't make it coloured
+    if wsum <= 0.0 || wsum < opaque * 0.03 { return None; }
+    let c = c.map(|v| v / wsum);
+    let m = c[0].max(c[1]).max(c[2]);
+    (m > 0.0).then(|| c.map(|v| v / m))
+}
+
+/// Paint a task button from TaskBand2 part 5 (60×40 frames: 1 normal, 2 hot, 3 pressed, 4 active,
+/// 5 active hot, 6 active pressed, 7 flashing) with the colour hot-track glow on hover.
+fn themed_task_button(b: &gtk::Button, v: &Rc<BtnVis>) {
+    b.style_context().add_class("w7");
+    v.color.set(default_hot_color());
+    b.add_events(gdk::EventMask::POINTER_MOTION_MASK | gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
+    {
+        let v = v.clone();
+        b.connect_enter_notify_event(move |b, e| {
+            v.hover.set(true);
+            v.x.set(e.position().0);
+            animate_hot(b, &v);
+            glib::Propagation::Proceed
+        });
+    }
+    {
+        let v = v.clone();
+        b.connect_leave_notify_event(move |b, e| {
+            // crossings into the button's own children are not a leave
+            if e.detail() == gdk::NotifyType::Inferior { return glib::Propagation::Proceed; }
+            v.hover.set(false);
+            v.pressed.set(false);
+            animate_hot(b, &v);
+            glib::Propagation::Proceed
+        });
+    }
+    {
+        let v = v.clone();
+        b.connect_motion_notify_event(move |b, e| {
+            v.x.set(e.position().0);
+            if v.fade.get() > 0.0 { b.queue_draw(); }
+            glib::Propagation::Proceed
+        });
+    }
+    {
+        let v = v.clone();
+        b.connect_button_press_event(move |b, e| {
+            if e.button() == 1 { v.pressed.set(true); b.queue_draw(); }
+            glib::Propagation::Proceed
+        });
+    }
+    {
+        let v = v.clone();
+        b.connect_button_release_event(move |b, _| {
+            v.pressed.set(false);
+            b.queue_draw();
+            glib::Propagation::Proceed
+        });
+    }
+    let v = v.clone();
+    b.connect_draw(move |b, cr| {
+        paint_task_button(cr, &v, b.allocated_width() as f64, b.allocated_height() as f64);
+        glib::Propagation::Proceed
+    });
+}
+
+/// A window asks for attention: like FlashWindowEx on Win7 the button blinks orange (7 times, at the
+/// caret blink rate) and then stays orange until the window is activated.
+fn start_flash(b: &gtk::Button, v: &Rc<BtnVis>) {
+    if let Some(id) = v.flash.borrow_mut().take() { id.remove(); }
+    let (b2, v2) = (b.downgrade(), Rc::downgrade(v));
+    let mut tick = 0;
+    let id = glib::timeout_add_local(std::time::Duration::from_millis(530), move || {
+        let (Some(b), Some(v)) = (b2.upgrade(), v2.upgrade()) else { return glib::ControlFlow::Break };
+        tick += 1;
+        // stops early once the window got activated
+        let phase = if v.urgent.get() { flash_off(tick) } else { None };
+        v.flash_off.set(phase.unwrap_or(false));
+        b.queue_draw();
+        if phase.is_none() { v.flash.borrow_mut().take(); return glib::ControlFlow::Break; }
+        glib::ControlFlow::Continue
+    });
+    *v.flash.borrow_mut() = Some(id);
+}
+
+/// Blink phase after `tick` half-periods: Some(true) = shown as normal, Some(false) = orange,
+/// None = done (the button stays orange). Seven orange flashes, like FlashWindowEx's default.
+fn flash_off(tick: u32) -> Option<bool> { (tick < 13).then_some(tick % 2 == 1) }
+
+/// Fade the hot state in (0.1 s) or out (0.3 s), the way Win7's taskbar buttons light up and dim.
+fn animate_hot(b: &gtk::Button, v: &Rc<BtnVis>) {
+    b.queue_draw();
+    if v.anim.borrow().is_some() { return; }
+    let (b2, v2) = (b.downgrade(), Rc::downgrade(v));
+    let mut last = std::time::Instant::now();
+    let id = glib::timeout_add_local(std::time::Duration::from_millis(15), move || {
+        let (Some(b), Some(v)) = (b2.upgrade(), v2.upgrade()) else { return glib::ControlFlow::Break };
+        let dt = last.elapsed().as_secs_f64();
+        last = std::time::Instant::now();
+        let (target, dur) = if v.hover.get() { (1.0, 0.1) } else { (0.0, 0.3) };
+        let f = v.fade.get();
+        let nf = if f < target { (f + dt / dur).min(target) } else { (f - dt / dur).max(target) };
+        v.fade.set(nf);
+        b.queue_draw();
+        if nf == target {
+            v.anim.borrow_mut().take();
+            return glib::ControlFlow::Break;
+        }
+        glib::ControlFlow::Continue
+    });
+    *v.anim.borrow_mut() = Some(id);
+}
+
+fn paint_task_button(cr: &cairo::Context, v: &BtnVis, w: f64, h: f64) {
+    let count = v.count.get();
+    let running = count > 0;
+    let active = v.active.get() && running;
+    let fw = w - stack_inset(count);
+    if count >= 2 {
+        // the stacked edges (TaskBand2 13 inactive / 14 active; state 2 = one edge, 3 = two)
+        shellstyle::paint(cr, "TaskBand2", if active { 14 } else { 13 }, if count == 2 { 2 } else { 3 }, w - 8.0, 0.0, 8.0, h);
+    }
+    let flashing = v.urgent.get() && !active && !v.flash_off.get();
+    let base = if flashing { Some(7) } else if active { Some(4) } else if running { Some(1) } else { None };
+    let pressed = v.pressed.get() && v.hover.get();
+    let hot = if pressed { 1.0 } else { v.fade.get() };
+    if let Some(s) = base {
+        if hot < 1.0 || flashing {
+            cr.push_group();
+            shellstyle::paint(cr, "TaskBand2", 5, s, 0.0, 0.0, fw, h);
+            cr.pop_group_to_source().ok();
+            cr.paint_with_alpha(if flashing { 1.0 } else { 1.0 - hot }).ok();
+        }
+    }
+    if hot > 0.0 {
+        let st = match (active, pressed) { (true, true) => 6, (true, false) => 5, (false, true) => 3, (false, false) => 2 };
+        cr.push_group();
+        if !flashing { shellstyle::paint(cr, "TaskBand2", 5, st, 0.0, 0.0, fw, h); }
+        paint_hot_glow(cr, v.color.get(), v.x.get(), fw, h, pressed);
+        cr.pop_group_to_source().ok();
+        cr.paint_with_alpha(hot).ok();
+    }
+}
+
+/// The colour hot-track light: the button fills with the icon's colour from below, brightest in
+/// an elliptical light at the bottom edge centred on the pointer, with a near-white core; the
+/// inner edge picks up the colour around the pointer too.
+fn paint_hot_glow(cr: &cairo::Context, c: [f64; 3], mx: f64, w: f64, h: f64, pressed: bool) {
+    let mx = mx.clamp(2.0, (w - 2.0).max(2.0));
+    let k = if pressed { 0.75 } else { 1.0 };
+    cr.save().ok();
+    glass::rounded(cr, 1.0, 1.0, w - 2.0, h - 2.0, 2.0);
+    cr.clip();
+    let lg = cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
+    lg.add_color_stop_rgba(0.0, c[0], c[1], c[2], 0.0);
+    lg.add_color_stop_rgba(0.45, c[0], c[1], c[2], 0.08 * k);
+    lg.add_color_stop_rgba(1.0, c[0], c[1], c[2], 0.2 * k);
+    cr.set_source(&lg).ok();
+    cr.paint().ok();
+    let blob = |rx: f64, ry: f64, col: [f64; 3], stops: &[(f64, f64)]| {
+        cr.save().ok();
+        cr.translate(mx, h);
+        cr.scale(rx, ry);
+        let rg = cairo::RadialGradient::new(0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+        for (o, a) in stops { rg.add_color_stop_rgba(*o, col[0], col[1], col[2], a * k); }
+        cr.set_source(&rg).ok();
+        cr.paint().ok();
+        cr.restore().ok();
+    };
+    blob(w * 0.62, h * 0.9, c, &[(0.0, 0.95), (0.4, 0.5), (1.0, 0.0)]);
+    let core = c.map(|v| v + (1.0 - v) * 0.7);
+    blob(w * 0.28, h * 0.38, core, &[(0.0, 0.85), (1.0, 0.0)]);
+    cr.restore().ok();
+    // the edge lights up around the pointer
+    let eg = cairo::LinearGradient::new(mx - w, 0.0, mx + w, 0.0);
+    eg.add_color_stop_rgba(0.0, c[0], c[1], c[2], 0.1 * k);
+    eg.add_color_stop_rgba(0.5, c[0], c[1], c[2], 0.65 * k);
+    eg.add_color_stop_rgba(1.0, c[0], c[1], c[2], 0.1 * k);
+    cr.set_source(&eg).ok();
+    cr.set_line_width(1.0);
+    glass::rounded(cr, 1.5, 1.5, w - 3.0, h - 3.0, 2.0);
+    cr.stroke().ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixbuf(px: Vec<u8>) -> Pixbuf {
+        Pixbuf::from_bytes(&glib::Bytes::from_owned(px), gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 16, 16, 64)
+    }
+    fn solid(rgba: [u8; 4], n: usize) -> Vec<u8> { (0..n).flat_map(|_| rgba).collect() }
+
+    #[test]
+    fn dominant_color_ignores_greys_and_picks_the_main_hue() {
+        // 16×16: 3/4 orange, 1/4 grey, a white row
+        let mut px = solid([255, 128, 0, 255], 192);
+        px.extend(solid([128, 128, 128, 255], 48));
+        px.extend(solid([255, 255, 255, 255], 16));
+        let c = dominant_color(&pixbuf(px)).unwrap();
+        assert!((c[0] - 1.0).abs() < 1e-9 && (c[1] - 128.0 / 255.0).abs() < 0.01 && c[2] < 0.01, "{c:?}");
+        // greys and transparent colour only: no colour of its own
+        let mut px = solid([90, 90, 90, 255], 128);
+        px.extend(solid([255, 0, 0, 0], 128));
+        assert_eq!(dominant_color(&pixbuf(px)), None);
+    }
+
+    #[test]
+    fn flashing_blinks_seven_times_then_stays_orange() {
+        // tick 0 (the request) is orange; count the orange half-periods until it settles
+        let orange = 1 + (1..100).take_while(|t| flash_off(*t).is_some()).filter(|t| flash_off(*t) == Some(false)).count();
+        assert_eq!(orange, 7);
+        assert_eq!(flash_off(1), Some(true));
+        assert_eq!(flash_off(13), None);
+    }
+
+    #[test]
+    fn stacked_buttons_narrow_by_the_edge_strip() {
+        assert_eq!(stack_inset(1), 0.0);
+        assert_eq!(stack_inset(2), 5.0);
+        assert_eq!(stack_inset(7), 6.0);
     }
 }

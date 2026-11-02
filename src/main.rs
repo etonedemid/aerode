@@ -37,8 +37,10 @@ fn build(app: &gtk::Application) {
     let sm = startmenu::StartMenu::new(app);
     { let s = sm.clone(); *tb.orb_cb.borrow_mut() = Some(Rc::new(move || s.toggle())); }
     {
-        let w = tb.win.clone();
-        *sm.on_hide.borrow_mut() = Some(Box::new(move || w.queue_draw()));
+        let t = tb.clone();
+        *sm.on_hide.borrow_mut() = Some(Box::new(move || { t.set_start_open(false); t.win.queue_draw(); }));
+        let t = tb.clone();
+        *sm.on_show.borrow_mut() = Some(Box::new(move || t.set_start_open(true)));
     }
     // follow monitor changes
     if let Some(screen) = gtk::gdk::Screen::default() {
