@@ -201,7 +201,7 @@ struct App {
 }
 
 fn message(parent: &impl IsA<gtk::Window>, kind: gtk::MessageType, text: &str) {
-    sounds::play(if kind == gtk::MessageType::Info { sounds::Event::Asterisk } else { sounds::Event::Exclamation });
+    // the icon's sound comes from util::message_dialog_sounds (error → Critical Stop…)
     let d = gtk::MessageDialog::new(Some(parent), gtk::DialogFlags::MODAL, kind, gtk::ButtonsType::Ok, text);
     d.set_title("Notepad");
     d.run();
@@ -293,7 +293,6 @@ impl App {
     /// new file?"); returns false when the user chose Cancel there.
     fn load(self: &Rc<Self>, p: PathBuf, from_cmdline: bool) -> bool {
         if from_cmdline && !p.exists() {
-            sounds::play(sounds::Event::Exclamation);
             let d = gtk::MessageDialog::new(Some(&self.win), gtk::DialogFlags::MODAL, gtk::MessageType::Warning, gtk::ButtonsType::None,
                 &format!("Cannot find the {} file.\n\nDo you want to create a new file?", p.display()));
             d.add_buttons(&[("_Yes", gtk::ResponseType::Yes), ("_No", gtk::ResponseType::No), ("Cancel", gtk::ResponseType::Cancel)]);
@@ -629,6 +628,8 @@ impl App {
             if d.run() != gtk::ResponseType::Ok { break; }
             let line: i64 = e.text().parse().unwrap_or(0);
             if line < 1 || line > self.buf.line_count() as i64 {
+                // a MessageBox without an icon: Default Beep
+                sounds::play(sounds::Event::DefaultBeep);
                 let m = gtk::MessageDialog::new(Some(&d), gtk::DialogFlags::MODAL, gtk::MessageType::Other, gtk::ButtonsType::Ok, "The line number is beyond the total number of lines");
                 m.set_title("Notepad - Goto Line");
                 m.run();
@@ -1046,8 +1047,8 @@ fn set_flag(name: &str, on: bool) {
 fn main() -> glib::ExitCode {
     util::log_panics("notepad");
     let app = gtk::Application::new(Some("org.aerode.Notepad"), gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE);
-    app.connect_activate(|app| build(app, None));
-    app.connect_open(|app, files, _| { for f in files { build(app, f.path()); } });
+    app.connect_activate(|app| { util::message_dialog_sounds(); build(app, None) });
+    app.connect_open(|app, files, _| { util::message_dialog_sounds(); for f in files { build(app, f.path()); } });
     app.run()
 }
 

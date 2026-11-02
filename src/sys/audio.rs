@@ -329,6 +329,9 @@ pub fn set_volume(pct: u32) { send(AudioCmd::Level { sink: None, pct: pct.min(10
 /// Toggle the default output's mute (queued, returns at once).
 pub fn toggle_mute() { send(AudioCmd::Mute { sink: None, mute: None }); }
 
+/// Mute or unmute the default output (queued, returns at once).
+pub fn set_mute(on: bool) { send(AudioCmd::Mute { sink: None, mute: Some(on) }); }
+
 /// Output devices: (id, description, is_default)
 pub fn sinks() -> Vec<(String, String, bool)> {
     let Some(i) = audio_info(false) else { return vec![] };

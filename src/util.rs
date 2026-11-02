@@ -369,7 +369,35 @@ pub fn message_box(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: 
     if parent.is_none() { d.set_keep_above(true); }
     d.connect_response(|d, _| d.close());
     d.show_all();
-    message_sound(kind);
+    if !DIALOG_SOUNDS.load(std::sync::atomic::Ordering::Relaxed) { message_sound(kind); }
+}
+
+static DIALOG_SOUNDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Every GtkMessageDialog of this process plays Win7's sound for its icon when it appears, like
+/// MessageBox does (error → Critical Stop, warning → Exclamation, info → Asterisk, question →
+/// Question). Dialogs without an icon (MessageType::Other, Win7's silent task dialogs) stay
+/// quiet. One emission hook on "map", so no dialog can forget it.
+pub fn message_dialog_sounds() {
+    use gtk::glib::gobject_ffi;
+    use gtk::glib::translate::IntoGlib;
+    if DIALOG_SOUNDS.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    unsafe extern "C" fn hook(_hint: *mut gobject_ffi::GSignalInvocationHint, n: u32, params: *const gobject_ffi::GValue, _data: gtk::glib::ffi::gpointer) -> gtk::glib::ffi::gboolean {
+        if n >= 1 {
+            let v = &*(params as *const gtk::glib::Value);
+            if let Ok(d) = v.get::<gtk::glib::Object>().map(|o| o.downcast::<gtk::MessageDialog>()) {
+                if let Ok(d) = d {
+                    let kind = d.message_type();
+                    if kind != gtk::MessageType::Other { message_sound(kind); }
+                }
+            }
+        }
+        gtk::glib::ffi::GTRUE
+    }
+    unsafe {
+        let id = gobject_ffi::g_signal_lookup(c"map".as_ptr(), gtk::Widget::static_type().into_glib());
+        if id != 0 { gobject_ffi::g_signal_add_emission_hook(id, 0, Some(hook), std::ptr::null_mut(), None); }
+    }
 }
 
 pub fn primary_geometry() -> gdk::Rectangle {

@@ -283,12 +283,11 @@ pub fn selected(tv: &gtk::TreeView, col: i32) -> Option<String> {
     tv.selection().selected().and_then(|(m, it)| m.value(&it, col).get::<String>().ok())
 }
 
-/// Modal message box (sounds like Windows).
+/// Modal message box (its sound comes from `util::message_dialog_sounds`, like Windows).
 pub fn message(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: &str, primary: &str, secondary: &str) {
     let d = gtk::MessageDialog::new(parent, gtk::DialogFlags::MODAL, kind, gtk::ButtonsType::Ok, primary);
     d.set_title(title);
     if !secondary.is_empty() { d.set_secondary_text(Some(secondary)); }
-    util::sound(match kind { gtk::MessageType::Error => aerode::sounds::Event::CriticalStop, gtk::MessageType::Warning => aerode::sounds::Event::Exclamation, _ => aerode::sounds::Event::Asterisk });
     d.run();
     d.close();
 }
@@ -301,7 +300,6 @@ pub fn ask(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: &str, pr
     d.add_button(yes, gtk::ResponseType::Yes);
     d.add_button(no, gtk::ResponseType::No);
     d.set_default_response(gtk::ResponseType::No);
-    if kind == gtk::MessageType::Warning { util::sound(aerode::sounds::Event::Exclamation); }
     let r = d.run();
     d.close();
     r == gtk::ResponseType::Yes
