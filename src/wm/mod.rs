@@ -38,7 +38,7 @@ x11rb::atom_manager! {
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
-        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART,
+        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS,
     }
 }
 
@@ -77,7 +77,19 @@ pub struct Client {
     pub ignore_unmaps: u32,
     pub snapped: Option<i8>, // -1 left, 1 right
     pub mapped_once: bool,
+    /// we have unmapped its top-level (minimized / other desktop / show desktop)
+    pub wm_hidden: bool,
+    /// last _NET_FRAME_EXTENTS written (avoid property spam)
+    pub ext: [i32; 4],
+    /// _GTK_FRAME_EXTENTS (invisible shadow margins of client-side decorated windows)
+    pub csd: [i32; 4],
+    /// WM_NORMAL_HINTS win_gravity == StaticGravity
+    pub gravity_static: bool,
+    /// input-only children of the frame that carry the resize cursors
+    pub zones: Vec<u32>,
 }
+
+fn is_app(c: &Client) -> bool { matches!(c.kind, Kind::Normal | Kind::Dialog | Kind::Utility) }
 
 #[derive(Clone, Copy, Debug)]
 enum Drag {
@@ -108,6 +120,8 @@ pub struct Wm {
     pub keys: keys::Keys,
     pub switcher: Option<switcher::Switcher>,
     pub snap_preview: Option<(u32, i8)>,
+    snap_wa: Option<Rect>,
+    root_size: (i32, i32),
     last_move_redraw: Instant,
     composited_cache: std::cell::Cell<(Instant, bool)>,
     pub wallpaper: Option<cairo::ImageSurface>,
@@ -153,10 +167,17 @@ impl Wm {
             active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
             showing_desktop: false, current_desktop: 0, num_desktops: 1, drag: None,
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
+            snap_wa: None, root_size: (0, 0),
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
             wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint[3].clamp(0.2, 0.8)],
         };
         wm.color = colorization(&cfg.tint);
+        {
+            let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
+            let cur = wm.prop32(wm.root, wm.atoms._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL).first().copied().unwrap_or(0);
+            wm.num_desktops = n.clamp(1, 16);
+            wm.current_desktop = cur.min(wm.num_desktops - 1);
+        }
         wm.load_wallpaper();
         wm.update_monitors();
         wm.set_supported()?;
@@ -179,11 +200,14 @@ impl Wm {
     }
 
     pub fn screen_size(&self) -> (i32, i32) {
+        if self.root_size.0 > 0 { return self.root_size; }
         let s = &self.conn.setup().roots[self.screen_num];
         (s.width_in_pixels as i32, s.height_in_pixels as i32)
     }
 
     pub fn update_monitors(&mut self) {
+        // the root size changes with RandR; the connection setup data does not
+        if let Ok(Ok(g)) = self.conn.get_geometry(self.root).map(|c| c.reply()) { self.root_size = (g.width as i32, g.height as i32); }
         let mut mons = vec![];
         if let Ok(r) = self.conn.randr_get_monitors(self.root, true).map(|c| c.reply()) {
             if let Ok(r) = r {
@@ -221,10 +245,10 @@ impl Wm {
             a._NET_WM_STATE_MAXIMIZED_HORZ, a._NET_WM_STATE_FULLSCREEN, a._NET_WM_STATE_HIDDEN, a._NET_WM_STATE_ABOVE,
             a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_DEMANDS_ATTENTION, a._NET_WM_STATE_FOCUSED, a._NET_WM_WINDOW_TYPE,
             a._NET_WM_STRUT, a._NET_WM_STRUT_PARTIAL, a._NET_FRAME_EXTENTS, a._NET_REQUEST_FRAME_EXTENTS, a._NET_WM_MOVERESIZE,
-            a._NET_MOVERESIZE_WINDOW, a._NET_WM_ALLOWED_ACTIONS, a._GTK_FRAME_EXTENTS];
+            a._NET_MOVERESIZE_WINDOW, a._NET_WM_ALLOWED_ACTIONS, a._GTK_FRAME_EXTENTS, a._GTK_WORKAREAS];
         c.change_property32(PropMode::REPLACE, self.root, a._NET_SUPPORTED, AtomEnum::ATOM, &sup)?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL, &[self.num_desktops])?;
-        c.change_property32(PropMode::REPLACE, self.root, a._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL, &[0])?;
+        c.change_property32(PropMode::REPLACE, self.root, a._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL, &[self.current_desktop])?;
         c.change_property32(PropMode::REPLACE, self.root, a._NET_SHOWING_DESKTOP, AtomEnum::CARDINAL, &[0])?;
         let (w, h) = self.screen_size();
         c.change_property32(PropMode::REPLACE, self.root, a._NET_DESKTOP_GEOMETRY, AtomEnum::CARDINAL, &[w as u32, h as u32])?;
@@ -238,8 +262,9 @@ impl Wm {
         for w in tree.children {
             if w == self.check_win { continue; }
             let Ok(attr) = self.conn.get_window_attributes(w)?.reply() else { continue };
-            if attr.override_redirect || attr.map_state != MapState::VIEWABLE { continue; }
-            self.manage(w);
+            if attr.override_redirect { continue; }
+            let iconic = self.prop32(w, self.atoms.WM_STATE, self.atoms.WM_STATE).first() == Some(&3);
+            if attr.map_state == MapState::VIEWABLE { self.manage_ex(w, false); } else if iconic { self.manage_ex(w, true); }
         }
         Ok(())
     }
@@ -313,95 +338,147 @@ impl Wm {
     }
 
     // ---------------------------------------------------------- managing
-    pub fn manage(&mut self, w: u32) {
-        if self.clients.contains_key(&w) || self.frames.contains_key(&w) { return; }
+    pub fn manage(&mut self, w: u32) { self.manage_ex(w, false) }
+
+    fn read_csd(&self, w: u32) -> [i32; 4] {
+        let v = self.prop32(w, self.atoms._GTK_FRAME_EXTENTS, AtomEnum::CARDINAL);
+        if v.len() >= 4 { [v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32] } else { [0; 4] }
+    }
+
+    /// Passive grab so clicking an inactive window focuses + raises it (then replays the click).
+    fn grab_click(&self, w: u32) {
+        for b in [ButtonIndex::M1, ButtonIndex::M2, ButtonIndex::M3] {
+            let _ = self.conn.grab_button(true, w, EventMask::BUTTON_PRESS, GrabMode::SYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, b, ModMask::ANY);
+        }
+    }
+
+    /// Manage a new top-level. `start_minimized` adopts an iconic window (after a restart).
+    pub fn manage_ex(&mut self, w: u32, start_minimized: bool) {
+        if self.clients.contains_key(&w) || self.frames.contains_key(&w) || w == self.check_win { return; }
+        let Ok(Ok(attr)) = self.conn.get_window_attributes(w).map(|c| c.reply()) else { return };
+        if attr.override_redirect { let _ = self.conn.map_window(w); return; }
         let Ok(Ok(g)) = self.conn.get_geometry(w).map(|c| c.reply()) else { return };
         let kind = self.window_kind(w);
-        let a = &self.atoms;
+        let a = self.atoms;
         let state = self.prop32(w, a._NET_WM_STATE, AtomEnum::ATOM);
         let transient_for = self.prop32(w, a.WM_TRANSIENT_FOR, AtomEnum::WINDOW).first().copied().unwrap_or(0);
         let protocols = self.prop32(w, a.WM_PROTOCOLS, AtomEnum::ATOM);
-        // WM_NORMAL_HINTS: min size / fixed size
+        // WM_NORMAL_HINTS: flags, (pad x4), min w/h, max w/h, ..., win_gravity at [17]
         let nh = self.prop32(w, AtomEnum::WM_NORMAL_HINTS.into(), AtomEnum::WM_SIZE_HINTS);
         let (mut min_size, mut resizable) = ((80, 30), true);
         if nh.len() >= 9 {
             if nh[0] & 16 != 0 { min_size = (nh[5] as i32, nh[6] as i32); }
-            if nh[0] & 32 != 0 && nh.len() >= 9 && nh[0] & 16 != 0 && nh[7] == nh[5] && nh[8] == nh[6] { resizable = false; }
+            if nh[0] & 32 != 0 && nh[0] & 16 != 0 && nh[7] == nh[5] && nh[8] == nh[6] { resizable = false; }
         }
-        let decorated = matches!(kind, Kind::Normal | Kind::Dialog | Kind::Utility) && self.wants_decor(w);
+        let gravity_static = nh.len() >= 18 && nh[0] & 512 != 0 && nh[17] == 10;
+        let user_pos = nh.first().map(|f| f & 1 != 0 || f & 4 != 0).unwrap_or(false);
+        let app = matches!(kind, Kind::Normal | Kind::Dialog | Kind::Utility);
+        let decorated = app && self.wants_decor(w);
+        let csd = if decorated { [0; 4] } else { self.read_csd(w) };
         let mut geom = Rect { x: g.x as i32, y: g.y as i32, w: g.width as i32, h: g.height as i32 };
+        let (b, t) = if decorated { (BORDER, TOP) } else { (0, 0) };
+        // ICCCM NorthWest gravity: a requested position is where the *frame* goes
+        if decorated && user_pos && !gravity_static && !(geom.x == 0 && geom.y == 0) { geom.x += b; geom.y += t; }
+        let on_screen = self.monitors.iter().any(|m| m.contains(geom.x + geom.w / 2, geom.y + geom.h / 2) || m.contains(geom.x, geom.y));
+        if app && ((!user_pos && geom.x == 0 && geom.y == 0) || !on_screen) {
+            // place new windows like Windows does: centred on the active monitor (dialogs on their owner)
+            let wa = self.workarea_for(self.pointer_monitor());
+            if let Some(p) = self.clients.get(&transient_for) {
+                let (px, py) = self.frame_rect(p).center();
+                geom.x = px - geom.w / 2;
+                geom.y = py - geom.h / 2;
+            } else {
+                geom.x = wa.x + (wa.w - geom.w - 2 * b + csd[0] + csd[1]) / 2 + b - csd[0];
+                geom.y = wa.y + (wa.h - geom.h - t - b + csd[2] + csd[3]) / 2 + t - csd[2];
+                // cascade if another window already sits there
+                let mut guard = 0;
+                while guard < 20 && self.clients.values().any(|o| is_app(o) && (o.geom.x - geom.x).abs() < 8 && (o.geom.y - geom.y).abs() < 8) {
+                    geom.x += 26; geom.y += 26; guard += 1;
+                }
+            }
+            geom.x = geom.x.max(wa.x + b - csd[0]);
+            geom.y = geom.y.max(wa.y + t - csd[2]);
+        }
+        // never put a title bar above the top of the screen
+        if decorated {
+            let top_min = self.monitors.iter().map(|m| m.y).min().unwrap_or(0);
+            if geom.y - t < top_min { geom.y = top_min + t; }
+        }
+        let wm_desktop = self.prop32(w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL).first().copied();
+        let desktop = match wm_desktop { Some(d) if d == 0xffffffff || d < self.num_desktops => d, _ => self.current_desktop };
         let mut c = Client {
             win: w, frame: None, kind, title: self.read_title(w), icon: self.read_icon(w), geom, restore: None,
-            maximized: false, fullscreen: state.contains(&a._NET_WM_STATE_FULLSCREEN), minimized: false,
+            maximized: false, fullscreen: state.contains(&a._NET_WM_STATE_FULLSCREEN), minimized: start_minimized,
             above: state.contains(&a._NET_WM_STATE_ABOVE) || kind == Kind::Dock, skip_taskbar: state.contains(&a._NET_WM_STATE_SKIP_TASKBAR),
-            urgent: false, transient_for, protocols, min_size, resizable, desktop: self.current_desktop,
+            urgent: false, transient_for, protocols, min_size, resizable, desktop,
             hover: None, pressed: None, ignore_unmaps: 0, snapped: None, mapped_once: false,
+            wm_hidden: false, ext: [-1; 4], csd, gravity_static, zones: vec![],
         };
         let _ = self.conn.change_window_attributes(w, &ChangeWindowAttributesAux::new()
             .event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY | EventMask::FOCUS_CHANGE));
         if decorated {
-            // place new windows sensibly (centred on the pointer's monitor) unless the app chose a position
-            let wa = self.workarea_for(self.pointer_monitor());
-            let user_pos = nh.first().map(|f| f & 1 != 0 || f & 4 != 0).unwrap_or(false);
-            if (!user_pos && geom.x == 0 && geom.y == 0) || !self.monitors.iter().any(|m| m.contains(geom.x, geom.y)) {
-                if transient_for != 0 {
-                    if let Some(p) = self.clients.get(&transient_for) {
-                        let (px, py) = p.geom.center();
-                        geom.x = px - geom.w / 2;
-                        geom.y = py - geom.h / 2;
-                    }
-                } else {
-                    geom.x = wa.x + (wa.w - geom.w - 2 * BORDER) / 2 + BORDER;
-                    geom.y = wa.y + (wa.h - geom.h - TOP - BORDER) / 2 + TOP;
-                    // cascade if something already sits there
-                    while self.clients.values().any(|o| o.frame.is_some() && (o.geom.x - geom.x).abs() < 8 && (o.geom.y - geom.y).abs() < 8) {
-                        geom.x += 26; geom.y += 26;
-                    }
-                }
-                geom.x = geom.x.max(wa.x + BORDER);
-                geom.y = geom.y.max(wa.y + TOP);
-            }
-            c.geom = geom;
             let frame = self.conn.generate_id().unwrap();
             let (fx, fy, fw, fh) = (geom.x - BORDER, geom.y - TOP, geom.w + 2 * BORDER, geom.h + TOP + BORDER);
             let aux = CreateWindowAux::new().event_mask(frame_events()).background_pixel(0).border_pixel(0).bit_gravity(Gravity::NORTH_WEST);
             let res = if let Some((vis, cmap)) = self.argb {
-                self.conn.create_window(32, frame, self.root, fx as i16, fy as i16, fw as u16, fh as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux.colormap(cmap))
+                self.conn.create_window(32, frame, self.root, fx as i16, fy as i16, fw.max(1) as u16, fh.max(1) as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux.colormap(cmap))
             } else {
-                self.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, frame, self.root, fx as i16, fy as i16, fw as u16, fh as u16, 0, WindowClass::INPUT_OUTPUT, 0, &aux)
+                self.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, frame, self.root, fx as i16, fy as i16, fw.max(1) as u16, fh.max(1) as u16, 0, WindowClass::INPUT_OUTPUT, 0, &aux)
             };
             if res.is_err() { return; }
             let _ = self.conn.change_save_set(SetMode::INSERT, w);
             let _ = self.conn.reparent_window(w, frame, BORDER as i16, TOP as i16);
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().border_width(0));
-            // click-to-focus: passive grab on the client
-            let _ = self.conn.grab_button(true, w, EventMask::BUTTON_PRESS, GrabMode::SYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, ButtonIndex::ANY, ModMask::ANY);
             c.frame = Some(frame);
             self.frames.insert(frame, w);
-            self.set_frame_extents(w, [BORDER, BORDER, TOP, BORDER]);
+            // the frame always shows the normal arrow: client windows inherit their parent's cursor,
+            // so a resize cursor set on the frame would leak into the application
+            if let Some(cur) = keys::cursor(&self.conn, self.screen_num, "left_ptr") {
+                let _ = self.conn.change_window_attributes(frame, &ChangeWindowAttributesAux::new().cursor(cur));
+            }
+            const ZONE_CURSORS: [&str; 12] = ["top_side", "bottom_side", "left_side", "right_side",
+                "top_left_corner", "top_left_corner", "top_right_corner", "top_right_corner",
+                "bottom_left_corner", "bottom_left_corner", "bottom_right_corner", "bottom_right_corner"];
+            for name in ZONE_CURSORS {
+                let z = self.conn.generate_id().unwrap();
+                let mut aux = CreateWindowAux::new();
+                if let Some(cur) = keys::cursor(&self.conn, self.screen_num, name) { aux = aux.cursor(cur); }
+                if self.conn.create_window(0, z, frame, 0, 0, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &aux).is_ok() { c.zones.push(z); }
+            }
             let _ = self.conn.map_window(w);
-            let _ = self.conn.map_window(frame);
-        } else {
-            if kind == Kind::Dock || kind == Kind::Desktop || kind == Kind::Notification { c.skip_taskbar = true; }
-            self.set_frame_extents(w, [0; 4]);
-            let _ = self.conn.map_window(w);
+        } else if kind == Kind::Dock || kind == Kind::Desktop || kind == Kind::Notification {
+            c.skip_taskbar = true;
         }
-        self.set_wm_state(w, 1);
+        if app { self.grab_click(w); }
+        // the top-level is mapped by sync_visibility below (unless minimized / on another desktop)
+        c.wm_hidden = true;
+        if c.frame.is_none() {
+            // a frameless window that is already mapped (adopted at startup) counts as shown
+            if attr.map_state == MapState::VIEWABLE { c.wm_hidden = false; }
+        }
+        self.set_wm_state(w, if start_minimized { 3 } else { 1 });
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[if kind == Kind::Dock || kind == Kind::Desktop { 0xffffffff } else { c.desktop }]);
         let allowed = [a._NET_WM_ACTION_MOVE, a._NET_WM_ACTION_RESIZE, a._NET_WM_ACTION_MINIMIZE, a._NET_WM_ACTION_MAXIMIZE_HORZ,
             a._NET_WM_ACTION_MAXIMIZE_VERT, a._NET_WM_ACTION_FULLSCREEN, a._NET_WM_ACTION_CLOSE, a._NET_WM_ACTION_CHANGE_DESKTOP];
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_ALLOWED_ACTIONS, AtomEnum::ATOM, &allowed);
         let fs = c.fullscreen;
+        c.fullscreen = false;
         let want_max = state.contains(&a._NET_WM_STATE_MAXIMIZED_VERT) && state.contains(&a._NET_WM_STATE_MAXIMIZED_HORZ);
         let focusable = !matches!(kind, Kind::Dock | Kind::Desktop | Kind::Notification | Kind::Menu);
         self.clients.insert(w, c);
         self.stack.push(w);
-        if kind == Kind::Dock { self.update_workarea(); }
+        self.write_extents(w);
         if fs { self.set_fullscreen(w, true); } else if want_max { self.set_maximized(w, true); }
+        self.sync_visibility(w);
+        // docks reserve space only once they are actually shown
+        if kind == Kind::Dock { self.update_workarea(); }
         self.restack();
         self.update_client_list();
-        if focusable { self.focus(w); }
+        self.layout_zones(w);
+        let visible = self.clients.get(&w).map(|c| !c.wm_hidden).unwrap_or(false);
+        if focusable && visible { self.focus(w); }
         self.redraw(w);
+        self.update_net_state(w);
     }
 
     fn unmanage(&mut self, w: u32, destroyed: bool) {
@@ -420,19 +497,24 @@ impl Wm {
         if c.kind == Kind::Dock { self.update_workarea(); }
         if self.active == w {
             self.active = 0;
-            // focus the parent of a closed dialog, else the next window down the stack
-            let next = if c.transient_for != 0 && self.clients.contains_key(&c.transient_for) { Some(c.transient_for) }
-                else { self.stack.iter().rev().copied().find(|x| self.clients.get(x).map(|c| c.frame.is_some() && !c.minimized && c.desktop == self.current_desktop).unwrap_or(false)) };
-            if let Some(n) = next { self.focus(n) } else {
-                let _ = self.conn.set_input_focus(InputFocus::POINTER_ROOT, self.root, CURRENT_TIME);
-                let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[0]);
-            }
+            // focus the owner of a closed dialog, else the next window down the stack
+            let owner_ok = self.clients.get(&c.transient_for).map(|o| self.should_show(o)).unwrap_or(false);
+            if owner_ok { self.focus(c.transient_for) } else { self.focus_fallback(w) }
         }
         self.update_client_list();
     }
 
     fn set_wm_state(&self, w: u32, st: u32) {
         let _ = self.conn.change_property32(PropMode::REPLACE, w, self.atoms.WM_STATE, self.atoms.WM_STATE, &[st, 0]);
+    }
+
+    fn write_extents(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let (b, t) = (self.border_of(c), self.top_of(c));
+        let e = [b, b, t, b];
+        if c.ext == e { return; }
+        self.clients.get_mut(&w).unwrap().ext = e;
+        self.set_frame_extents(w, e);
     }
 
     fn set_frame_extents(&self, w: u32, e: [i32; 4]) {
@@ -483,7 +565,7 @@ impl Wm {
             let fr = self.frame_rect(c);
             let _ = self.conn.configure_window(f, &ConfigureWindowAux::new().x(fr.x).y(fr.y).width(fr.w as u32).height(fr.h as u32));
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(b).y(t).width(g.w as u32).height(g.h as u32));
-            self.set_frame_extents(w, [b, b, t, b]);
+            self.write_extents(w);
         } else {
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(g.x).y(g.y).width(g.w as u32).height(g.h as u32));
         }
@@ -492,6 +574,7 @@ impl Wm {
             x: g.x as i16, y: g.y as i16, width: g.w as u16, height: g.h as u16, border_width: 0, override_redirect: false };
         let _ = self.conn.send_event(false, w, EventMask::STRUCTURE_NOTIFY, ev);
         if size_changed {
+            self.layout_zones(w);
             self.redraw(w);
         } else if !self.composited() && self.last_move_redraw.elapsed().as_millis() > 60 {
             // opaque fake glass shows the wallpaper behind: refresh it, but not on every pixel
@@ -511,115 +594,219 @@ impl Wm {
 
     fn monitor_of(&self, r: &Rect) -> usize {
         let (x, y) = r.center();
-        self.monitors.iter().position(|m| m.contains(x, y)).unwrap_or(0)
+        if let Some(i) = self.monitors.iter().position(|m| m.contains(x, y)) { return i; }
+        // off-screen centre: the monitor with the largest overlap, else the nearest
+        let overlap = |m: &Rect| { let w = (r.x + r.w).min(m.x + m.w) - r.x.max(m.x); let h = (r.y + r.h).min(m.y + m.h) - r.y.max(m.y); w.max(0) as i64 * h.max(0) as i64 };
+        self.monitors.iter().enumerate().max_by_key(|(_, m)| (overlap(m), -(((m.center().0 - x) as i64).abs() + ((m.center().1 - y) as i64).abs()))).map(|(i, _)| i).unwrap_or(0)
     }
 
-    /// Work area of a monitor (monitor minus dock struts).
+    /// Work area of a monitor: the monitor minus the docks' struts that actually touch it
+    /// (EWMH struts are measured from the root edges; _NET_WM_STRUT_PARTIAL limits their span).
     pub fn workarea_for(&self, mon: usize) -> Rect {
         let m = self.monitors.get(mon).copied().unwrap_or_default();
         let (sw, sh) = self.screen_size();
         let (mut l, mut r, mut t, mut b) = (m.x, m.x + m.w, m.y, m.y + m.h);
-        for c in self.clients.values().filter(|c| c.kind == Kind::Dock) {
-            let s = self.prop32(c.win, self.atoms._NET_WM_STRUT_PARTIAL, AtomEnum::CARDINAL);
-            let s = if s.len() >= 4 { s } else { self.prop32(c.win, self.atoms._NET_WM_STRUT, AtomEnum::CARDINAL) };
+        let overlaps = |a0: i32, a1: i32, b0: i32, b1: i32| a0 <= b1 && b0 <= a1;
+        for c in self.clients.values().filter(|c| c.kind == Kind::Dock && !c.wm_hidden) {
+            let mut s = self.prop32(c.win, self.atoms._NET_WM_STRUT_PARTIAL, AtomEnum::CARDINAL);
+            let partial = s.len() >= 12;
+            if !partial { s = self.prop32(c.win, self.atoms._NET_WM_STRUT, AtomEnum::CARDINAL); }
             if s.len() < 4 { continue; }
+            let g = |i: usize, d: i32| if partial { s.get(i).map(|v| *v as i32).unwrap_or(d) } else { d };
             let (sl, sr, st, sb) = (s[0] as i32, s[1] as i32, s[2] as i32, s[3] as i32);
-            if sb > 0 && sh - sb < m.y + m.h && sh - sb > m.y { b = b.min(sh - sb); }
-            if st > 0 && st > m.y && st < m.y + m.h { t = t.max(st); }
-            if sl > 0 && sl > m.x && sl < m.x + m.w { l = l.max(sl); }
-            if sr > 0 && sw - sr < m.x + m.w && sw - sr > m.x { r = r.min(sw - sr); }
+            let (ly0, ly1, ry0, ry1) = (g(4, 0), g(5, sh), g(6, 0), g(7, sh));
+            let (tx0, tx1, bx0, bx1) = (g(8, 0), g(9, sw), g(10, 0), g(11, sw));
+            if sb > 0 && overlaps(bx0, bx1, m.x, m.x + m.w - 1) && sh - sb < m.y + m.h && sh > m.y { b = b.min(sh - sb); }
+            if st > 0 && overlaps(tx0, tx1, m.x, m.x + m.w - 1) && st > m.y { t = t.max(st); }
+            if sl > 0 && overlaps(ly0, ly1, m.y, m.y + m.h - 1) && sl > m.x { l = l.max(sl); }
+            if sr > 0 && overlaps(ry0, ry1, m.y, m.y + m.h - 1) && sw - sr < m.x + m.w { r = r.min(sw - sr); }
         }
-        Rect { x: l, y: t, w: r - l, h: b - t }
+        Rect { x: l, y: t, w: (r - l).max(1), h: (b - t).max(1) }
     }
 
     fn update_workarea(&mut self) {
-        self.workarea = self.workarea_for(0);
-        let wa = self.workarea;
-        let v: Vec<u32> = (0..self.num_desktops).flat_map(|_| [wa.x as u32, wa.y as u32, wa.w as u32, wa.h as u32]).collect();
+        let was: Vec<Rect> = (0..self.monitors.len()).map(|i| self.workarea_for(i)).collect();
+        self.workarea = was.first().copied().unwrap_or_default();
+        // _NET_WORKAREA (one rect for the whole screen): bounding box of the monitor work areas
+        let (x0, y0) = (was.iter().map(|r| r.x).min().unwrap_or(0), was.iter().map(|r| r.y).min().unwrap_or(0));
+        let (x1, y1) = (was.iter().map(|r| r.x + r.w).max().unwrap_or(1), was.iter().map(|r| r.y + r.h).max().unwrap_or(1));
+        let v: Vec<u32> = (0..self.num_desktops).flat_map(|_| [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]).collect();
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_WORKAREA, AtomEnum::CARDINAL, &v);
-        let ids: Vec<u32> = self.clients.iter().filter(|(_, c)| c.maximized).map(|(w, _)| *w).collect();
-        for w in ids { self.set_maximized(w, true); }
+        // GTK reads exact per-monitor work areas from _GTK_WORKAREAS_D<n>; without this its menus
+        // get squeezed (scroll arrows) on monitors that _NET_WORKAREA doesn't describe well
+        let per: Vec<u32> = was.iter().flat_map(|r| [r.x as u32, r.y as u32, r.w as u32, r.h as u32]).collect();
+        for d in 0..self.num_desktops {
+            if let Ok(Ok(atom)) = self.conn.intern_atom(false, format!("_GTK_WORKAREAS_D{d}").as_bytes()).map(|c| c.reply()) {
+                let _ = self.conn.change_property32(PropMode::REPLACE, self.root, atom.atom, AtomEnum::CARDINAL, &per);
+            }
+        }
+        // keep maximised/snapped/fullscreen windows fitted to their monitor
+        let ids: Vec<u32> = self.clients.keys().copied().collect();
+        for w in ids {
+            let Some(c) = self.clients.get(&w) else { continue };
+            let mon = self.monitor_of(&self.frame_rect(c));
+            if c.fullscreen { let m = self.monitors.get(mon).copied().unwrap_or_default(); self.configure(w, m); }
+            else if c.maximized { let wa = self.workarea_for(mon); self.maximize_in(w, wa); }
+            else if let Some(side) = c.snapped { let wa = self.workarea_for(mon); self.snap_in(w, side, wa); }
+        }
+    }
+
+    /// Client geometry that makes a window's *visible* outer edge fill `outer`
+    /// (framed: subtract our frame; client-side decorated: add back its invisible shadow).
+    fn fit_rect(&self, c: &Client, outer: Rect, maximized: bool) -> Rect {
+        if c.frame.is_some() {
+            let (b, t) = if maximized { (0, MAX_TOP) } else { (BORDER, TOP) };
+            Rect { x: outer.x + b, y: outer.y + t, w: outer.w - 2 * b, h: outer.h - t - b }
+        } else {
+            let [l, r, t, bt] = c.csd;
+            Rect { x: outer.x - l, y: outer.y - t, w: outer.w + l + r, h: outer.h + t + bt }
+        }
     }
 
     // ---------------------------------------------------------- state changes
-    pub fn set_maximized(&mut self, w: u32, on: bool) {
-        let Some(c) = self.clients.get(&w) else { return };
-        if c.frame.is_none() && c.kind != Kind::Normal { return; }
-        let mon = self.monitor_of(&c.geom);
-        let wa = self.workarea_for(mon);
-        let c = self.clients.get_mut(&w).unwrap();
-        if on {
-            if !c.maximized && c.snapped.is_none() { c.restore = Some(c.geom); }
-            c.maximized = true;
-            c.snapped = None;
-            let t = if c.frame.is_some() { MAX_TOP } else { 0 };
-            self.configure(w, Rect { x: wa.x, y: wa.y + t, w: wa.w, h: wa.h - t });
-        } else if c.maximized || c.snapped.is_some() {
-            c.maximized = false;
-            c.snapped = None;
-            let r = c.restore.take().unwrap_or(Rect { x: wa.x + 60, y: wa.y + 60, w: wa.w * 2 / 3, h: wa.h * 2 / 3 });
+    fn maximize_in(&mut self, w: u32, wa: Rect) {
+        let Some(c) = self.clients.get_mut(&w) else { return };
+        if !c.maximized && c.snapped.is_none() { c.restore = Some(c.geom); }
+        c.maximized = true;
+        c.snapped = None;
+        if !c.fullscreen {
+            let r = { let c = &self.clients[&w]; self.fit_rect(c, wa, true) };
             self.configure(w, r);
         }
         self.update_net_state(w);
+        self.layout_zones(w);
+        self.redraw(w);
     }
 
-    /// Aero Snap: -1 left half, 1 right half.
-    pub fn snap(&mut self, w: u32, side: i8) {
+    pub fn set_maximized(&mut self, w: u32, on: bool) {
         let Some(c) = self.clients.get(&w) else { return };
-        if c.frame.is_none() || !c.resizable { return; }
-        let wa = self.workarea_for(self.monitor_of(&c.geom));
+        if !is_app(c) || (on && !c.resizable) { return; }
+        let wa = self.workarea_for(self.monitor_of(&self.frame_rect(c)));
+        if on { self.maximize_in(w, wa); return; }
         let c = self.clients.get_mut(&w).unwrap();
+        if !(c.maximized || c.snapped.is_some()) { return; }
+        c.maximized = false;
+        c.snapped = None;
+        let r = c.restore.take().unwrap_or(Rect { x: wa.x + 60, y: wa.y + 60, w: wa.w * 2 / 3, h: wa.h * 2 / 3 });
+        if !c.fullscreen { self.configure(w, r); }
+        self.update_net_state(w);
+        self.layout_zones(w);
+        self.redraw(w);
+    }
+
+    /// Aero Snap: -1 left half, 1 right half of the given work area.
+    fn snap_in(&mut self, w: u32, side: i8, wa: Rect) {
+        let Some(c) = self.clients.get_mut(&w) else { return };
+        if !c.resizable || c.fullscreen { return; }
         if !c.maximized && c.snapped.is_none() { c.restore = Some(c.geom); }
         c.maximized = false;
         c.snapped = Some(side);
         let half = wa.w / 2;
         let x = if side < 0 { wa.x } else { wa.x + wa.w - half };
-        self.configure(w, Rect { x: x + BORDER, y: wa.y + TOP, w: half - 2 * BORDER, h: wa.h - TOP - BORDER });
+        let r = { let c = &self.clients[&w]; self.fit_rect(c, Rect { x, y: wa.y, w: half, h: wa.h }, false) };
+        self.configure(w, r);
         self.update_net_state(w);
+        self.redraw(w);
+    }
+
+    pub fn snap(&mut self, w: u32, side: i8) {
+        let Some(c) = self.clients.get(&w) else { return };
+        if !is_app(c) { return; }
+        let wa = self.workarea_for(self.monitor_of(&self.frame_rect(c)));
+        self.snap_in(w, side, wa);
     }
 
     pub fn set_fullscreen(&mut self, w: u32, on: bool) {
         if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.get(&w) else { return };
-        let m = self.monitors.get(self.monitor_of(&c.geom)).copied().unwrap_or_default();
+        let mon = self.monitor_of(&self.frame_rect(c));
+        let m = self.monitors.get(mon).copied().unwrap_or_default();
         let c = self.clients.get_mut(&w).unwrap();
         if on && !c.fullscreen {
-            if !c.maximized { c.restore = Some(c.geom); }
+            if !c.maximized && c.snapped.is_none() { c.restore = Some(c.geom); }
             c.fullscreen = true;
             self.configure(w, m);
         } else if !on && c.fullscreen {
             c.fullscreen = false;
-            let r = c.restore.take().unwrap_or(Rect { x: m.x + 50, y: m.y + 80, w: m.w / 2, h: m.h / 2 });
-            if c.maximized { self.set_maximized(w, true) } else { self.configure(w, r) }
+            let (maxed, snapped) = (c.maximized, c.snapped);
+            let wa = self.workarea_for(mon);
+            if maxed { self.clients.get_mut(&w).unwrap().maximized = false; self.maximize_in(w, wa); }
+            else if let Some(sd) = snapped { self.clients.get_mut(&w).unwrap().snapped = None; self.snap_in(w, sd, wa); }
+            else {
+                let r = self.clients.get_mut(&w).unwrap().restore.take().unwrap_or(Rect { x: m.x + 50, y: m.y + 80, w: m.w / 2, h: m.h / 2 });
+                self.configure(w, r);
+            }
         }
+        self.write_extents(w);
         self.restack();
         self.update_net_state(w);
+        self.layout_zones(w);
+        self.redraw(w);
+    }
+
+    /// Should this window be on screen right now?
+    fn should_show(&self, c: &Client) -> bool {
+        if c.minimized { return false; }
+        if !is_app(c) { return true; }
+        if self.showing_desktop { return false; }
+        c.desktop == 0xffffffff || c.desktop == self.current_desktop
+    }
+
+    /// Map/unmap a window's top-level to match should_show (the single place that hides windows).
+    fn sync_visibility(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let want = self.should_show(c);
+        let top = c.frame.unwrap_or(w);
+        let framed = c.frame.is_some();
+        let c = self.clients.get_mut(&w).unwrap();
+        if want && c.wm_hidden {
+            c.wm_hidden = false;
+            let _ = self.conn.map_window(top);
+        } else if !want && !c.wm_hidden {
+            c.wm_hidden = true;
+            // only frameless windows report our unmap as an UnmapNotify we must ignore
+            if !framed { c.ignore_unmaps += 1; }
+            let _ = self.conn.unmap_window(top);
+        }
+    }
+
+    fn sync_all(&mut self) {
+        let ids: Vec<u32> = self.clients.keys().copied().collect();
+        for w in ids { self.sync_visibility(w); }
+    }
+
+    fn clear_focus(&mut self) {
+        let old = self.active;
+        self.active = 0;
+        let _ = self.conn.set_input_focus(InputFocus::POINTER_ROOT, self.root, CURRENT_TIME);
+        let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[0]);
+        if old != 0 { self.redraw(old); self.update_net_state(old); }
+    }
+
+    /// Focus the topmost visible app window other than `except`, or nothing.
+    fn focus_fallback(&mut self, except: u32) {
+        let next = self.stack.iter().rev().copied().find(|x| *x != except && self.clients.get(x).map(|c| is_app(c) && self.should_show(c)).unwrap_or(false));
+        match next { Some(n) => self.focus(n), None => self.clear_focus() }
     }
 
     pub fn minimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if c.minimized { return; }
         c.minimized = true;
-        // framed: hide only the frame (the client stays mapped inside it)
-        if c.frame.is_none() { c.ignore_unmaps += 1; }
-        let target = c.frame.unwrap_or(w);
-        let _ = self.conn.unmap_window(target);
+        self.sync_visibility(w);
         self.set_wm_state(w, 3);
         self.update_net_state(w);
-        if self.active == w {
-            self.active = 0;
-            let next = self.stack.iter().rev().copied().find(|x| *x != w && self.clients.get(x).map(|c| c.frame.is_some() && !c.minimized && c.desktop == self.current_desktop).unwrap_or(false));
-            if let Some(n) = next { self.focus(n) } else { let _ = self.conn.set_input_focus(InputFocus::POINTER_ROOT, self.root, CURRENT_TIME); let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[0]); }
-        }
+        if self.active == w { self.focus_fallback(w); }
     }
 
     pub fn unminimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if !c.minimized { return; }
         c.minimized = false;
-        if let Some(f) = c.frame { let _ = self.conn.map_window(f); } else { let _ = self.conn.map_window(w); }
+        self.sync_visibility(w);
         self.set_wm_state(w, 1);
         self.update_net_state(w);
+        self.redraw(w);
     }
 
     pub fn close(&self, w: u32) {
@@ -635,9 +822,9 @@ impl Wm {
     pub fn focus(&mut self, w: u32) {
         let Some(c) = self.clients.get(&w) else { return };
         if c.minimized { self.unminimize(w); }
-        if self.showing_desktop { self.set_showing_desktop(false); }
+        if self.showing_desktop { self.showing_desktop_set(false, false); }
         let c = &self.clients[&w];
-        if c.desktop != self.current_desktop && c.desktop != 0xffffffff { self.set_desktop(c.desktop); }
+        if c.desktop != self.current_desktop && c.desktop != 0xffffffff { let d = c.desktop; self.desktop_set(d, false); }
         let old = self.active;
         self.active = w;
         let c = &self.clients[&w];
@@ -688,42 +875,47 @@ impl Wm {
             below = Some(top);
         }
         if let Some(s) = &self.switcher { let _ = self.conn.configure_window(s.win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)); }
+        if let Some((p, _)) = self.snap_preview { let _ = self.conn.configure_window(p, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)); }
         self.update_client_list();
     }
 
-    pub fn set_showing_desktop(&mut self, on: bool) {
+    pub fn set_showing_desktop(&mut self, on: bool) { self.showing_desktop_set(on, true) }
+
+    fn showing_desktop_set(&mut self, on: bool, refocus: bool) {
         if on == self.showing_desktop { return; }
         self.showing_desktop = on;
-        let ids: Vec<u32> = self.clients.values().filter(|c| matches!(c.kind, Kind::Normal | Kind::Dialog | Kind::Utility)).map(|c| c.win).collect();
-        for w in ids {
-            let c = self.clients.get_mut(&w).unwrap();
-            if c.minimized { continue; }
-            let t = c.frame.unwrap_or(w);
-            if on { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); } else { let _ = self.conn.map_window(t); }
-        }
+        self.sync_all();
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_SHOWING_DESKTOP, AtomEnum::CARDINAL, &[on as u32]);
+        // the hidden window must not stay "active" (the taskbar would minimise it on click)
+        if on { self.clear_focus(); } else if refocus && self.active == 0 { self.focus_fallback(0); }
     }
 
-    pub fn set_desktop(&mut self, d: u32) {
+    pub fn set_desktop(&mut self, d: u32) { self.desktop_set(d, true) }
+
+    fn desktop_set(&mut self, d: u32, refocus: bool) {
         let d = d.min(self.num_desktops.saturating_sub(1));
         if d == self.current_desktop { return; }
         self.current_desktop = d;
-        let ids: Vec<u32> = self.clients.keys().copied().collect();
-        for w in ids {
-            let c = self.clients.get_mut(&w).unwrap();
-            if c.desktop == 0xffffffff || c.minimized || matches!(c.kind, Kind::Dock | Kind::Desktop) { continue; }
-            let t = c.frame.unwrap_or(w);
-            if c.desktop == d { let _ = self.conn.map_window(t); } else { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); }
-        }
+        self.sync_all();
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL, &[d]);
+        let active_visible = self.clients.get(&self.active).map(|c| !c.wm_hidden).unwrap_or(false);
+        if refocus && !active_visible { self.focus_fallback(0); }
     }
 
     pub fn set_num_desktops(&mut self, n: u32) {
         self.num_desktops = n.clamp(1, 16);
+        let last = self.num_desktops - 1;
+        // windows on removed desktops move to the last remaining one (instead of vanishing)
+        let moved: Vec<u32> = self.clients.values().filter(|c| c.desktop != 0xffffffff && c.desktop > last).map(|c| c.win).collect();
+        for w in moved {
+            self.clients.get_mut(&w).unwrap().desktop = last;
+            let _ = self.conn.change_property32(PropMode::REPLACE, w, self.atoms._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[last]);
+        }
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL, &[self.num_desktops]);
         let names: String = (1..=self.num_desktops).map(|i| format!("Desktop {i}\0")).collect();
         let _ = self.conn.change_property8(PropMode::REPLACE, self.root, self.atoms._NET_DESKTOP_NAMES, self.atoms.UTF8_STRING, names.as_bytes());
-        if self.current_desktop >= self.num_desktops { self.set_desktop(self.num_desktops - 1); }
+        if self.current_desktop > last { self.set_desktop(last); }
+        self.sync_all();
         self.update_workarea();
     }
 
@@ -744,51 +936,81 @@ impl Wm {
     pub fn redraw(&mut self, w: u32) {
         let Some(c) = self.clients.get(&w) else { return };
         let Some(frame) = c.frame else { return };
-        if c.fullscreen || c.minimized { return; }
+        if c.minimized || c.wm_hidden { return; }
+        if c.fullscreen {
+            // no decorations: drop the rounded-corner shape so the whole window shows
+            let _ = self.conn.shape_mask(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::BOUNDING, frame, 0, 0, x11rb::NONE);
+            return;
+        }
         let fr = self.frame_rect(c);
         let (fw, fh) = (fr.w, fr.h);
         if fw <= 0 || fh <= 0 { return; }
-        let Ok(mut surf) = cairo::ImageSurface::create(cairo::Format::ARgb32, fw, fh) else { return };
         let composited = self.composited();
-        {
-            let cr = cairo::Context::new(&surf).unwrap();
-            let btns = self.buttons_for(c);
-            let wp = self.wallpaper.clone();
-            let backdrop = move |cr: &cairo::Context, sx: f64, sy: f64| {
-                if let Some(wp) = &wp { cr.set_source_surface(wp, -sx, -sy).ok(); cr.paint().ok(); }
-                else { cr.set_source_rgb(0.35, 0.55, 0.75); cr.paint().ok(); }
-            };
-            self.decor.render(&cr, &Params {
-                w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active: self.active == w, maximized: c.maximized,
-                buttons: &btns, composited, color: self.color, backdrop: Some(&backdrop), screen_pos: (fr.x, fr.y),
-            });
-        }
-        surf.flush();
-        let stride = surf.stride() as usize;
-        let data = surf.data().unwrap().to_vec();
+        let btns = self.buttons_for(c);
+        let wp = self.wallpaper.clone();
+        let backdrop = move |cr: &cairo::Context, sx: f64, sy: f64| {
+            if let Some(wp) = &wp { cr.set_source_surface(wp, -sx, -sy).ok(); cr.paint().ok(); }
+            else { cr.set_source_rgb(0.35, 0.55, 0.75); cr.paint().ok(); }
+        };
+        let params = Params {
+            w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active: self.active == w, maximized: c.maximized,
+            buttons: &btns, composited, color: self.color, backdrop: Some(&backdrop), screen_pos: (fr.x, fr.y),
+        };
         let depth = if self.argb.is_some() { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
         let (b, t) = (self.border_of(c), self.top_of(c));
         let gc = self.conn.generate_id().unwrap();
         if self.conn.create_gc(gc, frame, &CreateGCAux::new().graphics_exposures(0)).is_err() { return; }
-        // only upload the border strips; the client covers the rest
+        // render + upload only the four border strips (the client covers the rest):
+        // a maximised 4K window no longer allocates/paints a full-screen surface per redraw
         let strips = [(0, 0, fw, t), (0, fh - b, fw, b), (0, t, b, fh - t - b), (fw - b, t, b, fh - t - b)];
-        let max_rows = (200_000 / (fw as usize * 4).max(1)).max(1) as i32;
         for (x, y, sw, sh) in strips {
             if sw <= 0 || sh <= 0 { continue; }
-            let mut row = y;
-            while row < y + sh {
-                let n = max_rows.min(y + sh - row);
-                let mut buf = Vec::with_capacity((sw * n * 4) as usize);
-                for r in row..row + n {
-                    let o = r as usize * stride + x as usize * 4;
-                    buf.extend_from_slice(&data[o..o + sw as usize * 4]);
-                }
-                let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, frame, gc, sw as u16, n as u16, x as i16, row as i16, 0, depth, &buf);
+            let Ok(mut surf) = cairo::ImageSurface::create(cairo::Format::ARgb32, sw, sh) else { continue };
+            {
+                let Ok(cr) = cairo::Context::new(&surf) else { continue };
+                cr.translate(-x as f64, -y as f64);
+                cr.rectangle(x as f64, y as f64, sw as f64, sh as f64);
+                cr.clip();
+                self.decor.render(&cr, &params);
+            }
+            surf.flush();
+            let stride = surf.stride() as usize;
+            let Ok(data) = surf.data() else { continue };
+            let row_bytes = sw as usize * 4;
+            let rows_per = (200_000 / row_bytes.max(1)).max(1);
+            let mut row = 0usize;
+            while row < sh as usize {
+                let n = rows_per.min(sh as usize - row);
+                let mut buf = Vec::with_capacity(row_bytes * n);
+                for r in row..row + n { buf.extend_from_slice(&data[r * stride..r * stride + row_bytes]); }
+                let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, frame, gc, sw as u16, n as u16, x as i16, (y as usize + row) as i16, 0, depth, &buf);
                 row += n;
             }
         }
         let _ = self.conn.free_gc(gc);
         self.shape_frame(frame, fw, fh, if c.maximized { 0 } else { decor::RADIUS as i32 });
+    }
+
+    /// Place the resize zones along the frame edges (hidden when the window can't be resized).
+    fn layout_zones(&self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        if c.zones.len() != 12 { return; }
+        if c.maximized || c.fullscreen || !c.resizable {
+            for z in &c.zones { let _ = self.conn.unmap_window(*z); }
+            return;
+        }
+        let fr = self.frame_rect(c);
+        let (fw, fh) = (fr.w, fr.h);
+        let (b, k, t) = (BORDER, 16, 4); // border, corner length, top grab height (caption above)
+        let rects = [
+            (k, 0, fw - 2 * k, t), (k, fh - b, fw - 2 * k, b), (0, k, b, fh - 2 * k), (fw - b, k, b, fh - 2 * k),
+            (0, 0, k, t), (0, 0, b, k), (fw - k, 0, k, t), (fw - b, 0, b, k),
+            (0, fh - b, k, b), (0, fh - k, b, k), (fw - k, fh - b, k, b), (fw - b, fh - k, b, k),
+        ];
+        for (z, (x, y, zw, zh)) in c.zones.iter().zip(rects) {
+            let _ = self.conn.configure_window(*z, &ConfigureWindowAux::new().x(x).y(y).width(zw.max(1) as u32).height(zh.max(1) as u32).stack_mode(StackMode::ABOVE));
+            let _ = self.conn.map_window(*z);
+        }
     }
 
     /// Round the top corners with the Shape extension (otherwise the transparent
@@ -846,8 +1068,9 @@ impl Wm {
         match ev {
             Event::MapRequest(e) => {
                 if let Some(c) = self.clients.get(&e.window) {
-                    if c.minimized { let w = c.win; self.unminimize(w); self.focus(w); }
-                    else if c.frame.is_none() { self.conn.map_window(e.window)?; }
+                    let w = c.win;
+                    if c.minimized { self.unminimize(w); self.focus(w); }
+                    else if c.frame.is_none() { if self.should_show(c) { self.clients.get_mut(&w).unwrap().wm_hidden = false; self.conn.map_window(w)?; } }
                 } else { self.manage(e.window); }
             }
             Event::UnmapNotify(e) => {
@@ -892,16 +1115,18 @@ impl Wm {
 
     fn configure_request(&mut self, e: ConfigureRequestEvent) {
         if let Some(c) = self.clients.get(&e.window) {
-            if c.maximized || c.fullscreen {
-                // keep maximised windows where they are, but confirm geometry
+            if c.maximized || c.fullscreen || c.snapped.is_some() {
+                // keep maximised/snapped windows where they are, but confirm geometry
                 let g = c.geom;
                 self.configure(e.window, g);
                 return;
             }
             let mut g = c.geom;
             let m = e.value_mask;
-            if m.contains(ConfigWindow::X) { g.x = e.x as i32; }
-            if m.contains(ConfigWindow::Y) { g.y = e.y as i32; }
+            // NorthWest gravity: the requested position is the frame's, the client sits inside it
+            let (ox, oy) = if c.frame.is_some() && !c.gravity_static { (self.border_of(c), self.top_of(c)) } else { (0, 0) };
+            if m.contains(ConfigWindow::X) { g.x = e.x as i32 + ox; }
+            if m.contains(ConfigWindow::Y) { g.y = e.y as i32 + oy; }
             if m.contains(ConfigWindow::WIDTH) { g.w = e.width as i32; }
             if m.contains(ConfigWindow::HEIGHT) { g.h = e.height as i32; }
             self.configure(e.window, g);
@@ -932,6 +1157,10 @@ impl Wm {
             if urgent && self.active != e.window { self.clients.get_mut(&e.window).unwrap().urgent = true; self.update_net_state(e.window); }
         } else if e.atom == a._NET_WM_STRUT_PARTIAL || e.atom == a._NET_WM_STRUT {
             self.update_workarea();
+        } else if e.atom == a._GTK_FRAME_EXTENTS {
+            let csd = self.read_csd(e.window);
+            let c = self.clients.get_mut(&e.window).unwrap();
+            if c.frame.is_none() { c.csd = csd; }
         } else if e.atom == a.WM_PROTOCOLS {
             let p = self.prop32(e.window, a.WM_PROTOCOLS, AtomEnum::ATOM);
             self.clients.get_mut(&e.window).unwrap().protocols = p;
@@ -976,10 +1205,11 @@ impl Wm {
             self.set_num_desktops(d[0]);
         } else if e.type_ == a._NET_WM_DESKTOP {
             if let Some(c) = self.clients.get_mut(&w) {
-                c.desktop = d[0];
-                let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[d[0]]);
-                let t = c.frame.unwrap_or(w);
-                if d[0] != self.current_desktop && d[0] != 0xffffffff { if c.frame.is_none() { c.ignore_unmaps += 1; } let _ = self.conn.unmap_window(t); }
+                c.desktop = if d[0] == 0xffffffff { d[0] } else { d[0].min(self.num_desktops - 1) };
+                let v = c.desktop;
+                let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[v]);
+                self.sync_visibility(w);
+                if self.active == w && self.clients[&w].wm_hidden { self.focus_fallback(w); }
             }
         } else if e.type_ == a._AERODE_RESTART && w == self.check_win {
             self.restart();
@@ -989,13 +1219,17 @@ impl Wm {
             let ids: Vec<u32> = self.clients.keys().copied().collect();
             for w in ids { self.redraw(w); }
         } else if e.type_ == a._NET_REQUEST_FRAME_EXTENTS {
-            self.set_frame_extents(w, [BORDER, BORDER, TOP, BORDER]);
+            let decorated = self.clients.get(&w).map(|c| c.frame.is_some()).unwrap_or_else(|| self.wants_decor(w) && matches!(self.window_kind(w), Kind::Normal | Kind::Dialog | Kind::Utility));
+            self.set_frame_extents(w, if decorated { [BORDER, BORDER, TOP, BORDER] } else { [0; 4] });
         } else if e.type_ == a._NET_MOVERESIZE_WINDOW {
             if let Some(c) = self.clients.get(&w) {
                 let mut g = c.geom;
                 let f = d[0] >> 8;
-                if f & 1 != 0 { g.x = d[1] as i32; }
-                if f & 2 != 0 { g.y = d[2] as i32; }
+                let grav = d[0] & 0xff;
+                let static_g = grav == 10 || (grav == 0 && c.gravity_static);
+                let (ox, oy) = if c.frame.is_some() && !static_g { (self.border_of(c), self.top_of(c)) } else { (0, 0) };
+                if f & 1 != 0 { g.x = d[1] as i32 + ox; }
+                if f & 2 != 0 { g.y = d[2] as i32 + oy; }
                 if f & 4 != 0 { g.w = d[3] as i32; }
                 if f & 8 != 0 { g.h = d[4] as i32; }
                 self.configure(w, g);
@@ -1027,8 +1261,8 @@ impl Wm {
         if let Some(c) = self.clients.get(&e.event) {
             let w = c.win;
             if self.active != w { self.focus(w); }
-            // Alt+drag moves windows (like Win7 utilities/Plasma)
-            if u16::from(e.state) & u16::from(ModMask::M1) != 0 && e.detail == 1 {
+            // Super+drag moves windows (Plasma-style extra; Alt+click stays with the app like on Windows)
+            if u16::from(e.state) & u16::from(ModMask::M4) != 0 && e.detail == 1 {
                 let c = &self.clients[&w];
                 self.drag = Some((w, Drag::Move { cx: e.root_x as i32, cy: e.root_y as i32, ox: c.geom.x, oy: c.geom.y, from_max: c.maximized }));
                 self.conn.allow_events(Allow::ASYNC_POINTER, e.time)?;
@@ -1039,7 +1273,7 @@ impl Wm {
             return Ok(());
         }
         let Some(w) = self.frames.get(&e.event).copied() else {
-            if e.event == self.root { self.switcher_cancel(); }
+            if e.event == self.root { self.switcher_cancel(); let _ = self.conn.ungrab_keyboard(e.time); }
             return Ok(());
         };
         if self.active != w { self.focus(w); } else { self.raise(w); }
@@ -1111,7 +1345,15 @@ impl Wm {
             Drag::Move { .. } => {
                 if let Some((win, side)) = self.snap_preview.take() {
                     let _ = self.conn.destroy_window(win);
-                    if self.clients.contains_key(&w) { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } }
+                    let wa = self.snap_wa.take();
+                    if self.clients.contains_key(&w) {
+                        match (side, wa) {
+                            (0, Some(wa)) => self.maximize_in(w, wa),
+                            (s, Some(wa)) => self.snap_in(w, s, wa),
+                            (0, None) => self.set_maximized(w, true),
+                            (s, None) => self.snap(w, s),
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1128,6 +1370,7 @@ impl Wm {
             let is_move = matches!(self.drag, Some((_, Drag::Move { .. })));
             self.end_drag();
             if is_move { if let Some(side) = snap { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } } }
+            self.snap_wa = None;
             self.redraw(w);
             return;
         }
@@ -1148,14 +1391,16 @@ impl Wm {
                     self.drag = Some((w, Drag::Move { cx: rx, cy: ry, ox: g.x, oy: g.y, from_max: false }));
                     return;
                 }
-                let g = Rect { x: ox + rx - cx, y: (oy + ry - cy).max(self.monitors.iter().map(|m| m.y).min().unwrap_or(0) + TOP / 2), ..c.geom };
+                let min_y = self.monitors.iter().map(|m| m.y).min().unwrap_or(0);
+                let floor = if c.frame.is_some() { min_y + TOP / 2 } else { min_y - c.csd[2] };
+                let g = Rect { x: ox + rx - cx, y: (oy + ry - cy).max(floor), ..c.geom };
                 self.configure(w, g);
                 // Aero Snap preview when touching a screen edge
                 let m = self.monitors.get(self.monitors.iter().position(|m| m.contains(rx, ry)).unwrap_or(0)).copied().unwrap_or_default();
                 let side = if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
                 if side != self.snap_preview.map(|s| s.1) {
                     self.hide_snap_preview();
-                    if let Some(s) = side { if self.clients[&w].resizable { self.show_snap_preview(w, s); } }
+                    if let Some(s) = side { if self.clients[&w].resizable && is_app(&self.clients[&w]) { self.show_snap_preview(w, s); } }
                 }
             }
             Some((w, Drag::Resize { edges, start, px, py })) => {
@@ -1179,21 +1424,8 @@ impl Wm {
                 let hit = self.hit(c, e.event_x as i32, e.event_y as i32);
                 let hb = if let Hit::Button(b) = hit { Some(b) } else { None };
                 if hb != c.hover { self.clients.get_mut(&w).unwrap().hover = hb; self.redraw(w); }
-                self.set_cursor(e.event, &hit);
+                let _ = hit;
             }
-        }
-    }
-
-    fn set_cursor(&self, win: u32, hit: &Hit) {
-        let name = match hit {
-            Hit::Edge(5) | Hit::Edge(10) => "top_left_corner",
-            Hit::Edge(6) | Hit::Edge(9) => "top_right_corner",
-            Hit::Edge(1) | Hit::Edge(2) => "sb_h_double_arrow",
-            Hit::Edge(4) | Hit::Edge(8) => "sb_v_double_arrow",
-            _ => "left_ptr",
-        };
-        if let Some(cur) = keys::cursor(&self.conn, self.screen_num, name) {
-            let _ = self.conn.change_window_attributes(win, &ChangeWindowAttributesAux::new().cursor(cur));
         }
     }
 
@@ -1202,6 +1434,7 @@ impl Wm {
         let wa = self.workarea_for(self.monitor_of(&Rect { x: self.pointer().0, y: self.pointer().1, w: 1, h: 1 }));
         let _ = c;
         let r = match side { -1 => Rect { w: wa.w / 2, ..wa }, 1 => Rect { x: wa.x + wa.w - wa.w / 2, w: wa.w / 2, ..wa }, _ => wa };
+        self.snap_wa = Some(wa);
         let win = self.conn.generate_id().unwrap();
         let composited = self.composited();
         let (depth, vis, cmap) = match (composited, self.argb) { (true, Some((v, c))) => (32, v, c), _ => (x11rb::COPY_DEPTH_FROM_PARENT, 0, 0) };
@@ -1243,6 +1476,7 @@ impl Wm {
     }
 
     fn hide_snap_preview(&mut self) {
+        self.snap_wa = None;
         if let Some((win, _)) = self.snap_preview.take() { let _ = self.conn.destroy_window(win); }
     }
 
@@ -1252,7 +1486,8 @@ impl Wm {
 
     // ---------------------------------------------------------- keys
     fn key(&mut self, e: KeyPressEvent, press: bool) {
-        let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, &self.conn) else { return };
+        let switching = self.switcher.is_some();
+        let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, switching, &self.conn) else { return };
         let act = self.active;
         use keys::Action::*;
         match action {
@@ -1273,7 +1508,7 @@ impl Wm {
             }
             ShowDesktop => { let s = !self.showing_desktop; self.set_showing_desktop(s); }
             MinimizeOthers => {
-                let ids: Vec<u32> = self.clients.values().filter(|c| c.win != act && c.frame.is_some() && !c.minimized).map(|c| c.win).collect();
+                let ids: Vec<u32> = self.clients.values().filter(|c| c.win != act && is_app(c) && !c.minimized && !c.wm_hidden).map(|c| c.win).collect();
                 for w in ids { self.minimize(w); }
             }
             SwitchNext | SwitchPrev => {
@@ -1286,15 +1521,11 @@ impl Wm {
                 }
                 let fwd = matches!(action, SwitchNext);
                 if let Some(mut s) = self.switcher.take() { s.step(fwd); s.draw(self); self.switcher = Some(s); }
+                // a very quick Alt+Tab tap can release Alt before our grab took effect
+                let mods = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| u16::from(r.mask)).unwrap_or(0xffff);
+                if mods & (u16::from(KeyButMask::MOD1) | u16::from(KeyButMask::MOD4)) == 0 { self.switch_commit(e.time); }
             }
-            SwitchCommit => {
-                if let Some(s) = self.switcher.take() {
-                    let target = s.selected();
-                    s.destroy(&self.conn);
-                    let _ = self.conn.ungrab_keyboard(e.time);
-                    if let Some(w) = target { self.focus(w); }
-                }
-            }
+            SwitchCommit => self.switch_commit(e.time),
             SwitchCancel => { self.switcher_cancel(); let _ = self.conn.ungrab_keyboard(e.time); }
             DesktopLeft => { let d = self.current_desktop.saturating_sub(1); self.set_desktop(d); }
             DesktopRight => { let d = (self.current_desktop + 1).min(self.num_desktops - 1); self.set_desktop(d); }
@@ -1310,11 +1541,14 @@ impl Wm {
         let ids: Vec<u32> = self.stack.clone();
         for w in ids {
             let Some(c) = self.clients.get(&w) else { continue };
+            // minimised windows stay unmapped + WM_STATE Iconic: the new instance adopts them minimised;
+            // windows hidden for other reasons (other desktop, show desktop) are mapped again
             if let Some(f) = c.frame {
                 let _ = self.conn.reparent_window(w, self.root, c.geom.x as i16, c.geom.y as i16);
-                let _ = self.conn.map_window(w);
+                let _ = self.conn.change_save_set(SetMode::DELETE, w);
+                if c.minimized { let _ = self.conn.unmap_window(w); } else { let _ = self.conn.map_window(w); }
                 let _ = self.conn.destroy_window(f);
-            } else if c.minimized { let _ = self.conn.map_window(w); }
+            } else if !c.minimized && c.wm_hidden { let _ = self.conn.map_window(w); }
         }
         let _ = self.conn.flush();
         let exe = std::env::current_exe().unwrap_or_else(|_| "aerode-wm".into());
@@ -1323,9 +1557,18 @@ impl Wm {
         eprintln!("aerode-wm: restart failed: {err}");
     }
 
+    fn switch_commit(&mut self, time: u32) {
+        let _ = self.conn.ungrab_keyboard(time);
+        if let Some(s) = self.switcher.take() {
+            let target = s.selected();
+            s.destroy(&self.conn);
+            if let Some(w) = target { self.focus(w); }
+        }
+    }
+
     fn switch_order(&self) -> Vec<u32> {
-        // most recently used first = top of stack first
-        let mut v: Vec<u32> = self.stack.iter().rev().copied().filter(|w| self.clients.get(w).map(|c| matches!(c.kind, Kind::Normal | Kind::Dialog) && !c.skip_taskbar && c.frame.is_some()).unwrap_or(false)).collect();
+        // most recently used first = top of stack first (minimised windows too, like Win7)
+        let mut v: Vec<u32> = self.stack.iter().rev().copied().filter(|w| self.clients.get(w).map(|c| matches!(c.kind, Kind::Normal | Kind::Dialog) && !c.skip_taskbar).unwrap_or(false)).collect();
         if let Some(i) = v.iter().position(|w| *w == self.active) { let a = v.remove(i); v.insert(0, a); }
         v
     }

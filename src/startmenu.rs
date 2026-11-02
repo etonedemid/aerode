@@ -6,6 +6,13 @@ use std::rc::Rc;
 
 use crate::{config, glass, sys, util};
 
+thread_local! {
+    static HIDE_ALL: RefCell<Option<Rc<dyn Fn()>>> = RefCell::new(None);
+}
+
+/// Hide the Start menu if it is open (used when clicking the desktop).
+pub fn hide_all() { if let Some(f) = HIDE_ALL.with(|h| h.borrow().clone()) { f(); } }
+
 const W: i32 = 400;
 const H: i32 = 535;
 const LEFT_W: i32 = 252;
@@ -19,6 +26,7 @@ pub struct StartMenu {
     all_btn_label: gtk::Label,
     expanded: RefCell<Vec<String>>,
     pub on_hide: RefCell<Option<Box<dyn Fn()>>>,
+    hidden_at: Cell<Option<std::time::Instant>>,
 }
 
 const CATS: &[(&str, &str, &str)] = &[
@@ -113,7 +121,7 @@ impl StartMenu {
 
         let sm = Rc::new(StartMenu {
             win: win.clone(), list, search: search.clone(), avatar: avatar.clone(), mode: Cell::new(0),
-            all_btn_label: all_lbl, expanded: RefCell::new(vec![]), on_hide: RefCell::new(None),
+            all_btn_label: all_lbl, expanded: RefCell::new(vec![]), on_hide: RefCell::new(None), hidden_at: Cell::new(None),
         });
 
         let user = glib::real_name().to_string_lossy().into_owned();
@@ -128,7 +136,7 @@ impl StartMenu {
             Some(("Pictures".into(), "folder-pictures", ex(util::special_dir(glib::UserDirectory::Pictures, "Pictures")))),
             Some(("Music".into(), "folder-music", ex(util::special_dir(glib::UserDirectory::Music, "Music")))),
             None,
-            Some(("Games".into(), "applications-games", Rc::new(|| util::explore("aerode:games")))),
+            Some(("Games".into(), util::first_icon(&["folder-games", "applications-games"]), Rc::new(|| util::explore("aerode:games")))),
             Some(("Computer".into(), "computer", Rc::new(|| util::explore("computer:///")))),
             None,
             Some(("Control Panel".into(), "preferences-system", ctrl(""))),
@@ -231,6 +239,7 @@ impl StartMenu {
             glib::Propagation::Proceed
         });
         root.show_all();
+        { let s2 = Rc::downgrade(&sm); HIDE_ALL.with(|h| *h.borrow_mut() = Some(Rc::new(move || if let Some(s) = s2.upgrade() { s.hide() }))); }
         sm
     }
 
@@ -239,7 +248,11 @@ impl StartMenu {
     }
 
     pub fn toggle(self: &Rc<Self>) {
-        if self.visible() { self.hide() } else { self.show() }
+        if self.visible() { self.hide(); return; }
+        // pressing Win / clicking the orb while the menu is open first steals its focus (which hides
+        // it); that same press must not then reopen it
+        if self.hidden_at.get().map(|t| t.elapsed().as_millis() < 400).unwrap_or(false) { return; }
+        self.show()
     }
 
     pub fn show(self: &Rc<Self>) {
@@ -257,6 +270,7 @@ impl StartMenu {
 
     pub fn hide(&self) {
         if self.win.is_visible() {
+            self.hidden_at.set(Some(std::time::Instant::now()));
             self.win.hide();
             if let Some(f) = self.on_hide.borrow().as_ref() { f(); }
         }

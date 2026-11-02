@@ -42,29 +42,101 @@ const WANTED: &[&str] = &[
     "Windows/Fonts/seguisym.ttf", "Windows/Fonts/marlett.ttf",
     "Windows/Fonts/vgaoem.fon", "Windows/Fonts/dosapp.fon", "Windows/Fonts/vga850.fon",
     "ProgramData/Microsoft/User Account Pictures",
+    "Windows/System32/wmploc.dll", "Windows/System32/sud.dll", "Windows/System32/isoburn.exe", "Windows/System32/msxml3.dll",
 ];
 
 /// (freedesktop icon name, PE file, group id or None = first group, aliases)
 const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("computer", "Windows/System32/imageres.dll", Some(109), &["user-desktop-computer"]),
-    ("user-trash", "Windows/System32/imageres.dll", Some(55), &[]),
-    ("user-trash-full", "Windows/System32/imageres.dll", Some(54), &[]),
-    ("user-home", "Windows/System32/imageres.dll", Some(123), &["folder-home"]),
-    ("folder", "Windows/System32/imageres.dll", Some(3), &["inode-directory", "folder-new"]),
-    ("folder-open", "Windows/System32/imageres.dll", Some(4), &[]),
-    ("folder-documents", "Windows/System32/imageres.dll", Some(112), &[]),
-    ("folder-pictures", "Windows/System32/imageres.dll", Some(113), &[]),
-    ("folder-music", "Windows/System32/imageres.dll", Some(108), &[]),
-    ("folder-videos", "Windows/System32/imageres.dll", Some(189), &[]),
-    ("folder-download", "Windows/System32/imageres.dll", Some(184), &["folder-downloads"]),
-    ("network-workgroup", "Windows/System32/imageres.dll", Some(25), &["network", "folder-remote"]),
-    ("drive-harddisk", "Windows/System32/imageres.dll", Some(32), &["drive-harddisk-system", "drive-multidisk"]),
-    ("drive-removable-media", "Windows/System32/imageres.dll", Some(31), &["drive-removable-media-usb", "media-flash"]),
-    ("drive-optical", "Windows/System32/imageres.dll", Some(56), &["media-optical"]),
-    ("text-x-generic", "Windows/System32/imageres.dll", Some(2), &["unknown", "application-octet-stream"]),
-    ("application-x-executable", "Windows/System32/imageres.dll", Some(15), &["system-run", "application-x-sharedlib"]),
+    ("user-trash", "Windows/System32/imageres.dll", Some(55), &["user-trash-symbolic"]),
+    ("user-trash-full", "Windows/System32/imageres.dll", Some(54), &["user-trash-full-symbolic"]),
+    ("user-home", "Windows/System32/imageres.dll", Some(123), &["folder-home", "user-home-symbolic"]),
+    // "-symbolic" aliases: the navigation pane of Win7 (and so of GTK file dialogs here) uses full-colour icons
+    ("folder", "Windows/System32/imageres.dll", Some(3), &["inode-directory", "folder-templates", "folder-symbolic"]),
+    ("folder-open", "Windows/System32/imageres.dll", Some(4), &["folder-drag-accept", "folder-visiting"]),
+    ("folder-documents", "Windows/System32/imageres.dll", Some(112), &["folder-documents-symbolic"]),
+    ("folder-pictures", "Windows/System32/imageres.dll", Some(113), &["folder-pictures-symbolic"]),
+    ("folder-music", "Windows/System32/imageres.dll", Some(108), &["folder-music-symbolic"]),
+    ("folder-videos", "Windows/System32/imageres.dll", Some(189), &["folder-videos-symbolic"]),
+    ("folder-download", "Windows/System32/imageres.dll", Some(184), &["folder-downloads", "folder-download-symbolic"]),
+    ("user-desktop", "Windows/System32/imageres.dll", Some(183), &["desktop", "user-desktop-symbolic"]),
+    ("folder-recent", "Windows/System32/imageres.dll", Some(117), &["document-open-recent", "document-open-recent-symbolic", "folder-recent-symbolic"]),
+    ("starred", "Windows/System32/imageres.dll", Some(1024), &["emblem-favorite", "user-bookmarks", "folder-favorites", "bookmark-new", "starred-symbolic", "user-bookmarks-symbolic"]),
+    ("folder-saved-search", "Windows/System32/imageres.dll", Some(18), &["folder-saved-search-symbolic"]),
+    ("folder-games", "Windows/System32/imageres.dll", Some(186), &[]),
+    ("folder-publicshare", "Windows/System32/imageres.dll", Some(178), &["folder-publicshare-symbolic"]),
+    ("folder-new", "Windows/System32/shell32.dll", Some(16784), &[]),
+    ("network-workgroup", "Windows/System32/imageres.dll", Some(25), &["network", "folder-remote", "network-workgroup-symbolic", "network-server-symbolic", "folder-remote-symbolic"]),
+    ("drive-harddisk", "Windows/System32/imageres.dll", Some(32), &["drive-multidisk", "drive-harddisk-symbolic"]),
+    ("drive-harddisk-system", "Windows/System32/imageres.dll", Some(36), &["drive-harddisk-system-symbolic"]),
+    ("drive-removable-media", "Windows/System32/imageres.dll", Some(35), &["drive-removable-media-usb", "media-removable", "drive-removable-media-symbolic", "media-removable-symbolic", "drive-removable-media-usb-symbolic"]),
+    ("media-flash", "Windows/System32/imageres.dll", Some(60), &["media-flash-sd", "media-flash-symbolic"]),
+    ("media-floppy", "Windows/System32/imageres.dll", Some(28), &[]),
+    ("drive-optical", "Windows/System32/imageres.dll", Some(30), &["drive-optical-symbolic"]),
+    ("media-optical", "Windows/System32/imageres.dll", Some(61), &["media-optical-cd", "media-optical-dvd", "media-optical-symbolic"]),
+    ("camera-photo", "Windows/System32/imageres.dll", Some(57), &["camera"]),
+    ("camera-video", "Windows/System32/imageres.dll", Some(46), &["camera-web"]),
+    ("phone", "Windows/System32/imageres.dll", Some(47), &[]),
+    ("input-keyboard", "Windows/System32/imageres.dll", Some(182), &[]),
+    ("scanner", "Windows/System32/imageres.dll", Some(95), &[]),
+    ("computer-laptop", "Windows/System32/imageres.dll", Some(1008), &[]),
+    // file types – the icons Win7 itself shows for them
+    ("unknown", "Windows/System32/imageres.dll", Some(2), &["application-octet-stream", "application-x-generic", "application-pdf", "x-office-spreadsheet", "x-office-presentation", "x-office-drawing", "application-x-zerosize"]),
+    ("text-x-generic", "Windows/System32/imageres.dll", Some(102), &["text-plain"]),
+    ("text-x-script", "Windows/System32/imageres.dll", Some(68), &["application-x-shellscript", "text-x-python", "text-x-python3", "application-x-perl", "application-x-ruby", "application-x-executable-script"]),
+    ("text-html", "Windows/System32/ieframe.dll", Some(110), &["application-xhtml+xml"]),
+    ("text-xml", "Windows/System32/msxml3.dll", Some(128), &["application-xml"]),
+    ("image-x-generic", "Program Files/Windows Photo Viewer/PhotoViewer.dll", Some(3005), &["image-png", "image-jpeg", "image-bmp", "image-gif", "image-tiff", "image-webp", "image-x-icon"]),
+    ("audio-x-generic", "Windows/System32/imageres.dll", Some(131), &["audio-flac", "audio-x-flac", "audio-ogg", "audio-x-vorbis+ogg", "audio-x-opus+ogg"]),
+    ("audio-mpeg", "Windows/System32/wmploc.dll", Some(732), &["audio-x-mp3", "audio-mp3", "audio-x-mpeg"]),
+    ("audio-x-wav", "Windows/System32/wmploc.dll", Some(734), &["audio-wav", "audio-x-wave"]),
+    ("audio-x-ms-wma", "Windows/System32/wmploc.dll", Some(735), &[]),
+    ("audio-mp4", "Windows/System32/wmploc.dll", Some(738), &["audio-x-m4a", "audio-m4a", "audio-aac"]),
+    ("video-x-generic", "Windows/System32/imageres.dll", Some(133), &["video-x-matroska", "video-webm"]),
+    ("video-mp4", "Windows/System32/wmploc.dll", Some(739), &[]),
+    ("video-x-m4v", "Windows/System32/wmploc.dll", Some(737), &[]),
+    ("video-x-msvideo", "Windows/System32/wmploc.dll", Some(731), &["video-avi"]),
+    ("video-mpeg", "Windows/System32/wmploc.dll", Some(733), &["video-x-mpeg"]),
+    ("video-x-ms-wmv", "Windows/System32/wmploc.dll", Some(736), &["video-x-ms-asf"]),
+    ("x-office-document", "Program Files/Windows NT/Accessories/wordpad.exe", Some(154), &["application-rtf", "text-rtf", "application-msword"]),
+    ("application-vnd.openxmlformats-officedocument.wordprocessingml.document", "Program Files/Windows NT/Accessories/wordpad.exe", Some(156), &[]),
+    ("application-vnd.oasis.opendocument.text", "Program Files/Windows NT/Accessories/wordpad.exe", Some(157), &[]),
+    ("font-x-generic", "Windows/System32/imageres.dll", Some(125), &["application-x-font-ttf", "font-ttf"]),
+    ("application-x-font-otf", "Windows/System32/imageres.dll", Some(127), &["font-otf"]),
+    ("application-x-cd-image", "Windows/System32/isoburn.exe", None, &["application-x-iso9660-image", "application-x-raw-disk-image"]),
+    ("mail-message", "Windows/System32/imageres.dll", Some(20), &["internet-mail", "mail-send", "message-rfc822", "mail-unread", "mail-read"]),
+    ("x-office-calendar", "Windows/System32/shell32.dll", Some(326), &["office-calendar"]),
+    ("x-office-address-book", "Windows/System32/imageres.dll", Some(181), &["contact-new", "folder-contacts"]),
+    ("application-x-executable", "Windows/System32/imageres.dll", Some(15), &["application-x-sharedlib", "application-x-pie-executable", "application-x-msdownload", "application-x-ms-dos-executable"]),
+    ("system-run", "Windows/System32/imageres.dll", Some(100), &[]),
+    // dialogs, session, common actions
+    ("dialog-information", "Windows/System32/imageres.dll", Some(81), &["gtk-dialog-info", "help-about"]),
+    ("dialog-warning", "Windows/System32/imageres.dll", Some(84), &["gtk-dialog-warning"]),
+    ("dialog-error", "Windows/System32/imageres.dll", Some(98), &["gtk-dialog-error"]),
+    ("dialog-question", "Windows/System32/imageres.dll", Some(99), &["gtk-dialog-question"]),
+    ("dialog-password", "Windows/System32/imageres.dll", Some(82), &["gtk-dialog-authentication"]),
+    ("security-medium", "Windows/System32/imageres.dll", Some(78), &[]),
+    ("action-unavailable", "Windows/System32/imageres.dll", Some(1027), &[]),
+    ("system-users", "Windows/System32/imageres.dll", Some(88), &["preferences-system-users", "user-info"]),
+    ("avatar-default", "Windows/System32/imageres.dll", Some(1029), &[]),
+    ("system-lock-screen", "Windows/System32/imageres.dll", Some(59), &["changes-prevent"]),
+    ("system-log-out", "Windows/System32/shell32.dll", Some(27), &[]),
+    ("system-shutdown", "Windows/System32/shell32.dll", Some(28), &[]),
+    ("system-suspend", "Windows/System32/shell32.dll", Some(221), &["system-hibernate"]),
+    ("document-new", "Windows/System32/shell32.dll", Some(319), &[]),
+    ("document-save", "Windows/System32/shell32.dll", Some(16761), &["document-save-as"]),
+    ("edit-cut", "Windows/System32/shell32.dll", Some(16762), &[]),
+    ("edit-copy", "Windows/System32/shell32.dll", Some(243), &[]),
+    ("edit-paste", "Windows/System32/shell32.dll", Some(16763), &[]),
+    ("edit-delete", "Windows/System32/shell32.dll", Some(240), &[]),
+    ("edit-find", "Windows/System32/shell32.dll", Some(23), &[]),
+    ("view-refresh", "Windows/System32/shell32.dll", Some(16739), &[]),
+    ("go-up", "Windows/System32/xpsrchvw.exe", Some(116), &[]),
+    ("go-down", "Windows/System32/xpsrchvw.exe", Some(118), &[]),
+    ("preferences-desktop-font", "Windows/System32/imageres.dll", Some(77), &["gnome-font-viewer", "org.gnome.font-viewer"]),
+    ("preferences-desktop-default-applications", "Windows/System32/sud.dll", None, &[]),
     ("system-search", "Windows/System32/imageres.dll", Some(8), &[]),
-    ("printer", "Windows/System32/DeviceCenter.dll", None, &["preferences-devices-printer"]),
+    ("printer", "Windows/System32/DeviceCenter.dll", None, &["preferences-devices-printer", "document-print", "system-config-printer", "printer-network"]),
     ("help-browser", "Windows/HelpPane.exe", None, &["help-contents", "system-help", "yelp"]),
     ("preferences-system", "Windows/System32/control.exe", None, &["preferences-desktop", "gnome-control-center", "org.gnome.Settings", "systemsettings", "xfce4-settings-manager", "aerode-control"]),
     ("system-file-manager", "Windows/explorer.exe", None, &["org.gnome.Nautilus", "nautilus", "thunar", "Thunar", "org.xfce.thunar", "pcmanfm", "pcmanfm-qt", "nemo", "caja", "dolphin", "org.kde.dolphin", "aerode-explorer"]),
@@ -97,7 +169,7 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("accessories-notes", "Windows/System32/StikyNot.exe", None, &["xpad", "knotes"]),
     ("preferences-desktop-accessibility", "Windows/System32/magnify.exe", None, &[]),
     ("preferences-desktop-keyboard", "Windows/System32/osk.exe", None, &["onboard"]),
-    ("image-viewer", "Program Files/Windows Photo Viewer/PhotoViewer.dll", None, &["eog", "org.gnome.eog", "org.gnome.Loupe", "gwenview", "org.kde.gwenview", "ristretto", "gpicview", "nomacs", "image-x-generic"]),
+    ("image-viewer", "Program Files/Windows Photo Viewer/PhotoViewer.dll", None, &["eog", "org.gnome.eog", "org.gnome.Loupe", "gwenview", "org.kde.gwenview", "ristretto", "gpicview", "nomacs"]),
     ("applications-games", "Program Files/Microsoft Games/Solitaire/Solitaire.exe", None, &["aisleriot", "sol"]),
     ("preferences-desktop-wallpaper", "Windows/System32/themecpl.dll", None, &["preferences-desktop-theme", "preferences-desktop-personal"]),
     ("preferences-system-time", "Windows/System32/timedate.cpl", None, &["preferences-system-date"]),
@@ -106,7 +178,10 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("system-software-install", "Windows/System32/appwiz.cpl", None, &["pamac", "org.manjaro.pamac.manager", "system-software-update", "octopi"]),
     ("preferences-system-power", "Windows/System32/powercpl.dll", None, &["battery", "xfce4-power-manager-settings"]),
     ("security-high", "Windows/System32/wscui.cpl", None, &["preferences-system-privacy"]),
-    ("package-x-generic", "Windows/System32/zipfldr.dll", None, &["application-zip", "file-roller", "org.gnome.FileRoller", "ark", "org.kde.ark", "xarchiver"]),
+    ("package-x-generic", "Windows/System32/zipfldr.dll", None, &["application-zip", "file-roller", "org.gnome.FileRoller", "ark", "org.kde.ark", "xarchiver",
+        "application-x-archive", "application-x-tar", "application-x-compressed-tar", "application-x-7z-compressed", "application-x-rar", "application-vnd.rar",
+        "application-gzip", "application-x-gzip", "application-x-bzip", "application-x-bzip2", "application-x-xz", "application-zstd", "application-x-zstd-compressed-tar",
+        "application-x-xz-compressed-tar", "application-x-bzip-compressed-tar", "application-x-lzma"]),
     ("preferences-desktop-remote-desktop", "Windows/System32/mstsc.exe", None, &["remmina", "org.remmina.Remmina"]),
     ("utilities-system-monitor-perf", "Windows/System32/perfmon.exe", None, &[]),
     ("applications-system", "Windows/System32/sysdm.cpl", None, &[]),
@@ -158,6 +233,8 @@ fn extract_wim(wim: &Path, dest: &Path) -> Result<()> {
 
 fn save_png(img: &image::RgbaImage, path: &Path) -> Result<()> {
     if let Some(p) = path.parent() { std::fs::create_dir_all(p)?; }
+    // an older theme may have this name as a symlink to another icon – never write through it
+    let _ = std::fs::remove_file(path);
     img.save(path)?;
     Ok(())
 }
@@ -191,6 +268,7 @@ fn build_icons(root: &Path, out: &Path) -> Result<usize> {
         }
         n += 1;
     }
+    n += build_battery(root, out);
     let dirs: Vec<String> = SIZES.iter().map(|s| format!("{s}x{s}/apps")).collect();
     let mut idx = format!("[Icon Theme]\nName=Aerode\nComment=Windows 7 icons (extracted locally)\nInherits=Papirus,breeze,Adwaita,hicolor\nDirectories={}\n\n", dirs.join(","));
     for s in SIZES {
@@ -202,10 +280,73 @@ fn build_icons(root: &Path, out: &Path) -> Result<usize> {
     Ok(n)
 }
 
-/// Dump every icon of imageres/shell32 into a browsable sheet (to tune ICONS).
+/// Battery icons from batmeter.dll's bitmap strips: the white notification-area battery (16/24 px)
+/// and the coloured flyout battery (32/48 px), as `battery-level-N[-charging]` plus the classic names.
+fn build_battery(root: &Path, out: &Path) -> usize {
+    let Some(pe) = find_ci(root, "Windows/System32/batmeter.dll").and_then(|p| Pe::open(&p).ok()) else { return 0 };
+    let strip = |id: u16| -> Option<Vec<image::RgbaImage>> {
+        let img = pe::decode_dib(pe.get(pe::RT_BITMAP, ResId::Id(id))?, false).ok()?;
+        let h = img.height();
+        if h == 0 || img.width() % h != 0 { return None; }
+        Some((0..img.width() / h).map(|i| image::imageops::crop_imm(&img, i * h, 0, h, h).to_image()).collect())
+    };
+    // 303 = 16px tray strip, 305 = 24px; 301 = 32px flyout strip, 302 = 40px
+    let (Some(t16), Some(f32_)) = (strip(303), strip(301)) else { eprintln!("  ! batmeter.dll: no battery strips"); return 0 };
+    let t24 = strip(305).unwrap_or_else(|| t16.clone());
+    let f40 = strip(302).unwrap_or_else(|| f32_.clone());
+    if t16.len() < 43 || f32_.len() < 31 { return 0; }
+    let over = |base: &image::RgbaImage, top: &image::RgbaImage| { let mut b = base.clone(); image::imageops::overlay(&mut b, top, 0, 0); b };
+    // tray: 0..=8 discharge levels, 18 = low (yellow !), 19 = critical (red x), 32..=42 charging levels, 30 = no battery
+    let tray = |fr: &[image::RgbaImage], lvl: u32, charging: bool| -> image::RgbaImage {
+        if charging { return fr[32 + (lvl / 10) as usize].clone(); }
+        let b = fr[((lvl * 8 + 50) / 100) as usize].clone();
+        match lvl { 0 => over(&b, &fr[19]), 10 => over(&b, &fr[18]), _ => b }
+    };
+    // flyout: 0..=9 green 10–100 %, 10..=18 yellow, 19..=25 red, 27 = missing, 30 = plug
+    let flyout = |fr: &[image::RgbaImage], lvl: u32, charging: bool| -> image::RgbaImage {
+        let b = if lvl >= 30 { fr[(lvl / 10 - 1) as usize].clone() } else if lvl >= 10 { fr[(10 + lvl / 10 - 1) as usize].clone() } else { fr[19].clone() };
+        if charging { over(&b, &fr[30]) } else { b }
+    };
+    let classic = |lvl: u32| match lvl { 0 => Some("empty"), 10 => Some("caution"), 20 => Some("low"), 60 => Some("good"), 100 => Some("full"), _ => None };
+    let mut n = 0;
+    for (size, src, is_tray) in [(16u32, &t16, true), (24, &t24, true), (32, &f32_, false), (48, &f40, false)] {
+        let dir = out.join(format!("{size}x{size}/apps"));
+        let fit = |img: image::RgbaImage| if img.width() == size { img } else { image::imageops::resize(&img, size, size, image::imageops::FilterType::Lanczos3) };
+        for lvl in (0..=100).step_by(10) {
+            for charging in [false, true] {
+                let img = fit(if is_tray { tray(src, lvl, charging) } else { flyout(src, lvl, charging) });
+                let suffix = if charging { "-charging" } else { "" };
+                let name = format!("battery-level-{lvl}{suffix}");
+                if save_png(&img, &dir.join(format!("{name}.png"))).is_err() { continue; }
+                let mut aliases = vec![];
+                if let Some(c) = classic(lvl) { aliases.push(format!("battery-{c}{suffix}")); }
+                if lvl == 100 && charging { aliases.push("battery-full-charged".into()); aliases.push("battery-level-100-charged".into()); }
+                for a in aliases {
+                    let l = dir.join(format!("{a}.png"));
+                    let _ = std::fs::remove_file(&l);
+                    let _ = std::os::unix::fs::symlink(format!("{name}.png"), l);
+                }
+                n += 1;
+            }
+        }
+        let _ = save_png(&fit(if is_tray { src[30].clone() } else { src[27].clone() }), &dir.join("battery-missing.png"));
+    }
+    n / 4
+}
+
+/// Dump every icon of the icon-bearing system files into a browsable sheet (to tune ICONS).
 fn icon_sheet(root: &Path, out: &Path) -> Result<()> {
     let mut html = String::from("<html><body style='font:12px sans-serif;background:#eee'>");
-    for f in ["Windows/System32/imageres.dll", "Windows/System32/shell32.dll"] {
+    let mut files: Vec<String> = vec!["Windows/System32/imageres.dll".into(), "Windows/System32/shell32.dll".into()];
+    if let Some(sys) = find_ci(root, "Windows/System32") {
+        let mut more: Vec<String> = std::fs::read_dir(sys).into_iter().flatten().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| { let l = n.to_lowercase(); (l.ends_with(".dll") || l.ends_with(".exe") || l.ends_with(".cpl")) && l != "imageres.dll" && l != "shell32.dll" })
+            .map(|n| format!("Windows/System32/{n}")).collect();
+        more.sort();
+        files.extend(more);
+    }
+    for f in &files {
         let Some(pe) = find_ci(root, f).and_then(|p| Pe::open(&p).ok()) else { continue };
         html += &format!("<h2>{f}</h2><div style='display:flex;flex-wrap:wrap'>");
         for id in pe.names(pe::RT_GROUP_ICON) {
@@ -418,6 +559,17 @@ pub fn run(args: &[String]) -> Result<()> {
         bail!("usage: aerode-extract /path/to/windows7.iso [--sheet]\n       (also accepts install.wim / install.esd or an extracted/mounted Windows folder)");
     };
     let src = std::fs::canonicalize(crate::util::shellexpand(src)).context("ISO not found")?;
+    // developer aid: aerode-extract <extracted dir> --sheet-only <out dir>
+    if let Some(i) = args.iter().position(|a| a == "--sheet-only") {
+        let out = args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("iconsheet"));
+        return icon_sheet(&src, &out);
+    }
+    // developer aid: aerode-extract <extracted dir> --icons-only <out dir>
+    if let Some(i) = args.iter().position(|a| a == "--icons-only") {
+        let out = args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("Aerode"));
+        build_icons(&src, &out)?;
+        return Ok(());
+    }
     let share = gtk::glib::user_data_dir();
     let data = share.join("aerode");
     std::fs::create_dir_all(&data)?;

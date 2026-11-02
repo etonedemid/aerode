@@ -9,10 +9,26 @@ use crate::{config, sys, util};
 
 thread_local! {
     static OPEN: RefCell<Option<gtk::Window>> = RefCell::new(None);
+    /// when a flyout last closed by itself (focus loss / Esc)
+    static CLOSED_AT: std::cell::Cell<Option<std::time::Instant>> = std::cell::Cell::new(None);
 }
 
+/// Close the open flyout. Returns true if one was open *or* just closed itself because the
+/// user clicked its tray icon (focus moved to the taskbar) – so that click only closes it, like Win7.
 pub fn close_open() -> bool {
-    OPEN.with(|o| o.borrow_mut().take()).map(|w| { w.close(); true }).unwrap_or(false)
+    let w = OPEN.with(|o| o.borrow_mut().take());
+    if let Some(w) = w {
+        let vis = w.is_visible();
+        w.close();
+        if vis { return true; }
+    }
+    CLOSED_AT.with(|c| c.take()).map(|t| t.elapsed().as_millis() < 350).unwrap_or(false)
+}
+
+fn closed_by_itself(w: &gtk::Window) {
+    CLOSED_AT.with(|c| c.set(Some(std::time::Instant::now())));
+    OPEN.with(|o| { let mut o = o.borrow_mut(); if o.as_ref() == Some(w) { *o = None; } });
+    w.close();
 }
 
 /// A popup anchored above `anchor`, closed on focus loss.
@@ -46,9 +62,9 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
         crate::glass::paint_flyout(cr, w.allocated_width() as f64, w.allocated_height() as f64, x as f64, y as f64, fh);
         glib::Propagation::Proceed
     });
-    w.connect_focus_out_event(|w, _| { w.close(); glib::Propagation::Proceed });
+    w.connect_focus_out_event(|w, _| { closed_by_itself(w); glib::Propagation::Proceed });
     w.connect_key_press_event(|w, e| {
-        if e.keyval() == gdk::keys::constants::Escape { w.close(); }
+        if e.keyval() == gdk::keys::constants::Escape { closed_by_itself(w); }
         glib::Propagation::Proceed
     });
     frame.show_all();

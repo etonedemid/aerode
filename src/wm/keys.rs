@@ -105,10 +105,11 @@ impl Keys {
         Ok(())
     }
 
-    pub fn lookup(&mut self, code: u8, state: u16, press: bool, conn: &RustConnection) -> Option<Action> {
+    pub fn lookup(&mut self, code: u8, state: u16, press: bool, switching: bool, conn: &RustConnection) -> Option<Action> {
         let mods = state & (SHIFT | CTRL | ALT | SUPER);
         if self.super_codes.contains(&code) {
-            if press { self.super_down_alone = true; let _ = conn.allow_events(Allow::ASYNC_KEYBOARD, x11rb::CURRENT_TIME); return None; }
+            if press { self.super_down_alone = !switching; let _ = conn.allow_events(Allow::ASYNC_KEYBOARD, x11rb::CURRENT_TIME); return None; }
+            if switching { self.super_down_alone = false; return Some(Action::SwitchCommit); }
             let fire = self.super_down_alone && mods & !SUPER == 0;
             self.super_down_alone = false;
             return fire.then(|| Action::Spawn("aerode start".into()));

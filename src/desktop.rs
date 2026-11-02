@@ -27,6 +27,10 @@ pub struct Desktop {
     fixed: gtk::Fixed,
     selected: RefCell<Vec<gtk::Button>>,
     _monitor: RefCell<Option<gio::FileMonitor>>,
+    /// rubber-band selection: (start x, start y, current x, current y, ctrl held)
+    band: RefCell<Option<(f64, f64, f64, f64, bool)>>,
+    band_area: gtk::DrawingArea,
+    band_base: RefCell<Vec<gtk::Button>>,
 }
 
 fn desktop_dir() -> PathBuf {
@@ -56,22 +60,79 @@ impl Desktop {
         win.style_context().add_class("desktop");
         let ev = gtk::EventBox::new();
         ev.set_visible_window(false);
+        ev.add_events(gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::BUTTON_RELEASE_MASK | gdk::EventMask::BUTTON1_MOTION_MASK | gdk::EventMask::POINTER_MOTION_MASK);
         let fixed = gtk::Fixed::new();
         ev.add(&fixed);
-        win.add(&ev);
+        // the selection rectangle is drawn on an overlay that lets all input through
+        let overlay = gtk::Overlay::new();
+        overlay.add(&ev);
+        let band_area = gtk::DrawingArea::new();
+        overlay.add_overlay(&band_area);
+        overlay.set_overlay_pass_through(&band_area, true);
+        win.add(&overlay);
         win.connect_draw(|_, cr| {
             let wp = glass::wallpaper();
             cr.set_source_pixbuf(&wp.sharp, 0.0, 0.0);
             cr.paint().ok();
             glib::Propagation::Proceed
         });
-        let d = Rc::new(Desktop { win: win.clone(), fixed, selected: RefCell::new(vec![]), _monitor: RefCell::new(None) });
+        let d = Rc::new(Desktop { win: win.clone(), fixed, selected: RefCell::new(vec![]), _monitor: RefCell::new(None),
+            band: RefCell::new(None), band_area: band_area.clone(), band_base: RefCell::new(vec![]) });
         {
             let d2 = d.clone();
             ev.connect_button_press_event(move |_, e| {
-                d2.clear_selection();
-                if e.button() == 3 { d2.desktop_menu(e); }
+                // clicking the desktop closes the Start menu and tray flyouts, like Windows
+                crate::flyouts::close_open();
+                crate::startmenu::hide_all();
+                let ctrl = e.state().contains(gdk::ModifierType::CONTROL_MASK);
+                if !ctrl { d2.clear_selection(); }
+                match e.button() {
+                    1 => {
+                        let (x, y) = e.position();
+                        *d2.band_base.borrow_mut() = d2.selected.borrow().clone();
+                        *d2.band.borrow_mut() = Some((x, y, x, y, ctrl));
+                        d2.win.present();
+                    }
+                    3 => d2.desktop_menu(e),
+                    _ => {}
+                }
                 glib::Propagation::Stop
+            });
+        }
+        {
+            let d2 = d.clone();
+            ev.connect_motion_notify_event(move |_, e| {
+                let cur = *d2.band.borrow();
+                if let Some((x0, y0, _, _, ctrl)) = cur {
+                    let (x, y) = e.position();
+                    *d2.band.borrow_mut() = Some((x0, y0, x, y, ctrl));
+                    d2.update_band_selection();
+                    d2.band_area.queue_draw();
+                }
+                glib::Propagation::Stop
+            });
+        }
+        {
+            let d2 = d.clone();
+            ev.connect_button_release_event(move |_, _| {
+                if d2.band.borrow_mut().take().is_some() { d2.band_area.queue_draw(); }
+                glib::Propagation::Stop
+            });
+        }
+        {
+            let d2 = d.clone();
+            band_area.connect_draw(move |_, cr| {
+                if let Some((x0, y0, x1, y1, _)) = *d2.band.borrow() {
+                    let (x, y, w, h) = (x0.min(x1).floor() + 0.5, y0.min(y1).floor() + 0.5, (x1 - x0).abs().floor(), (y1 - y0).abs().floor());
+                    // Windows 7 selection rectangle: translucent highlight fill + solid highlight border
+                    cr.rectangle(x, y, w, h);
+                    cr.set_source_rgba(0.2, 0.6, 1.0, 0.25);
+                    cr.fill_preserve().ok();
+                    cr.set_source_rgba(0.2, 0.6, 1.0, 0.9);
+                    cr.set_line_width(1.0);
+                    cr.stroke().ok();
+                }
+                glib::Propagation::Proceed
             });
         }
         {
@@ -198,6 +259,23 @@ impl Desktop {
         });
         unsafe { eb.set_data("path", match &it.target { Target::Path(p) => p.clone(), Target::Uri(u) => PathBuf::from(u) }); }
         eb
+    }
+
+    /// Select every icon the rubber band touches (plus the pre-existing selection with Ctrl).
+    fn update_band_selection(&self) {
+        let Some((x0, y0, x1, y1, ctrl)) = *self.band.borrow() else { return };
+        let (rx0, ry0, rx1, ry1) = (x0.min(x1) as i32, y0.min(y1) as i32, x0.max(x1) as i32, y0.max(y1) as i32);
+        let base = self.band_base.borrow().clone();
+        let mut sel: Vec<gtk::Button> = if ctrl { base } else { vec![] };
+        for child in self.fixed.children() {
+            let Ok(b) = child.downcast::<gtk::Button>() else { continue };
+            let a = b.allocation();
+            let hit = a.x() < rx1 && a.x() + a.width() > rx0 && a.y() < ry1 && a.y() + a.height() > ry0;
+            if hit && !sel.contains(&b) { sel.push(b); }
+        }
+        for w in self.selected.borrow().iter() { if !sel.contains(w) { w.style_context().remove_class("selected"); w.queue_draw(); } }
+        for w in &sel { w.style_context().add_class("selected"); w.queue_draw(); }
+        *self.selected.borrow_mut() = sel;
     }
 
     fn clear_selection(&self) {

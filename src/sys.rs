@@ -173,9 +173,20 @@ pub fn battery() -> Option<Battery> {
     None
 }
 
-pub fn battery_icon(b: &Battery) -> String {
+/// Icon names for the battery, best first: the 10 %-step Win7 icons (built from batmeter.dll by
+/// aerode-extract), then the classic freedesktop names other themes have.
+pub fn battery_icons(b: &Battery) -> [String; 2] {
+    let charging = b.status == "Charging" || b.status == "Full";
+    let suffix = if charging { "-charging" } else { "" };
+    let step = ((b.percent.min(100) + 5) / 10 * 10).max(if b.percent > 0 { 10 } else { 0 });
     let lvl = match b.percent { 0..=10 => "caution", 11..=30 => "low", 31..=80 => "good", _ => "full" };
-    if b.status == "Charging" || b.status == "Full" { format!("battery-{lvl}-charging") } else { format!("battery-{lvl}") }
+    [format!("battery-level-{step}{suffix}"), format!("battery-{lvl}{suffix}")]
+}
+
+pub fn battery_icon(b: &Battery) -> String {
+    use gtk::prelude::IconThemeExt;
+    let [a, c] = battery_icons(b);
+    if gtk::IconTheme::default().map(|t| t.has_icon(&a)).unwrap_or(false) { a } else { c }
 }
 
 pub fn power_profile() -> Option<String> {
