@@ -104,8 +104,24 @@ pub struct Client {
     pub sync_sent: i64,
     pub sync_wait: Option<Instant>,
     pub resize_pending: Option<Rect>,
+    /// _MOTIF_WM_HINTS functions: (can minimise, can maximise)
+    pub mwm: (bool, bool),
     pub last_resize: Option<Instant>,
 }
+
+static ADOPTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct AdoptGuard;
+impl Drop for AdoptGuard { fn drop(&mut self) { ADOPTING.store(false, std::sync::atomic::Ordering::Relaxed); } }
+fn scopeguard_adopt() -> AdoptGuard { AdoptGuard }
+
+/// Win7's window event sounds (user32 plays them): silent unless the scheme assigns a file, which
+/// none of Win7's schemes do – they are there for users who pick one in the Sounds tab.
+fn window_sound(ev: crate::sounds::Event) {
+    if crate::sounds::file_for(ev).is_some() { crate::sounds::play(ev); }
+}
+
+/// A program's main window: a normal top-level window (no owner), the one Open/Close Program is about.
+fn is_program_window(c: &Client) -> bool { c.kind == Kind::Normal && c.transient_for == 0 }
 
 fn is_app(c: &Client) -> bool { matches!(c.kind, Kind::Normal | Kind::Dialog | Kind::Utility) }
 
@@ -383,6 +399,9 @@ impl Wm {
     }
 
     fn manage_existing(&mut self) -> Result<()> {
+        // windows adopted at start-up (an in-place restart) are not new programs: no Open Program
+        ADOPTING.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _guard = scopeguard_adopt();
         let tree = self.conn.query_tree(self.root)?.reply()?;
         for w in tree.children {
             if w == self.check_win { continue; }
@@ -482,6 +501,16 @@ impl Wm {
         if self.prop32(w, a.WM_TRANSIENT_FOR, AtomEnum::WINDOW).first().copied().unwrap_or(0) != 0 { Kind::Dialog } else { Kind::Normal }
     }
 
+    /// _MOTIF_WM_HINTS functions (MWM_HINTS_FUNCTIONS): (minimize allowed, maximize allowed).
+    /// MWM_FUNC_ALL inverts the list, as in mwm. Win7 equivalent: WS_MINIMIZEBOX / WS_MAXIMIZEBOX.
+    fn mwm_functions(&self, w: u32) -> (bool, bool) {
+        let m = self.prop32(w, self.atoms._MOTIF_WM_HINTS, self.atoms._MOTIF_WM_HINTS);
+        if m.len() < 2 || m[0] & 1 == 0 { return (true, true); }
+        let f = m[1];
+        let has = |bit: u32| if f & 1 != 0 { f & bit == 0 } else { f & bit != 0 };
+        (has(8), has(16))
+    }
+
     fn wants_decor(&self, w: u32) -> bool {
         // _MOTIF_WM_HINTS: flags, functions, decorations, ...
         let m = self.prop32(w, self.atoms._MOTIF_WM_HINTS, self.atoms._MOTIF_WM_HINTS);
@@ -566,6 +595,7 @@ impl Wm {
             wm_hidden: false, ext: [-1; 4], csd, gravity_static, zones: vec![],
             glow: anim::Glow::default(), focus_fade: None, defer_unmap: false,
             sync_counter: None, sync_sent: 0, sync_wait: None, resize_pending: None, last_resize: None,
+            mwm: self.mwm_functions(w),
         };
         let _ = self.conn.change_window_attributes(w, &ChangeWindowAttributesAux::new()
             .event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY | EventMask::FOCUS_CHANGE));
@@ -621,13 +651,16 @@ impl Wm {
         }
         self.set_wm_state(w, if start_minimized { 3 } else { 1 });
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[if kind == Kind::Dock || kind == Kind::Desktop { 0xffffffff } else { c.desktop }]);
-        let mut allowed = vec![a._NET_WM_ACTION_MOVE, a._NET_WM_ACTION_MINIMIZE, a._NET_WM_ACTION_FULLSCREEN, a._NET_WM_ACTION_CLOSE, a._NET_WM_ACTION_CHANGE_DESKTOP];
-        if c.resizable { allowed.extend([a._NET_WM_ACTION_RESIZE, a._NET_WM_ACTION_MAXIMIZE_HORZ, a._NET_WM_ACTION_MAXIMIZE_VERT]); }
+        let mut allowed = vec![a._NET_WM_ACTION_MOVE, a._NET_WM_ACTION_FULLSCREEN, a._NET_WM_ACTION_CLOSE, a._NET_WM_ACTION_CHANGE_DESKTOP];
+        if c.mwm.0 { allowed.push(a._NET_WM_ACTION_MINIMIZE); }
+        if c.resizable { allowed.push(a._NET_WM_ACTION_RESIZE); }
+        if c.resizable && c.mwm.1 { allowed.extend([a._NET_WM_ACTION_MAXIMIZE_HORZ, a._NET_WM_ACTION_MAXIMIZE_VERT]); }
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_ALLOWED_ACTIONS, AtomEnum::ATOM, &allowed);
         let fs = c.fullscreen;
         c.fullscreen = false;
         let want_max = state.contains(&a._NET_WM_STATE_MAXIMIZED_VERT) && state.contains(&a._NET_WM_STATE_MAXIMIZED_HORZ);
         let focusable = !matches!(kind, Kind::Dock | Kind::Desktop | Kind::Notification | Kind::Menu);
+        if is_program_window(&c) && !start_minimized && !ADOPTING.load(std::sync::atomic::Ordering::Relaxed) { window_sound(crate::sounds::Event::OpenProgram); }
         self.clients.insert(w, c);
         self.stack.push(w);
         self.write_extents(w);
@@ -649,6 +682,7 @@ impl Wm {
     fn unmanage(&mut self, w: u32, destroyed: bool) {
         if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.remove(&w) else { return };
+        if is_program_window(&c) { window_sound(crate::sounds::Event::CloseProgram); }
         let top = c.frame.unwrap_or(w);
         self.timers.cancel(|t| matches!(*t, anim::Timer::Unmap(x) if x == w) || matches!(*t, anim::Timer::DelProp { win, .. } if win == top));
         // the taskbar went away in the middle of a peek: never leave windows invisible
@@ -875,10 +909,14 @@ impl Wm {
 
     pub fn set_maximized(&mut self, w: u32, on: bool) {
         let Some(c) = self.clients.get(&w) else { return };
-        if !is_app(c) || (on && !c.resizable) { return; }
+        if !is_app(c) || (on && (!c.resizable || !c.mwm.1)) { return; }
         let wa = self.workarea_for(self.monitor_of(&self.frame_rect(c)));
-        if on { self.anim_geom(w); self.maximize_in(w, wa); return; }
+        if on {
+            if !c.maximized { window_sound(crate::sounds::Event::Maximize); }
+            self.anim_geom(w); self.maximize_in(w, wa); return;
+        }
         if !(c.maximized || c.snapped.is_some()) { return; }
+        if c.maximized { window_sound(crate::sounds::Event::Restore); }
         self.anim_geom(w);
         let c = self.clients.get_mut(&w).unwrap();
         c.maximized = false;
@@ -1095,6 +1133,7 @@ impl Wm {
     pub fn minimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if c.minimized { return; }
+        window_sound(crate::sounds::Event::Minimize);
         c.minimized = true;
         let animate = !c.wm_hidden && self.window_anims();
         if animate {
@@ -1117,6 +1156,7 @@ impl Wm {
     pub fn unminimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if !c.minimized { return; }
+        window_sound(crate::sounds::Event::RestoreUp);
         c.minimized = false;
         if self.window_anims() {
             // picom grows it out of its taskbar button (the button may have moved meanwhile)
@@ -1254,7 +1294,11 @@ impl Wm {
             Kind::Dialog | Kind::Utility if !c.resizable => vec![(Btn::Close, st(Btn::Close))],
             Kind::Utility => vec![(Btn::Close, st(Btn::Close))],
             _ => {
-                let mut v = vec![(Btn::Min, st(Btn::Min)), (Btn::Max, if c.resizable { st(Btn::Max) } else { BState::Disabled }), (Btn::Close, st(Btn::Close))];
+                // Win7: no minimize and no maximize box → Close alone; one of them → both, the
+                // missing one greyed
+                let (can_min, can_max) = (c.mwm.0, c.mwm.1 && c.resizable);
+                if !c.mwm.0 && !c.mwm.1 { return vec![(Btn::Close, st(Btn::Close))]; }
+                let mut v = vec![(Btn::Min, if can_min { st(Btn::Min) } else { BState::Disabled }), (Btn::Max, if can_max { st(Btn::Max) } else { BState::Disabled }), (Btn::Close, st(Btn::Close))];
                 if c.kind == Kind::Dialog && c.transient_for != 0 { v.remove(0); v.remove(0); }
                 v
             }
@@ -1615,6 +1659,11 @@ impl Wm {
             if urgent && self.active != e.window { self.clients.get_mut(&e.window).unwrap().urgent = true; self.update_net_state(e.window); }
         } else if e.atom == a._NET_WM_STRUT_PARTIAL || e.atom == a._NET_WM_STRUT {
             self.update_workarea();
+        } else if e.atom == a._MOTIF_WM_HINTS {
+            let m = self.mwm_functions(e.window);
+            self.clients.get_mut(&e.window).unwrap().mwm = m;
+            self.layout_zones(e.window);
+            self.redraw(e.window);
         } else if e.atom == a._GTK_FRAME_EXTENTS {
             let csd = self.read_csd(e.window);
             let c = self.clients.get_mut(&e.window).unwrap();
@@ -1770,7 +1819,7 @@ impl Wm {
                 let (lw, lt, lx, ly) = self.last_click;
                 if lw == w && now.duration_since(lt).as_millis() < 450 && (lx - x).abs() < 5 && (ly - y).abs() < 5 {
                     let m = c.maximized || c.snapped.is_some();
-                    if c.resizable { self.set_maximized(w, !m); }
+                    if c.resizable && c.mwm.1 { self.set_maximized(w, !m); }
                     self.last_click = (0, now, 0, 0);
                     return Ok(());
                 }
@@ -1918,7 +1967,7 @@ impl Wm {
                 if inside {
                     match btn {
                         Btn::Close => self.close(w),
-                        Btn::Min => self.minimize(w),
+                        Btn::Min => if self.clients[&w].mwm.0 { self.minimize(w) },
                         Btn::Max => { let m = self.clients[&w].maximized || self.clients[&w].snapped.is_some(); self.set_maximized(w, !m); }
                         Btn::Help => {}
                     }
