@@ -76,7 +76,7 @@ pub struct Client {
     pub hover: Option<Btn>,
     pub pressed: Option<Btn>,
     pub ignore_unmaps: u32,
-    pub snapped: Option<i8>, // -1 left, 1 right
+    pub snapped: Option<i8>, // -1 left, 1 right, 2 vertically maximised (keeps x and width)
     pub mapped_once: bool,
     /// we have unmapped its top-level (minimized / other desktop / show desktop)
     pub wm_hidden: bool,
@@ -97,6 +97,46 @@ enum Drag {
     Move { cx: i32, cy: i32, ox: i32, oy: i32, from_max: bool },
     Resize { edges: u8, start: Rect, px: i32, py: i32 },
     Button { btn: Btn },
+}
+
+/// Aero Shake: a title-bar drag that reverses direction (by at least `SHAKE_MIN` px) `SHAKE_FLIPS`
+/// times within `SHAKE_MS` minimises every other window; shaking again brings them back.
+const SHAKE_MIN: i32 = 18;
+const SHAKE_FLIPS: usize = 4;
+const SHAKE_MS: u128 = 1000;
+
+#[derive(Default)]
+struct Shake {
+    w: u32,
+    t: Option<Instant>,
+    dir: [i32; 2],
+    extreme: [i32; 2],
+    flips: Vec<Instant>,
+}
+
+impl Shake {
+    /// Feed a pointer position of a move drag of `w`; true when the window was shaken.
+    fn step(&mut self, w: u32, x: i32, y: i32) -> bool {
+        let now = Instant::now();
+        let stale = self.t.map(|t| now.duration_since(t).as_millis() > 400).unwrap_or(true);
+        if self.w != w || stale { *self = Shake { w, t: Some(now), dir: [0, 0], extreme: [x, y], flips: vec![] }; return false; }
+        self.t = Some(now);
+        for (k, p) in [x, y].into_iter().enumerate() {
+            let d = p - self.extreme[k];
+            if self.dir[k] == 0 {
+                if d.abs() >= SHAKE_MIN { self.dir[k] = d.signum(); self.extreme[k] = p; }
+            } else if d.signum() == self.dir[k] {
+                self.extreme[k] = p; // still going the same way
+            } else if d.abs() >= SHAKE_MIN {
+                self.dir[k] = d.signum();
+                self.extreme[k] = p;
+                self.flips.push(now);
+            }
+        }
+        self.flips.retain(|t| now.duration_since(*t).as_millis() < SHAKE_MS);
+        if self.flips.len() >= SHAKE_FLIPS { self.flips.clear(); self.dir = [0, 0]; self.extreme = [x, y]; return true; }
+        false
+    }
 }
 
 pub struct Wm {
@@ -133,6 +173,10 @@ pub struct Wm {
     pub glass: glass::Glass,
     /// `_AERODE_COLORIZATION` changed; applied once the event queue is empty
     glass_dirty: bool,
+    /// Aero Shake detector for the window being dragged
+    shake: Shake,
+    /// windows the last Aero Shake / Win+Home minimised (shaking again restores them)
+    shaken: Vec<u32>,
 }
 
 fn frame_events() -> EventMask {
@@ -177,7 +221,7 @@ impl Wm {
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
-            glass, glass_dirty: false,
+            glass, glass_dirty: false, shake: Shake::default(), shaken: vec![],
         };
         {
             let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
@@ -242,6 +286,12 @@ impl Wm {
                 }
             }
         }
+        // mirrored outputs report the same rectangle twice; a monitor split into virtual ones
+        // (xrandr --setmonitor, ultrawides) keeps its whole-output monitor next to the parts
+        let mut uniq: Vec<Rect> = vec![];
+        for m in mons { if !uniq.contains(&m) { uniq.push(m); } }
+        let inside = |a: &Rect, b: &Rect| b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+        let mut mons: Vec<Rect> = uniq.iter().copied().filter(|a| uniq.iter().filter(|b| *b != a && inside(a, b)).count() < 2).collect();
         if mons.is_empty() {
             let (w, h) = self.screen_size();
             mons.push(Rect { x: 0, y: 0, w, h });
@@ -759,14 +809,22 @@ impl Wm {
 
     /// Aero Snap: -1 left half, 1 right half of the given work area.
     fn snap_in(&mut self, w: u32, side: i8, wa: Rect) {
-        let Some(c) = self.clients.get_mut(&w) else { return };
+        let Some(c) = self.clients.get(&w) else { return };
+        // side 2 (vertical maximise) keeps the frame's x and width; a maximised window has none of
+        // its own, so it uses the size it would restore to
+        let fr = if c.maximized { c.restore.map(|r| Rect { x: r.x - BORDER, w: r.w + 2 * BORDER, ..r }).unwrap_or_else(|| self.frame_rect(c)) } else { self.frame_rect(c) };
+        let c = self.clients.get_mut(&w).unwrap();
         if !c.resizable || c.fullscreen { return; }
         if !c.maximized && c.snapped.is_none() { c.restore = Some(c.geom); }
         c.maximized = false;
         c.snapped = Some(side);
         let half = wa.w / 2;
-        let x = if side < 0 { wa.x } else { wa.x + wa.w - half };
-        let r = { let c = &self.clients[&w]; self.fit_rect(c, Rect { x, y: wa.y, w: half, h: wa.h }, false) };
+        let outer = match side {
+            2 => Rect { x: fr.x, y: wa.y, w: fr.w, h: wa.h },
+            s if s < 0 => Rect { x: wa.x, y: wa.y, w: half, h: wa.h },
+            _ => Rect { x: wa.x + wa.w - half, y: wa.y, w: half, h: wa.h },
+        };
+        let r = { let c = &self.clients[&w]; self.fit_rect(c, outer, false) };
         self.configure(w, r);
         self.update_net_state(w);
         self.redraw(w);
@@ -1404,6 +1462,15 @@ impl Wm {
                 self.pin_drag_cursor(e.time);
             }
             (1, Hit::Edge(edges)) => {
+                // double-click on the top or bottom border: maximise vertically / restore (Win7)
+                let now = Instant::now();
+                let (lw, lt, lx, ly) = self.last_click;
+                if (edges == 4 || edges == 8) && lw == w && now.duration_since(lt).as_millis() < 450 && (lx - x).abs() < 5 && (ly - y).abs() < 5 {
+                    self.last_click = (0, now, 0, 0);
+                    if c.snapped == Some(2) { self.set_maximized(w, false); } else if c.resizable && is_app(c) { self.snap(w, 2); }
+                    return Ok(());
+                }
+                self.last_click = (w, now, x, y);
                 self.drag = Some((w, Drag::Resize { edges, start: c.geom, px: e.root_x as i32, py: e.root_y as i32 }));
                 self.pin_drag_cursor(e.time);
             }
@@ -1501,6 +1568,18 @@ impl Wm {
                     }
                 }
             }
+            Drag::Resize { start, .. } => {
+                // the top/bottom border dragged to the screen edge: vertical maximise; restoring
+                // returns to the size from before the drag
+                if let Some((win, 2)) = self.snap_preview {
+                    self.snap_preview = None;
+                    self.snap_wa = None;
+                    let _ = self.conn.destroy_window(win);
+                    if let Some(c) = self.clients.get_mut(&w) { c.snapped = None; c.maximized = false; }
+                    self.snap(w, 2);
+                    if let Some(c) = self.clients.get_mut(&w) { if c.snapped == Some(2) { c.restore = Some(start); } }
+                }
+            }
             _ => {}
         }
     }
@@ -1541,6 +1620,7 @@ impl Wm {
                 let floor = if c.frame.is_some() { min_y + TOP / 2 } else { min_y - c.csd[2] };
                 let g = Rect { x: ox + rx - cx, y: (oy + ry - cy).max(floor), ..c.geom };
                 self.configure(w, g);
+                if self.kbd_drag.is_none() && self.shake.step(w, rx, ry) { self.aero_shake(w); }
                 // Aero Snap preview when touching a screen edge
                 let m = self.monitors.get(self.monitors.iter().position(|m| m.contains(rx, ry)).unwrap_or(0)).copied().unwrap_or_default();
                 let side = if self.kbd_drag.is_some() { None } else if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
@@ -1561,6 +1641,13 @@ impl Wm {
                 if g.h < min.1.max(30) { if edges & 4 != 0 { g.y = start.y + start.h - min.1.max(30); } g.h = min.1.max(30); }
                 if let Some(c) = self.clients.get_mut(&w) { c.snapped = None; c.maximized = false; }
                 self.configure(w, g);
+                // top or bottom border at the screen edge: preview of the vertical maximise
+                let m = self.monitors.iter().copied().find(|m| m.contains(rx, ry)).unwrap_or_default();
+                let vert = self.kbd_drag.is_none() && ((edges == 4 && ry <= m.y + 1) || (edges == 8 && ry >= m.y + m.h - 2));
+                if vert != (self.snap_preview.map(|s| s.1) == Some(2)) {
+                    self.hide_snap_preview();
+                    if vert && self.clients.get(&w).map(|c| c.resizable && is_app(c)).unwrap_or(false) { self.show_snap_preview(w, 2); }
+                }
             }
             Some((_, Drag::Button { .. })) => {}
             None => {
@@ -1575,11 +1662,73 @@ impl Wm {
         }
     }
 
+    /// Aero Shake (and Win+Home): minimise every other window; doing it again restores the
+    /// windows the last shake minimised that are still minimised.
+    fn aero_shake(&mut self, keep: u32) {
+        let prev = std::mem::take(&mut self.shaken);
+        let back: Vec<u32> = prev.into_iter().filter(|x| *x != keep && self.clients.get(x).map(|c| c.minimized).unwrap_or(false)).collect();
+        if !back.is_empty() {
+            // bring them back bottom-most first so the stacking order is kept
+            let mut back = back;
+            back.sort_by_key(|x| std::cmp::Reverse(self.stack.iter().position(|s| s == x).unwrap_or(0)));
+            for x in back { self.unminimize(x); }
+            self.focus(keep);
+            return;
+        }
+        let ids: Vec<u32> = self.clients.values()
+            .filter(|c| c.win != keep && is_app(c) && !c.minimized && !c.wm_hidden && !c.skip_taskbar && c.transient_for != keep)
+            .map(|c| c.win).collect();
+        for x in &ids { self.minimize(*x); }
+        self.shaken = ids;
+        self.focus(keep);
+    }
+
+    /// Win+Shift+Left/Right: move a window to the neighbouring monitor (wrapping around), keeping
+    /// its maximised/snapped state and its relative position.
+    fn move_to_monitor(&mut self, w: u32, dir: i32) {
+        if self.monitors.len() < 2 { return; }
+        let Some(c) = self.clients.get(&w) else { return };
+        if !is_app(c) { return; }
+        let cur = self.monitor_of(&self.frame_rect(c));
+        let mut order: Vec<usize> = (0..self.monitors.len()).collect();
+        order.sort_by_key(|&i| (self.monitors[i].x, self.monitors[i].y));
+        let pos = order.iter().position(|&i| i == cur).unwrap_or(0) as i32;
+        let to = order[(pos + dir).rem_euclid(order.len() as i32) as usize];
+        let (a, b) = (self.workarea_for(cur), self.workarea_for(to));
+        let shift = |r: Rect| -> Rect {
+            let (w, h) = (r.w.min(b.w), r.h.min(b.h));
+            let fx = (r.x - a.x) as f64 / (a.w - r.w).max(1) as f64;
+            let fy = (r.y - a.y) as f64 / (a.h - r.h).max(1) as f64;
+            Rect { x: b.x + ((b.w - w).max(0) as f64 * fx.clamp(0.0, 1.0)) as i32, y: b.y + ((b.h - h).max(0) as f64 * fy.clamp(0.0, 1.0)) as i32, w, h }
+        };
+        let (maxed, snapped, full, geom) = (c.maximized, c.snapped, c.fullscreen, c.geom);
+        if let Some(r) = c.restore { self.clients.get_mut(&w).unwrap().restore = Some(shift(r)); }
+        if full {
+            let m = self.monitors[to];
+            self.configure(w, m);
+        } else if maxed {
+            self.maximize_in(w, b);
+        } else if let Some(side) = snapped {
+            if side == 2 { self.configure(w, shift(geom)); }
+            self.snap_in(w, side, b);
+        } else {
+            self.configure(w, shift(geom));
+        }
+        self.update_net_state(w);
+        self.layout_zones(w);
+        self.redraw(w);
+    }
+
     fn show_snap_preview(&mut self, w: u32, side: i8) {
         let Some(c) = self.clients.get(&w) else { return };
         let wa = self.workarea_for(self.monitor_of(&Rect { x: self.pointer().0, y: self.pointer().1, w: 1, h: 1 }));
         let _ = c;
-        let r = match side { -1 => Rect { w: wa.w / 2, ..wa }, 1 => Rect { x: wa.x + wa.w - wa.w / 2, w: wa.w / 2, ..wa }, _ => wa };
+        let r = match side {
+            -1 => Rect { w: wa.w / 2, ..wa },
+            1 => Rect { x: wa.x + wa.w - wa.w / 2, w: wa.w / 2, ..wa },
+            2 => { let fr = self.frame_rect(c); Rect { x: fr.x, w: fr.w, ..wa } }
+            _ => wa,
+        };
         self.snap_wa = Some(wa);
         let win = self.conn.generate_id().unwrap();
         let composited = self.composited();
@@ -1656,10 +1805,14 @@ impl Wm {
                 }
             }
             ShowDesktop => { let s = !self.showing_desktop; self.set_showing_desktop(s); }
-            MinimizeOthers => {
-                let ids: Vec<u32> = self.clients.values().filter(|c| c.win != act && is_app(c) && !c.minimized && !c.wm_hidden).map(|c| c.win).collect();
-                for w in ids { self.minimize(w); }
+            // Win+Home works like Aero Shake: minimise the others, press again to bring them back
+            MinimizeOthers => { if act != 0 { self.aero_shake(act); } }
+            MaximizeVert => {
+                if let Some(c) = self.clients.get(&act) {
+                    if is_app(c) && c.resizable && c.snapped != Some(2) { self.snap(act, 2); }
+                }
             }
+            MonitorLeft | MonitorRight => { if act != 0 { self.move_to_monitor(act, if matches!(action, MonitorLeft) { -1 } else { 1 }); } }
             SwitchNext | SwitchPrev => {
                 if self.switcher.is_none() {
                     let wins = self.switch_order();

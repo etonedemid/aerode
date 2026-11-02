@@ -8,6 +8,8 @@ use x11rb::rust_connection::RustConnection;
 pub enum Action {
     Spawn(String),
     Close, Maximize, RestoreOrMinimize, SnapLeft, SnapRight, ShowDesktop, MinimizeOthers,
+    /// Win+Shift+Up: stretch to the top and bottom of the screen; Win+Shift+Left/Right: next monitor
+    MaximizeVert, MonitorLeft, MonitorRight,
     SwitchNext, SwitchPrev, SwitchCommit, SwitchCancel,
     DesktopLeft, DesktopRight, DesktopAdd, DesktopRemove,
     SysMenu,
@@ -45,6 +47,8 @@ fn bindings() -> Vec<(u16, u32, Action)> {
         (ALT, XK_F4, Close), (ALT, XK_SPACE, SysMenu),
         (SUPER, XK_UP, Maximize), (SUPER, XK_DOWN, RestoreOrMinimize),
         (SUPER, XK_LEFT, SnapLeft), (SUPER, XK_RIGHT, SnapRight),
+        (SUPER | SHIFT, XK_UP, MaximizeVert), (SUPER | SHIFT, XK_DOWN, RestoreOrMinimize),
+        (SUPER | SHIFT, XK_LEFT, MonitorLeft), (SUPER | SHIFT, XK_RIGHT, MonitorRight),
         (SUPER, 'd' as u32, ShowDesktop), (SUPER, 'm' as u32, ShowDesktop), (SUPER, XK_HOME, MinimizeOthers),
         (SUPER | CTRL, XK_LEFT, DesktopLeft), (SUPER | CTRL, XK_RIGHT, DesktopRight),
         (SUPER | CTRL, 'd' as u32, DesktopAdd), (SUPER | CTRL, XK_F4, DesktopRemove),
