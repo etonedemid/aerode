@@ -121,6 +121,8 @@ pub struct Wm {
     pub switcher: Option<switcher::Switcher>,
     pub snap_preview: Option<(u32, i8)>,
     snap_wa: Option<Rect>,
+    /// keyboard move/size in progress: (window, geometry to restore on Esc)
+    kbd_drag: Option<(u32, Rect)>,
     root_size: (i32, i32),
     last_move_redraw: Instant,
     composited_cache: std::cell::Cell<(Instant, bool)>,
@@ -167,7 +169,7 @@ impl Wm {
             active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
             showing_desktop: false, current_desktop: 0, num_desktops: 1, drag: None,
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
-            snap_wa: None, root_size: (0, 0),
+            snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
             wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint[3].clamp(0.2, 0.8)],
         };
@@ -458,8 +460,8 @@ impl Wm {
         }
         self.set_wm_state(w, if start_minimized { 3 } else { 1 });
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[if kind == Kind::Dock || kind == Kind::Desktop { 0xffffffff } else { c.desktop }]);
-        let allowed = [a._NET_WM_ACTION_MOVE, a._NET_WM_ACTION_RESIZE, a._NET_WM_ACTION_MINIMIZE, a._NET_WM_ACTION_MAXIMIZE_HORZ,
-            a._NET_WM_ACTION_MAXIMIZE_VERT, a._NET_WM_ACTION_FULLSCREEN, a._NET_WM_ACTION_CLOSE, a._NET_WM_ACTION_CHANGE_DESKTOP];
+        let mut allowed = vec![a._NET_WM_ACTION_MOVE, a._NET_WM_ACTION_MINIMIZE, a._NET_WM_ACTION_FULLSCREEN, a._NET_WM_ACTION_CLOSE, a._NET_WM_ACTION_CHANGE_DESKTOP];
+        if c.resizable { allowed.extend([a._NET_WM_ACTION_RESIZE, a._NET_WM_ACTION_MAXIMIZE_HORZ, a._NET_WM_ACTION_MAXIMIZE_VERT]); }
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_ALLOWED_ACTIONS, AtomEnum::ATOM, &allowed);
         let fs = c.fullscreen;
         c.fullscreen = false;
@@ -1242,7 +1244,7 @@ impl Wm {
             let (px, py) = (d[0] as i32, d[1] as i32);
             let dir = d[2];
             if dir == 11 { self.end_drag(); return; }
-            if dir == 9 || dir == 10 { return; } // keyboard move/size: not supported
+            if dir == 9 || dir == 10 { self.keyboard_moveresize(w, dir == 9); return; }
             // the button may already be up (the app sent this late): then do nothing
             let held = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| u16::from(r.mask) & (u16::from(KeyButMask::BUTTON1) | u16::from(KeyButMask::BUTTON2) | u16::from(KeyButMask::BUTTON3)) != 0).unwrap_or(false);
             if !held { return; }
@@ -1259,6 +1261,7 @@ impl Wm {
     }
 
     fn button_press(&mut self, e: ButtonPressEvent) -> Result<()> {
+        if let Some((w, _)) = self.kbd_drag { self.end_drag(); self.redraw(w); return Ok(()); }
         // click on a client window (passive grab): focus, then replay
         if let Some(c) = self.clients.get(&e.event) {
             let w = c.win;
@@ -1320,6 +1323,44 @@ impl Wm {
         self.drag = None;
         self.hide_snap_preview();
         let _ = self.conn.ungrab_pointer(CURRENT_TIME);
+        if self.kbd_drag.take().is_some() { let _ = self.conn.ungrab_keyboard(CURRENT_TIME); }
+    }
+
+    /// Win7 "Move"/"Size" from the system menu (Alt+Space, M / S): the pointer jumps to the title bar or the
+    /// bottom-right corner, the mouse or the arrow keys move/resize, a click or Enter commits, Esc cancels.
+    fn keyboard_moveresize(&mut self, w: u32, size: bool) {
+        let Some(c) = self.clients.get(&w) else { return };
+        if c.maximized || c.fullscreen || (size && !c.resizable) { return; }
+        self.end_drag();
+        let g = self.clients[&w].geom;
+        let c = &self.clients[&w];
+        let (px, py) = if size { (g.x + g.w - 1, g.y + g.h - 1) }
+            else if c.frame.is_some() { (g.x + g.w / 2, g.y + TOP / 2) } else { (g.x + g.w / 2, g.y + c.csd[2] + 12) };
+        let _ = self.conn.warp_pointer(x11rb::NONE, self.root, 0, 0, 0, 0, px as i16, py as i16);
+        let cursor = keys::cursor(&self.conn, self.screen_num, if size { "bottom_right_corner" } else { "fleur" }).unwrap_or(x11rb::NONE);
+        let ok = self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, cursor, CURRENT_TIME).ok().and_then(|c| c.reply().ok()).map(|r| r.status == GrabStatus::SUCCESS).unwrap_or(false);
+        if !ok { return; }
+        let _ = self.conn.grab_keyboard(false, self.root, CURRENT_TIME, GrabMode::ASYNC, GrabMode::ASYNC);
+        self.drag = Some((w, if size { Drag::Resize { edges: 10, start: g, px, py } } else { Drag::Move { cx: px, cy: py, ox: g.x, oy: g.y, from_max: false } }));
+        self.kbd_drag = Some((w, g));
+        self.focus(w);
+    }
+
+    /// Keys while a keyboard move/size runs. Returns true when consumed.
+    fn kbd_drag_key(&mut self, code: u8, press: bool) -> bool {
+        let Some((w, orig)) = self.kbd_drag else { return false };
+        if !press { return true; }
+        match self.keys.sym(code) {
+            0xff0d | 0xff8d => { self.end_drag(); self.redraw(w); }               // Return / KP_Enter: done
+            0xff1b => { self.end_drag(); self.configure(w, orig); self.redraw(w); } // Escape: put it back
+            s @ (0xff51..=0xff54) => {
+                let (dx, dy) = match s { 0xff51 => (-10, 0), 0xff52 => (0, -10), 0xff53 => (10, 0), _ => (0, 10) };
+                let _ = self.conn.warp_pointer(x11rb::NONE, x11rb::NONE, 0, 0, 0, 0, dx, dy);
+            }
+            _ => {}
+        }
+        true
     }
 
     fn button_release(&mut self, e: ButtonReleaseEvent) {
@@ -1365,7 +1406,7 @@ impl Wm {
     fn motion(&mut self, e: MotionNotifyEvent) {
         let (rx, ry) = (e.root_x as i32, e.root_y as i32);
         let buttons = u16::from(e.state) & (u16::from(KeyButMask::BUTTON1) | u16::from(KeyButMask::BUTTON2) | u16::from(KeyButMask::BUTTON3));
-        if self.drag.is_some() && buttons == 0 {
+        if self.drag.is_some() && buttons == 0 && self.kbd_drag.is_none() {
             // we missed the release (e.g. a _NET_WM_MOVERESIZE that started after the button went up)
             let w = self.drag.map(|d| d.0).unwrap_or(0);
             let snap = self.snap_preview.map(|s| s.1);
@@ -1399,7 +1440,7 @@ impl Wm {
                 self.configure(w, g);
                 // Aero Snap preview when touching a screen edge
                 let m = self.monitors.get(self.monitors.iter().position(|m| m.contains(rx, ry)).unwrap_or(0)).copied().unwrap_or_default();
-                let side = if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
+                let side = if self.kbd_drag.is_some() { None } else if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
                 if side != self.snap_preview.map(|s| s.1) {
                     self.hide_snap_preview();
                     if let Some(s) = side { if self.clients[&w].resizable && is_app(&self.clients[&w]) { self.show_snap_preview(w, s); } }
@@ -1488,6 +1529,7 @@ impl Wm {
 
     // ---------------------------------------------------------- keys
     fn key(&mut self, e: KeyPressEvent, press: bool) {
+        if self.kbd_drag_key(e.detail, press) { return; }
         let switching = self.switcher.is_some();
         let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, e.time, switching, &self.conn) else { return };
         let act = self.active;
@@ -1529,6 +1571,12 @@ impl Wm {
             }
             SwitchCommit => self.switch_commit(e.time),
             SwitchCancel => { self.switcher_cancel(); let _ = self.conn.ungrab_keyboard(e.time); }
+            SysMenu => {
+                if let Some(c) = self.clients.get(&act) {
+                    let (x, y) = (c.geom.x + if c.frame.is_some() { BORDER } else { c.csd[0] }, c.geom.y + if c.frame.is_some() { TOP } else { c.csd[2] + 30 });
+                    crate::util::spawn(&["aerode", "sysmenu", &act.to_string(), &x.to_string(), &y.to_string()]);
+                }
+            }
             DesktopLeft => { let d = self.current_desktop.saturating_sub(1); self.set_desktop(d); }
             DesktopRight => { let d = (self.current_desktop + 1).min(self.num_desktops - 1); self.set_desktop(d); }
             DesktopAdd => { let n = self.num_desktops + 1; self.set_num_desktops(n); self.set_desktop(n - 1); }

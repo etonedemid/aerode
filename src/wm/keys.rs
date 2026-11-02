@@ -10,6 +10,7 @@ pub enum Action {
     Close, Maximize, RestoreOrMinimize, SnapLeft, SnapRight, ShowDesktop, MinimizeOthers,
     SwitchNext, SwitchPrev, SwitchCommit, SwitchCancel,
     DesktopLeft, DesktopRight, DesktopAdd, DesktopRemove,
+    SysMenu,
 }
 
 const SHIFT: u16 = 1;
@@ -22,6 +23,7 @@ const IGNORED: [u16; 4] = [0, 2, 16, 18]; // CapsLock / NumLock combos
 const XK_TAB: u32 = 0xff09;
 const XK_ESCAPE: u32 = 0xff1b;
 const XK_F4: u32 = 0xffc1;
+const XK_SPACE: u32 = 0x20;
 const XK_LEFT: u32 = 0xff51;
 const XK_UP: u32 = 0xff52;
 const XK_RIGHT: u32 = 0xff53;
@@ -40,7 +42,7 @@ fn bindings() -> Vec<(u16, u32, Action)> {
     let mut v = vec![
         (ALT, XK_TAB, SwitchNext), (ALT | SHIFT, XK_TAB, SwitchPrev),
         (SUPER, XK_TAB, SwitchNext), (SUPER | SHIFT, XK_TAB, SwitchPrev),
-        (ALT, XK_F4, Close),
+        (ALT, XK_F4, Close), (ALT, XK_SPACE, SysMenu),
         (SUPER, XK_UP, Maximize), (SUPER, XK_DOWN, RestoreOrMinimize),
         (SUPER, XK_LEFT, SnapLeft), (SUPER, XK_RIGHT, SnapRight),
         (SUPER, 'd' as u32, ShowDesktop), (SUPER, 'm' as u32, ShowDesktop), (SUPER, XK_HOME, MinimizeOthers),
@@ -106,6 +108,8 @@ impl Keys {
         self.alt_codes = code_of.get(&XK_ALT_L).copied().into_iter().collect();
         Ok(())
     }
+
+    pub fn sym(&self, code: u8) -> u32 { self.sym_of.get(&code).copied().unwrap_or(0) }
 
     pub fn lookup(&mut self, code: u8, state: u16, press: bool, time: u32, switching: bool, conn: &RustConnection) -> Option<Action> {
         let mods = state & (SHIFT | CTRL | ALT | SUPER);

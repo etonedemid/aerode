@@ -18,6 +18,7 @@ x11rb::atom_manager! {
         _NET_WM_STRUT_PARTIAL, _NET_WM_PID, _NET_CURRENT_DESKTOP, _NET_WM_DESKTOP,
         _NET_NUMBER_OF_DESKTOPS, _NET_DESKTOP_NAMES, _NET_MOVERESIZE_WINDOW, _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_ABOVE, WM_STATE,
+        _NET_WM_ALLOWED_ACTIONS, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_MOVERESIZE,
     }
 }
 
@@ -175,6 +176,21 @@ impl Wm {
             ev,
         );
         let _ = self.conn.flush();
+    }
+
+    /// (maximized, minimized, resizable, can minimize) for the system menu.
+    pub fn window_state(&self, w: u32) -> (bool, bool, bool, bool) {
+        let a = &self.atoms;
+        let st = self.prop32(w, a._NET_WM_STATE, AtomEnum::ATOM);
+        let allowed = self.prop32(w, a._NET_WM_ALLOWED_ACTIONS, AtomEnum::ATOM);
+        let can = |x: u32| allowed.is_empty() || allowed.contains(&x);
+        (st.contains(&a._NET_WM_STATE_MAXIMIZED_VERT) && st.contains(&a._NET_WM_STATE_MAXIMIZED_HORZ),
+         st.contains(&a._NET_WM_STATE_HIDDEN), can(a._NET_WM_ACTION_RESIZE), can(a._NET_WM_ACTION_MINIMIZE))
+    }
+
+    /// Keyboard move (`size` = false) or size, as from the system menu.
+    pub fn keyboard_moveresize(&self, w: u32, size: bool) {
+        self.client_msg(w, self.atoms._NET_WM_MOVERESIZE, [0, 0, if size { 9 } else { 10 }, 0, 2]);
     }
 
     pub fn activate(&self, w: u32) {
