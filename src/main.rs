@@ -138,6 +138,7 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
 }
 
 fn main() -> glib::ExitCode {
+    aerode::util::log_panics("aerode");
     let args: Vec<String> = std::env::args().collect();
     // helper commands that must not go through the single-instance shell
     match args.get(1).map(|s| s.as_str()) {

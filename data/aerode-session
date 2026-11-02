@@ -57,7 +57,19 @@ command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config 
 command -v udiskie >/dev/null && udiskie --no-tray &
 [ -z "$KWALLET" ] && command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
 
-aerode shell &
+# the shell (desktop, taskbar, Start): started again if it crashes (a panic in a GTK callback
+# aborts); 'aerode quit' (0) and 'aerode restart' (SIGTERM) end the loop
+(
+  crashes=""
+  while :; do
+    aerode shell; rc=$?
+    case $rc in 101|134|139) ;; *) exit 0 ;; esac
+    now=$(date +%s); crashes="$(for t in $crashes; do [ $((now - t)) -lt 60 ] && echo "$t"; done) $now"
+    [ "$(echo $crashes | wc -w)" -ge 5 ] && exit 0
+    echo "aerode-session: aerode shell crashed ($rc), restarting" >&2
+    sleep 1
+  done
+) &
 # the window manager is the session leader: logging off ends it (SIGTERM). Should it crash
 # (panic 101, abort 134, segfault 139), start it again: the X server hands the windows back and
 # the new instance adopts them. Give up after 5 crashes within a minute.

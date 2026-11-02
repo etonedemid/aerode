@@ -368,3 +368,23 @@ pub fn human_size(n: u64) -> String {
     }
     if i == 0 { format!("{n} bytes") } else if f < 10.0 { format!("{f:.2} {}", u[i]) } else { format!("{f:.0} {}", u[i]) }
 }
+
+/// Panics go to stderr and, with a backtrace, to ~/.cache/aerode/<name>.log so they can be
+/// reported (the session restarts a crashed shell or window manager).
+pub fn log_panics(name: &'static str) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        let dir = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+            .map(|d| d.join("aerode"));
+        if let Some(dir) = dir {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(format!("{name}.log"))) {
+                use std::io::Write;
+                let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let _ = writeln!(f, "--- {when} {name} {}: {info}\n{}", env!("CARGO_PKG_VERSION"), std::backtrace::Backtrace::force_capture());
+            }
+        }
+    }));
+}
