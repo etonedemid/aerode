@@ -555,9 +555,42 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Keep a copy of the files the icon theme is built from (in your home, like all extracted art), so a
+/// later aerode update can rebuild the theme with new mappings without asking for the ISO again.
+fn cache_sysfiles(root: &Path, cache: &Path) {
+    let mut files: Vec<&str> = ICONS.iter().map(|i| i.1).collect();
+    files.push("Windows/System32/batmeter.dll");
+    files.sort();
+    files.dedup();
+    for f in files {
+        let Some(src) = find_ci(root, f) else { continue };
+        let dst = cache.join(f);
+        if let Some(p) = dst.parent() { let _ = std::fs::create_dir_all(p); }
+        let _ = std::fs::copy(&src, &dst);
+    }
+}
+
+/// `aerode-extract --icons`: rebuild only the icon theme, from the cached system files or the
+/// remembered ISO.
+fn rebuild_icons() -> Result<()> {
+    let data = gtk::glib::user_data_dir().join("aerode");
+    let cache = data.join("sysfiles");
+    if find_ci(&cache, "Windows/System32/imageres.dll").is_some() {
+        build_icons(&cache, &gtk::glib::user_data_dir().join("icons/Aerode"))?;
+        return Ok(());
+    }
+    let iso = std::fs::read_to_string(data.join("source")).unwrap_or_default();
+    if !iso.trim().is_empty() && Path::new(iso.trim()).exists() {
+        println!("· no cached system files yet – re-reading {}", iso.trim());
+        return run(&[iso.trim().to_string()]);
+    }
+    bail!("no cached Windows 7 files – run: aerode-extract /path/to/windows7.iso")
+}
+
 pub fn run(args: &[String]) -> Result<()> {
+    if args.iter().any(|a| a == "--icons") && !args.iter().any(|a| !a.starts_with("--")) { return rebuild_icons(); }
     let Some(src) = args.iter().find(|a| !a.starts_with("--")) else {
-        bail!("usage: aerode-extract /path/to/windows7.iso [--sheet]\n       (also accepts install.wim / install.esd or an extracted/mounted Windows folder)");
+        bail!("usage: aerode-extract /path/to/windows7.iso [--sheet]\n       aerode-extract --icons   (rebuild the icon theme from the files kept at the last extraction)\n       (also accepts install.wim / install.esd or an extracted/mounted Windows folder)");
     };
     let src = std::fs::canonicalize(crate::util::shellexpand(src)).context("ISO not found")?;
     // developer aid: aerode-extract <extracted dir> --sheet-only <out dir>
@@ -601,6 +634,8 @@ pub fn run(args: &[String]) -> Result<()> {
             root
         };
         if find_ci(&root, "Windows/System32/imageres.dll").is_none() { bail!("imageres.dll not found – is this a Windows 7 image?"); }
+        cache_sysfiles(&root, &data.join("sysfiles"));
+        let _ = std::fs::write(data.join("source"), src.to_string_lossy().as_bytes());
         build_icons(&root, &share.join("icons/Aerode"))?;
         extract_orb(&root, &data);
         build_cursors(&root, &share.join("icons/Aerode-cursors"))?;
