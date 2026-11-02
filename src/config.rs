@@ -28,6 +28,11 @@ pub struct Config {
     pub kbd_layouts: Vec<String>,
     /// XKB option switching input languages; None = Alt+Shift (Windows default), Some("") = none
     pub kbd_switch: Option<String>,
+    /// notification-area icon behaviour per program: "show" (Show icon and notifications) or
+    /// "hide" (Hide icon and notifications); absent = "notify" (Only show notifications, Win7's default)
+    pub tray_icons: HashMap<String, String>,
+    /// "Always show all icons and notifications on the taskbar"
+    pub tray_show_all: bool,
 }
 
 impl Default for Config {
@@ -48,6 +53,8 @@ impl Default for Config {
             desktop_sort_desc: false,
             kbd_layouts: vec![],
             kbd_switch: None,
+            tray_icons: HashMap::new(),
+            tray_show_all: false,
         }
     }
 }

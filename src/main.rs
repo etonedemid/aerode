@@ -43,6 +43,9 @@ fn build(app: &gtk::Application) {
         screen.connect_size_changed(|_| glass::reload());
     }
     aerode::gadgets::restore();
+    // notification daemon (balloon tips above the notification area); before autostart so
+    // that programs started there find it instead of D-Bus-activating another daemon
+    aerode::notify::start(&tb.tray, tb.wm.clone());
     autostart();
     util::sound(aerode::sounds::Event::Logon);
     aerode::sounds::start_watchers();
@@ -109,6 +112,7 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             theme::write_openbox_theme();
             util::spawn(&["openbox", "--reconfigure"]);
             SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.taskbar.refresh() });
+            aerode::tray::reload();
         }
         "quit" => app.quit(),
         "sysmenu" => {

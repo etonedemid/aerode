@@ -48,7 +48,9 @@ extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/A
 - Verify on real hardware: real glass under picom, polkit agent with real polkitd, DDC/CI brightness,
   fish inside aerode-cmd, multi-monitor/high-refresh behaviour.
 - Not done yet: taskbar/start menu drawn from the real msstyles bitmaps (TaskBand2/StartPanel classes),
-  colour hot-track glow on taskbar buttons, live window thumbnails, notification daemon + SNI tray,
-  window title-bar right-click (WM spawns `aerode sysmenu <win> <x> <y>`, shell side missing),
-  desktop gadgets.
+  colour hot-track glow on taskbar buttons, live window thumbnails, desktop gadgets,
+  the native compositor (exact DWM glass formula + shader researched; see git log).
+- Done since: notification daemon (`src/notify.rs`, Win7 balloons), notification area with SNI +
+  XEmbed icons and the Show hidden icons overflow (`src/tray/`), window system menu, keyboard layouts
+  (`src/kbdlayout.rs`), Control Panel applet registry (`src/bin/aerode-control/`).
 - Paint is intentionally not part of the project.

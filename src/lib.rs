@@ -12,6 +12,7 @@ pub mod glass;
 pub mod kbdlayout;
 pub mod lock;
 pub mod msstyles;
+pub mod notify;
 pub mod pe;
 pub mod sounds;
 pub mod sysmenu;

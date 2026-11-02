@@ -135,8 +135,8 @@ impl Taskbar {
             });
         }
 
-        // tray: flyout buttons + clock + show desktop
-        flyouts::build_tray(&tb);
+        // tray, packed from the right: show desktop (at the very edge), clock, system icons,
+        // notification area, language bar
         let sd = gtk::Button::new();
         sd.style_context().add_class("showdesk");
         sd.set_tooltip_text(Some("Show desktop"));
@@ -145,6 +145,7 @@ impl Taskbar {
             sd.connect_clicked(move |_| wm.set_showing_desktop(!wm.showing_desktop()));
         }
         tray.pack_end(&sd, false, false, 0);
+        flyouts::build_tray(&tb);
 
         win.connect_draw(move |w, cr| {
             let g = util::primary_geometry();
