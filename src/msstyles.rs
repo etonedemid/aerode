@@ -35,9 +35,10 @@ pub const CONTENTMARGINS: u32 = 3602;
 pub const BORDERCOLOR: u32 = 3801;
 pub const FILLCOLOR: u32 = 3802;
 pub const TEXTCOLOR: u32 = 3803;
+pub const HOTTRACKING: u32 = 1627; // TMT_HOTTRACKING system colour
 pub const BGTYPE: u32 = 4001;
 pub const SIZINGTYPE: u32 = 4004;
-pub const IMAGELAYOUT: u32 = 4008;
+pub const IMAGELAYOUT: u32 = 4011; // TMT_IMAGELAYOUT (4008 is TMT_OFFSETTYPE)
 pub const ATLASIMAGE: u32 = 8000;
 pub const ATLASRECT: u32 = 8002;
 
