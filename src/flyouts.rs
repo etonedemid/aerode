@@ -11,6 +11,13 @@ thread_local! {
     static OPEN: RefCell<Option<gtk::Window>> = RefCell::new(None);
     /// when a flyout last closed by itself (focus loss / Esc)
     static CLOSED_AT: std::cell::Cell<Option<std::time::Instant>> = std::cell::Cell::new(None);
+    /// set while an icon is dragged out of / into a flyout (the drag grab takes the focus)
+    static KEEP_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keep the open flyout open when it loses focus (during drag and drop).
+pub fn keep_open(on: bool) {
+    KEEP_OPEN.with(|k| k.set(on));
 }
 
 /// Close the open flyout. Returns true if one was open *or* just closed itself because the
@@ -62,7 +69,10 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
         crate::glass::paint_flyout(cr, w.allocated_width() as f64, w.allocated_height() as f64, x as f64, y as f64, fh);
         glib::Propagation::Proceed
     });
-    w.connect_focus_out_event(|w, _| { closed_by_itself(w); glib::Propagation::Proceed });
+    w.connect_focus_out_event(|w, _| {
+        if !KEEP_OPEN.with(|k| k.get()) { closed_by_itself(w); }
+        glib::Propagation::Proceed
+    });
     w.connect_key_press_event(|w, e| {
         if e.keyval() == gdk::keys::constants::Escape { closed_by_itself(w); }
         glib::Propagation::Proceed
@@ -86,7 +96,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
 
 fn tray_button(tb: &Rc<Taskbar>, icon: &str, tip: &str) -> (gtk::Button, gtk::Image) {
     let b = gtk::Button::new();
-    b.style_context().add_class("tray");
+    crate::tray::themed_tray_button(&b);
     let img = util::image(icon, 16);
     b.add(&img);
     b.set_tooltip_text(Some(tip));
@@ -109,15 +119,17 @@ fn control(page: &str) {
 }
 
 pub fn build_tray(tb: &Rc<Taskbar>) {
+    // packed from the right: clock, then the system icons in Win7's order (power, network, volume)
     clock(tb);
+    volume(tb);
+    network(tb);
     if sys::battery().is_some() {
         battery(tb);
     }
-    brightness(tb);
-    volume(tb);
-    network(tb);
+    // programs' icons and the "Show hidden icons" arrow
     crate::tray::attach(tb);
-    // the docked language bar sits just left of the notification icons
+    brightness();
+    // the docked language bar sits just left of the notification area
     crate::kbdlayout::attach(&tb.tray);
 }
 
@@ -451,22 +463,18 @@ fn battery(tb: &Rc<Taskbar>) {
 }
 
 // ---------------------------------------------------------------- brightness (DDC/CI)
-/// Tray button for external-monitor brightness over DDC/CI (ddcutil).
-/// Detection is slow, so it runs in the background and the button appears when ready.
-fn brightness(tb: &Rc<Taskbar>) {
-    let tray = tb.tray.clone();
-    let tb2 = tb.clone();
+/// External-monitor brightness over DDC/CI (ddcutil) as a notification-area icon; like any new
+/// Win7 icon it starts out in the overflow (Customize... can put it on the taskbar).
+/// Detection is slow, so it runs in the background and the icon appears when ready.
+fn brightness() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || { let _ = tx.send(sys::ddc_displays()); });
     glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
         let displays = match rx.try_recv() { Ok(d) => d, Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue, Err(_) => return glib::ControlFlow::Break };
         if displays.is_empty() { return glib::ControlFlow::Break; }
-        let (b, _img) = tray_button(&tb2, util::first_icon(&["display-brightness", "display-brightness-symbolic", "preferences-desktop-display"]), "Screen brightness");
-        // keep it to the left of the volume/network icons
-        tray.reorder_child(&b, 0);
-        b.show_all();
         let displays = Rc::new(displays);
-        b.connect_clicked(move |b| {
+        let icon = util::first_icon(&["display-brightness", "display-brightness-symbolic", "preferences-desktop-display"]);
+        crate::tray::add_builtin("aerode-brightness", "Screen brightness", icon, "Screen brightness", move |anchor| {
             if close_open() { return; }
             let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
             body.set_size_request(260, -1);
@@ -518,7 +526,7 @@ fn brightness(tb: &Rc<Taskbar>) {
                 body.pack_start(&all, false, false, 0);
             }
             let foot = link("Adjust display settings", || control("display"));
-            popup(b.upcast_ref(), body.upcast_ref(), Some(foot.upcast_ref()));
+            popup(anchor, body.upcast_ref(), Some(foot.upcast_ref()));
         });
         glib::ControlFlow::Break
     });

@@ -31,7 +31,12 @@
 .taskbar button:active { background-image: linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(255,255,255,0.12)); }
 .taskbar .clock { color: white; padding: 0 6px; }
 .taskbar .clock label { color: white; }
-.taskbar button.tray { padding: 0 3px; min-width: 22px; }
+/* notification area: 16px icons on a 24px pitch, like Win7 */
+.taskbar button.tray { padding: 0 3px; min-width: 16px; margin: 0; }
+/* aero.msstyles TrayNotify::Toolbar hover/pressed frames are painted by the shell (tray/mod.rs) */
+.taskbar button.w7tray:hover, .taskbar button.w7tray:active { background-image: none; border-color: transparent; box-shadow: none; }
+/* "Show hidden icons" arrow (TrayNotifyHoriz::Button, painted by the shell) */
+.taskbar button.chevron { padding: 0; margin: 0 1px; min-width: 21px; }
 .taskbar button.showdesk {
   min-width: 13px; margin: 0 0 0 4px; border-radius: 0;
   border-color: transparent transparent transparent rgba(255,255,255,0.35);
@@ -92,10 +97,12 @@ button.sm-power:hover { background-image: linear-gradient(to bottom, rgba(255,25
 .flyout label { color: #1e1e1e; }
 .flyout button.link { background: none; border: none; box-shadow: none; padding: 0; }
 
-/* ---------- notifications (Win7 balloon) ---------- */
-.balloon { background: linear-gradient(to bottom, #ffffff, #e7eef7); border: 1px solid #76797c; border-radius: 5px; }
-.balloon .title { font-weight: bold; color: #000; }
-.balloon label { color: #1e1e1e; }
+/* ---------- notifications: Win7 notification-area balloon (src/notify.rs draws the
+   balloon itself; text colours are aero.msstyles TooltipStyle BALLOON/BALLOONTITLE) ---------- */
+.balloon label { color: #000000; }
+.balloon label.balloon-title { font-size: 12pt; color: #003399; }
+.balloon label link, .balloon label link:visited { color: #0066cc; }
+.balloon label link:hover { color: #3399ff; }
 button.desk-icon { background: none; border: 1px solid transparent; border-radius: 3px; box-shadow: none; padding: 2px; }
 button.desk-icon:hover { background-color: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.40); }
 button.desk-icon.selected { background-color: rgba(85,160,240,0.40); border-color: rgba(150,205,255,0.9); }
@@ -117,3 +124,19 @@ button.link, .flyout-foot button { background: none; background-image: none; bor
 /* docked language bar ("EN") left of the notification area */
 .tray.lang { padding: 0 5px; min-width: 22px; }
 .tray.lang label { color: #ffffff; font-size: 9pt; text-shadow: 0 0 3px rgba(0, 0, 0, 0.6); }
+
+/* overflow flyout behind "Show hidden icons" */
+button.overflow-icon { background: none; background-image: none; border: 1px solid transparent; border-radius: 2px;
+  box-shadow: none; padding: 0; margin: 0; min-width: 0; min-height: 0; }
+button.overflow-icon:hover { background-image: linear-gradient(to bottom, #f5fafe, #e3effb); border-color: #b9d2ee; }
+button.overflow-icon:active { background-image: linear-gradient(to bottom, #e5eef8, #d2e2f3); border-color: #98b6da; }
+
+/* Notification Area Icons (Customize...) */
+.notify-list { background-color: #ffffff; }
+.notify-head { padding: 4px 8px; color: #4c607a; border-bottom: 1px solid #e5e5e5;
+  background-image: linear-gradient(to bottom, #ffffff, #f3f5f8); }
+.notify-row { padding: 6px 8px; }
+.notify-icons .dim { color: #6d6d6d; }
+.notify-icons button.link label { color: #0066cc; }
+.notify-icons button.link:hover label { color: #3399ff; text-decoration: underline; }
+.notify-icons button.link:disabled label { color: #8c8c8c; text-decoration: none; }
