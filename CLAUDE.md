@@ -63,9 +63,16 @@ extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/A
   (xrandr without --rate, motion events not coalesced, console polling).
 - Verify on real hardware: real glass under picom, polkit agent with real polkitd, DDC/CI brightness,
   fish inside aerode-cmd, multi-monitor/high-refresh behaviour.
-- Not done yet: taskbar/start menu drawn from the real msstyles bitmaps (TaskBand2/StartPanel classes),
-  colour hot-track glow on taskbar buttons, Win7 window animations (picom 12 `animations` or a native
-  compositor; DWM glass formula + shader researched, see git log), Start menu default program list.
+- Not done yet (sound follow-ups from the sound audit, APIs exist in `src/sounds.rs`): lock/unlock and
+  log-off sounds off the GTK thread (`sounds::play_sync` in `sys.rs`/`lock.rs`), X bell → Default Beep
+  in the WM, Open/Close/Minimize/Maximize/Menu event callers, the Sound applet's startup-sound checkbox
+  via `sounds::set_startup_sound`, `pactl subscribe` children outliving the shell (PR_SET_PDEATHSIG in
+  `util::watch_lines`), the WM ignoring `_MOTIF_WM_HINTS` functions.
+- Done since the handoff (verify on real hardware): taskbar/Start menu from msstyles (`src/shellstyle.rs`)
+  with colour hot-track, Win7 animations (`src/anim.rs`, `src/wm/anim.rs`, picom 12 config from
+  `src/picomconf.rs`), desktop icon drag and drop, taskbar/tray context menus, Win7 event sound scheme +
+  startup sound, SndVol flyout and Volume Mixer (`src/flyouts/volume.rs`, `src/mixer.rs`,
+  `src/sys/audio.rs`), Snipping Tool / Command Prompt parity.
 - Done since: notification daemon (`src/notify.rs`, Win7 balloons), notification area with SNI +
   XEmbed icons and the Show hidden icons overflow (`src/tray/`), window system menu, keyboard layouts
   (`src/kbdlayout.rs`), Control Panel applet registry (`src/bin/aerode-control/`), Window Color with
