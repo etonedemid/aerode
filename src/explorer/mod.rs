@@ -132,6 +132,9 @@ pub struct Explorer {
     computer: gtk::Box,
     view: Cell<View>,
     show_hidden: Cell<bool>,
+    /// Folder Options (Control Panel), re-read when config.json changes
+    opts: RefCell<config::FolderOptions>,
+    _conf_monitor: RefCell<Option<gio::FileMonitor>>,
     monitor: RefCell<Option<gio::FileMonitor>>,
     thumbs: RefCell<HashMap<PathBuf, Pixbuf>>,
     search_gen: Cell<u32>,
@@ -380,7 +383,8 @@ impl Explorer {
             store, filter: filter.clone(), sorted, icons: icons.clone(), details: details.clone(), stack, crumbs, addr_entry: addr_entry.clone(),
             addr_stack: addr_stack.clone(), search: search.clone(), back_b: back_b.clone(), fwd_b: fwd_b.clone(), cmd_dyn, nav: nav.clone(),
             nav_store, info_icon, info_name, info_text, lib_header, lib_title, preview, preview_box: preview_box.clone(), computer,
-            view: Cell::new(load_view()), show_hidden: Cell::new(false), monitor: RefCell::new(None), thumbs: RefCell::new(HashMap::new()),
+            view: Cell::new(load_view()), show_hidden: Cell::new(config::get().folder.show_hidden),
+            opts: RefCell::new(config::get().folder), _conf_monitor: RefCell::new(None), monitor: RefCell::new(None), thumbs: RefCell::new(HashMap::new()),
             search_gen: Cell::new(0), vm: gio::VolumeMonitor::get(),
         });
 
@@ -412,6 +416,25 @@ impl Explorer {
         }
         ex.build_nav();
         ex.wire(&organize, &views_b, &prev_b, &refresh, &crumb_ev);
+        ex.apply_folder_options();
+        // Folder Options applies to open windows too
+        if let Ok(m) = gio::File::for_path(config::conf_dir().join("config.json")).monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
+            let e = Rc::downgrade(&ex);
+            m.connect_changed(move |_, _, _, ev| {
+                if !matches!(ev, gio::FileMonitorEvent::ChangesDoneHint | gio::FileMonitorEvent::Created | gio::FileMonitorEvent::MovedIn | gio::FileMonitorEvent::Renamed) { return; }
+                let Some(e) = e.upgrade() else { return };
+                config::reload();
+                let fo = config::get().folder;
+                if *e.opts.borrow() == fo { return; }
+                e.show_hidden.set(fo.show_hidden);
+                *e.opts.borrow_mut() = fo;
+                e.apply_folder_options();
+                e.thumbs.borrow_mut().clear();
+                let l = e.loc.borrow().clone();
+                e.go(l, false);
+            });
+            *ex._conf_monitor.borrow_mut() = Some(m);
+        }
         preview_box.set_visible(false);
         root.show_all();
         preview_box.hide();
@@ -434,7 +457,11 @@ impl Explorer {
         *self.loc.borrow_mut() = loc.clone();
         if !matches!(loc, Loc::Search(..)) { self.search.set_text(""); }
         self.search.set_placeholder_text(Some(&format!("Search {}", loc.title())));
-        self.win.set_title(&loc.title());
+        // Folder Options > Display the full path in the title bar
+        match &loc {
+            Loc::Path(p) if self.opts.borrow().full_path_title => self.win.set_title(&p.display().to_string()),
+            _ => self.win.set_title(&loc.title()),
+        }
         self.back_b.set_sensitive(!self.back.borrow().is_empty());
         self.fwd_b.set_sensitive(!self.fwd.borrow().is_empty());
         self.build_crumbs();
@@ -530,7 +557,7 @@ impl Explorer {
     // ------------------------------------------------------------ listing
     fn icon_for(&self, info: &gio::FileInfo, path: &Path, size: i32) -> Option<Pixbuf> {
         let ct = info.content_type().map(|c| c.to_string()).unwrap_or_default();
-        if size >= 48 && (ct.starts_with("image/")) {
+        if size >= 48 && (ct.starts_with("image/")) && !self.opts.borrow().icons_only {
             if let Some(t) = self.thumbs.borrow().get(path) { return Some(t.clone()); }
         }
         // special folders get their Win7 icons
@@ -561,7 +588,7 @@ impl Explorer {
                     let p = dir.join(info.name());
                     self.add_row(&info, &p, size);
                     let ct = info.content_type().map(|c| c.to_string()).unwrap_or_default();
-                    if size >= 48 && ct.starts_with("image/") && !self.thumbs.borrow().contains_key(&p) { thumbs_needed.push(p); }
+                    if size >= 48 && ct.starts_with("image/") && !self.opts.borrow().icons_only && !self.thumbs.borrow().contains_key(&p) { thumbs_needed.push(p); }
                 }
                 self.load_thumbs(thumbs_needed);
             }
@@ -599,7 +626,7 @@ impl Explorer {
 
     fn add_row(&self, info: &gio::FileInfo, p: &Path, size: i32) {
         let is_dir = info.file_type() == gio::FileType::Directory;
-        let name = info.display_name().to_string();
+        let name = util::shown_name(info, self.opts.borrow().hide_ext);
         let ct = info.content_type().map(|c| c.to_string()).unwrap_or_default();
         let ty = if is_dir { "File folder".to_string() } else { gio::content_type_get_description(&ct).to_string() };
         let mtime = info.attribute_uint64("time::modified") as i64;
@@ -642,6 +669,7 @@ impl Explorer {
         self.search_gen.set(generation);
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
         let ql = q.to_lowercase();
+        let (fo, hidden) = (self.opts.borrow().clone(), self.show_hidden.get());
         std::thread::spawn(move || {
             let mut stack = vec![base];
             let mut n = 0;
@@ -649,9 +677,11 @@ impl Explorer {
                 let Ok(rd) = std::fs::read_dir(&d) else { continue };
                 for e in rd.flatten() {
                     let name = e.file_name().to_string_lossy().to_lowercase();
-                    if name.starts_with('.') { continue; }
-                    if name.contains(&ql) { if tx.send(e.path()).is_err() { return; } n += 1; if n > 5000 { return; } }
-                    if e.file_type().map(|t| t.is_dir() && !t.is_symlink()).unwrap_or(false) { stack.push(e.path()); }
+                    if name.starts_with('.') && !hidden { continue; }
+                    // Folder Options > Search: "Find partial matches" off = whole words only
+                    let hit = if fo.search_partial { name.contains(&ql) } else { name.split(|c: char| !c.is_alphanumeric()).any(|w| w == ql) || name == ql };
+                    if hit { if tx.send(e.path()).is_err() { return; } n += 1; if n > 5000 { return; } }
+                    if fo.search_subfolders && e.file_type().map(|t| t.is_dir() && !t.is_symlink()).unwrap_or(false) { stack.push(e.path()); }
                 }
             }
         });
@@ -893,6 +923,10 @@ impl Explorer {
         if sel.len() == 1 && (sel[0].is_dir() || sel[0].to_string_lossy().starts_with("network:")) {
             let p = sel[0].clone();
             if p.to_string_lossy().starts_with("network:") { util::open_uri(&p.to_string_lossy()); return; }
+            // Folder Options > Open each folder in its own window
+            if self.opts.borrow().own_window {
+                if let Some(app) = self.win.application() { std::mem::forget(Explorer::new(&app, Loc::Path(p))); return; }
+            }
             self.go(Loc::Path(p), true);
             return;
         }
@@ -902,6 +936,13 @@ impl Explorer {
             }
             util::open_path(&p);
         }
+    }
+
+    /// Folder Options that change how the views react (single-click to open).
+    fn apply_folder_options(&self) {
+        let single = self.opts.borrow().single_click;
+        self.icons.set_activate_on_single_click(single);
+        self.details.set_activate_on_single_click(single);
     }
 
     fn cur_dir(&self) -> Option<PathBuf> {
@@ -1200,9 +1241,17 @@ impl Explorer {
         {
             let e = self.clone();
             let it = gtk::CheckMenuItem::with_label("Show hidden files and folders");
-            it.connect_toggled(move |c| { e.show_hidden.set(c.is_active()); e.filter.refilter(); });
+            it.set_active(e.show_hidden.get());
+            it.connect_toggled(move |c| {
+                e.show_hidden.set(c.is_active());
+                e.filter.refilter();
+                let on = c.is_active();
+                config::update(|cf| cf.folder.show_hidden = on);
+                e.opts.borrow_mut().show_hidden = on;
+            });
             m.append(&it);
         }
+        add(&m, "Folder and _search options", Box::new(|| { util::spawn(&["aerode-control", "folderoptions"]); }));
         m.append(&gtk::SeparatorMenuItem::new());
         { let e = self.clone(); add(&m, "_Delete", Box::new(move || e.delete(false))); }
         { let e = self.clone(); add(&m, "Rena_me", Box::new(move || e.rename())); }

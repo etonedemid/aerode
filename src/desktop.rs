@@ -193,19 +193,22 @@ impl Desktop {
 
     fn items(&self) -> Vec<Item> {
         let mut v = vec![];
-        for s in config::get().desktop_icons {
+        let cfg = config::get();
+        // Desktop Icon Settings > Change Icon
+        let art = |key: &str, def: &str| Some(cfg.desktop_icon_art.get(key).cloned().unwrap_or_else(|| def.to_string()));
+        for s in &cfg.desktop_icons {
             match s.as_str() {
-                "computer" => v.push(Item { label: "Computer".into(), icon: None, icon_name: Some("computer".into()), target: Target::Uri("computer:///".into()), special: Some("computer") }),
-                "home" => v.push(Item { label: glib::user_name().to_string_lossy().into_owned(), icon: None, icon_name: Some("user-home".into()), target: Target::Path(config::home()), special: None }),
-                "trash" => v.push(Item { label: "Recycle Bin".into(), icon: None, icon_name: Some(if trash_full() { "user-trash-full" } else { "user-trash" }.into()), target: Target::Uri("trash:///".into()), special: Some("trash") }),
-                "network" => v.push(Item { label: "Network".into(), icon: None, icon_name: Some("network-workgroup".into()), target: Target::Uri("network:///".into()), special: None }),
-                "control" => v.push(Item { label: "Control Panel".into(), icon: None, icon_name: Some("preferences-system".into()), target: Target::Uri("aerode:control".into()), special: Some("control") }),
+                "computer" => v.push(Item { label: "Computer".into(), icon: None, icon_name: art("computer", "computer"), target: Target::Uri("computer:///".into()), special: Some("computer") }),
+                "home" => v.push(Item { label: glib::user_name().to_string_lossy().into_owned(), icon: None, icon_name: art("home", "user-home"), target: Target::Path(config::home()), special: None }),
+                "trash" => v.push(Item { label: "Recycle Bin".into(), icon: None, icon_name: if trash_full() { art("trash-full", "user-trash-full") } else { art("trash", "user-trash") }, target: Target::Uri("trash:///".into()), special: Some("trash") }),
+                "network" => v.push(Item { label: "Network".into(), icon: None, icon_name: art("network", "network-workgroup"), target: Target::Uri("network:///".into()), special: None }),
+                "control" => v.push(Item { label: "Control Panel".into(), icon: None, icon_name: art("control", "preferences-system"), target: Target::Uri("aerode:control".into()), special: Some("control") }),
                 _ => {}
             }
         }
         let mut files: Vec<_> = std::fs::read_dir(desktop_dir()).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default();
-        files.retain(|p: &PathBuf| !p.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(true));
-        let cfg = config::get();
+        // Folder Options > Show hidden files, folders, and drives
+        files.retain(|p: &PathBuf| cfg.folder.show_hidden || !p.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(true));
         let name_of = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
         let ext_of = |p: &PathBuf| p.extension().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
         let meta = |p: &PathBuf| std::fs::metadata(p).ok();
@@ -227,9 +230,9 @@ impl Desktop {
                 }
             }
             let gf = gio::File::for_path(&p);
-            let info = gf.query_info("standard::icon,standard::display-name", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).ok();
+            let info = gf.query_info("standard::icon,standard::display-name,standard::type", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).ok();
             v.push(Item {
-                label: info.as_ref().map(|i| i.display_name().to_string()).unwrap_or_else(|| p.file_name().unwrap().to_string_lossy().into_owned()),
+                label: info.as_ref().map(|i| util::shown_name(i, cfg.folder.hide_ext)).unwrap_or_else(|| p.file_name().unwrap().to_string_lossy().into_owned()),
                 icon: info.and_then(|i| i.icon()),
                 icon_name: None,
                 target: Target::Path(p),
@@ -263,6 +266,7 @@ impl Desktop {
         v.set_size_request(cw, -1);
         let pb = match (&it.icon, &it.icon_name) {
             (Some(i), _) => util::gicon_pixbuf(Some(i), size),
+            (None, Some(n)) if n.starts_with('/') => gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(n, size, size, true).ok().or_else(|| util::pixbuf("text-x-generic", size)),
             (None, Some(n)) => util::pixbuf_or(n, size, "text-x-generic"),
             _ => util::pixbuf("text-x-generic", size),
         };
@@ -281,7 +285,10 @@ impl Desktop {
         let it2 = it.clone();
         eb.connect_button_press_event(move |eb, e| {
             let Some(d) = d.upgrade() else { return glib::Propagation::Stop };
-            if e.event_type() == gdk::EventType::DoubleButtonPress && e.button() == 1 {
+            // Folder Options > Click items as follows (single-click opens, like a link)
+            let single = config::get().folder.single_click && e.event_type() == gdk::EventType::ButtonPress
+                && !e.state().intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK);
+            if (single || e.event_type() == gdk::EventType::DoubleButtonPress) && e.button() == 1 {
                 open_item(&it2);
                 return glib::Propagation::Stop;
             }

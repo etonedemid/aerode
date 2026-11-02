@@ -138,7 +138,8 @@ fn launch_ctx() -> Option<gdk::AppLaunchContext> {
 }
 
 pub fn launch(app: &gio::AppInfo) {
-    if let Some(id) = app.id() {
+    // Start menu privacy: "Store and display recently opened programs"
+    if let Some(id) = app.id().filter(|_| config::get().taskbar.track_programs) {
         config::update(|c| *c.usage.entry(id.to_string()).or_insert(0) += 1);
     }
     if let Err(e) = app.launch(&[], launch_ctx().as_ref()) {
@@ -300,6 +301,18 @@ pub fn error(title: &str, text: &str) {
     d.connect_response(|d, _| d.close());
     d.show_all();
     sound(crate::sounds::Event::CriticalStop);
+}
+
+/// The name Explorer and the desktop show for a file: Folder Options > "Hide extensions for known
+/// file types" drops the extension when some program is registered for the type the extension
+/// stands for (judged by the name alone, like Windows: "notes.zzqq" keeps its extension).
+pub fn shown_name(info: &gio::FileInfo, hide_ext: bool) -> String {
+    let name = info.display_name().to_string();
+    if !hide_ext || info.file_type() == gio::FileType::Directory { return name; }
+    let Some(dot) = name.rfind('.').filter(|i| *i > 0 && *i + 1 < name.len()) else { return name };
+    let (ct, uncertain) = gio::content_type_guess(Some(&name), &[]);
+    if uncertain || ct.is_empty() || ct == "application/octet-stream" || ct == "application/x-desktop" { return name; }
+    if !gio::AppInfo::all_for_type(&ct).is_empty() { name[..dot].to_string() } else { name }
 }
 
 pub fn special_dir(d: glib::UserDirectory, fallback: &str) -> std::path::PathBuf {

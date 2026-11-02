@@ -16,6 +16,11 @@ SHARE=/usr/share/aerode
 
 # GTK/Xsettings for the session only (icons, cursors, fonts)
 ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aerode/index.theme" ] && ICONS=Aerode
+# font smoothing / ClearType and recent-files privacy chosen in Control Panel (Fonts, Taskbar and Start Menu)
+XFT=$(cat "$CONF/xsettings-cp.conf" 2>/dev/null) || XFT='Xft/Antialias 1
+Xft/Hinting 1
+Xft/HintStyle "hintfull"
+Xft/RGBA "rgb"'
 cat > "$CONF/xsettingsd.conf" <<EOT
 Net/ThemeName "Aerode"
 Net/IconThemeName "$ICONS"
@@ -23,18 +28,18 @@ Gtk/CursorThemeName "${XCURSOR_THEME:-Adwaita}"
 Gtk/FontName "Segoe UI 9"
 Gtk/MenuImages 1
 Gtk/ButtonImages 1
-Xft/Antialias 1
-Xft/Hinting 1
-Xft/HintStyle "hintfull"
-Xft/RGBA "rgb"
+$XFT
 EOT
 command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
 xsetroot -cursor_name left_ptr 2>/dev/null
+[ -f "$CONF/Xresources" ] && xrdb -merge "$CONF/Xresources"
 
 # settings saved by Control Panel (resolution + refresh rate, keyboard layouts, screen timeout)
 [ -x "$CONF/displays.sh" ] || [ -f "$CONF/displays.sh" ] && sh "$CONF/displays.sh"
 [ -f "$CONF/keyboard.sh" ] && sh "$CONF/keyboard.sh"
 [ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && { xset -dpms; xset s off; } || { xset +dpms dpms "$t" "$t" "$t"; xset s "$t"; }; }
+# Screen Saver Settings > Wait (seconds, 0 = no screen saver and no lock); xss-lock below runs it
+[ -f "$CONF/screensaver-wait" ] && { t=$(cat "$CONF/screensaver-wait"); [ "$t" = 0 ] && xset s off || xset s "$t"; }
 
 dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP KDE_SESSION_VERSION 2>/dev/null
 # helpers Plasma would provide (all optional)
@@ -42,7 +47,7 @@ dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESK
 if command -v aerode-polkit >/dev/null; then aerode-polkit &
 else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent; do
   [ -x "$agent" ] && { "$agent" & break; }; done; fi
-command -v xss-lock >/dev/null && xss-lock -- aerode lock &
+command -v xss-lock >/dev/null && xss-lock -- aerode screensaver &
 # a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping VSync off)
 if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 2" "$CONF/picom.conf"; then
   if grep -q "vsync = false" "$CONF/picom.conf"; then sed 's/vsync = true;/vsync = false;/' "$SHARE/picom.conf" > "$CONF/picom.conf"; else rm -f "$CONF/picom.conf"; fi

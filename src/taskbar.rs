@@ -71,6 +71,7 @@ impl Taskbar {
         win.move_(geo.x(), geo.y() + geo.height() - h);
         win.style_context().add_class("aerode");
         win.style_context().add_class("taskbar");
+        if config::get().taskbar.small_icons { win.style_context().add_class("small"); }
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         win.add(&row);
@@ -89,7 +90,9 @@ impl Taskbar {
         {
             let st = orb_state.clone();
             orb.connect_draw(move |w, cr| {
-                let size = 46.0f64.min(w.allocated_height() as f64 + 8.0);
+                // Win7 lets the orb overhang the 40 px bar; with small icons it fits the 30 px bar
+                let hh = w.allocated_height() as f64;
+                let size = if hh < 36.0 { hh + 2.0 } else { 46.0f64.min(hh + 8.0) };
                 cr.translate((w.allocated_width() as f64 - size) / 2.0, (w.allocated_height() as f64 - size) / 2.0);
                 glass::paint_orb(cr, size, st.get());
                 glib::Propagation::Proceed
@@ -257,9 +260,11 @@ impl Taskbar {
             };
             g.button.set_tooltip_text(Some(&tip));
             if g.button.child().is_none() {
-                let pb = g.app.as_ref().and_then(|a| util::gicon_pixbuf(a.icon().as_ref(), 32))
-                    .or_else(|| g.windows.first().and_then(|w| self.wm.icon(w.id, 32)).map(|p| util::scale(&p, 32)))
-                    .or_else(|| util::pixbuf("application-x-executable", 32));
+                // Taskbar Properties > Use small icons
+                let isz = if config::get().taskbar.small_icons { 16 } else { 32 };
+                let pb = g.app.as_ref().and_then(|a| util::gicon_pixbuf(a.icon().as_ref(), isz))
+                    .or_else(|| g.windows.first().and_then(|w| self.wm.icon(w.id, isz as u32)).map(|p| util::scale(&p, isz)))
+                    .or_else(|| util::pixbuf("application-x-executable", isz));
                 let ov = gtk::Overlay::new();
                 ov.add(&gtk::Image::from_pixbuf(pb.as_ref()));
                 g.button.add(&ov);
@@ -370,6 +375,27 @@ impl Taskbar {
         }
         m.show_all();
         m
+    }
+
+    /// Apply a changed bar size (Taskbar Properties > Use small icons) without restarting the shell.
+    pub fn resize(self: &Rc<Self>) {
+        let cfg = config::get();
+        let h = cfg.taskbar_height;
+        let sc = self.win.style_context();
+        if sc.has_class("small") == cfg.taskbar.small_icons && self.win.allocated_height() == h { return; }
+        if cfg.taskbar.small_icons { sc.add_class("small") } else { sc.remove_class("small") }
+        let geo = util::primary_geometry();
+        // the orb's drawing area sets the bar's minimum height
+        if let Some(orb) = self.win.child().and_then(|r| r.downcast::<gtk::Box>().ok()).and_then(|r| r.children().into_iter().next())
+            .and_then(|e| e.downcast::<gtk::EventBox>().ok()).and_then(|e| e.child()) { orb.set_size_request(54, h); }
+        self.win.set_size_request(geo.width(), h);
+        self.win.resize(geo.width(), h);
+        self.win.move_(geo.x(), geo.y() + geo.height() - h);
+        if let Some(x) = self.win.window().and_then(|g| g.downcast::<gdkx11::X11Window>().ok()) {
+            self.wm.set_strut(x.xid() as u32, h as u32, geo.x() as u32, (geo.x() + geo.width() - 1) as u32);
+        }
+        // refresh() rebuilds the button contents at the new icon size
+        for g in self.groups.borrow().iter() { if let Some(c) = g.button.child() { g.button.remove(&c); } }
     }
 
     pub fn pin(self: &Rc<Self>, id: &str) {
