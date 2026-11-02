@@ -287,51 +287,51 @@ impl Console {
         let mut reader = pair.master.try_clone_reader().unwrap();
         *self.writer.borrow_mut() = pair.master.take_writer().ok();
         *self.master.borrow_mut() = Some(pair.master);
-        let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+        // event-driven: the reader thread wakes the GTK main loop immediately (no polling cap)
+        let (tx, rx) = async_channel::unbounded::<Option<Vec<u8>>>();
         std::thread::spawn(move || {
-            let mut buf = [0u8; 16384];
+            let mut buf = [0u8; 65536];
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => { let _ = tx.send(None); break; }
-                    Ok(n) => { if tx.send(Some(buf[..n].to_vec())).is_err() { break; } }
+                    Ok(0) | Err(_) => { let _ = tx.send_blocking(None); break; }
+                    Ok(n) => { if tx.send_blocking(Some(buf[..n].to_vec())).is_err() { break; } }
                 }
             }
         });
         std::thread::spawn(move || { let _ = child.wait(); });
         let me = Rc::downgrade(self);
-        glib::timeout_add_local(std::time::Duration::from_millis(8), move || {
-            let Some(c) = me.upgrade() else { return glib::ControlFlow::Break };
-            let mut got = false;
-            loop {
-                match rx.try_recv() {
-                    Ok(Some(bytes)) => {
-                        got = true;
-                        let mut t = c.term.borrow_mut();
-                        let mut p = c.parser.borrow_mut();
-                        for b in bytes { p.advance(&mut *t, b); }
-                    }
-                    Ok(None) => { c.win.close(); return glib::ControlFlow::Break; } // program exited → window closes (like cmd)
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(_) => return glib::ControlFlow::Break,
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(first) = rx.recv().await {
+                let Some(c) = me.upgrade() else { break };
+                // take everything already queued, then redraw once
+                let mut chunks = vec![first];
+                while let Ok(more) = rx.try_recv() { chunks.push(more); }
+                let mut closed = false;
+                {
+                    let mut t = c.term.borrow_mut();
+                    let mut p = c.parser.borrow_mut();
+                    for ch in chunks { match ch { Some(bytes) => for b in bytes { p.advance(&mut *t, b); }, None => closed = true } }
                 }
+                c.after_output();
+                if closed { c.win.close(); break; } // program exited → window closes (like cmd)
             }
-            if got {
-                let (replies, bell, title, color) = { let mut t = c.term.borrow_mut(); (std::mem::take(&mut t.replies), std::mem::take(&mut t.bell), t.title.take(), t.console_color.take()) };
-                if let Some(col) = color {
-                    // `color XY` recolours the whole console, like Windows
-                    let saved = load_config();
-                    let mut cfg = c.cfg.borrow_mut();
-                    match col { Some((f, b)) => { cfg.screen_fg = f; cfg.screen_bg = b; } None => { cfg.screen_fg = saved.screen_fg; cfg.screen_bg = saved.screen_bg; } }
-                }
-                if !replies.is_empty() { c.send(&replies); }
-                if bell { sounds::play(sounds::Event::DefaultBeep); }
-                if let Some(t) = title { *c.base_title.borrow_mut() = t; c.refresh_title(); }
-                c.follow.set(true);
-                c.update_scrollbar();
-                c.area.queue_draw();
-            }
-            glib::ControlFlow::Continue
         });
+    }
+
+    fn after_output(&self) {
+        let (replies, bell, title, color) = { let mut t = self.term.borrow_mut(); (std::mem::take(&mut t.replies), std::mem::take(&mut t.bell), t.title.take(), t.console_color.take()) };
+        if let Some(col) = color {
+            // `color XY` recolours the whole console, like Windows
+            let saved = load_config();
+            let mut cfg = self.cfg.borrow_mut();
+            match col { Some((f, b)) => { cfg.screen_fg = f; cfg.screen_bg = b; } None => { cfg.screen_fg = saved.screen_fg; cfg.screen_bg = saved.screen_bg; } }
+        }
+        if !replies.is_empty() { self.send(&replies); }
+        if bell { sounds::play(sounds::Event::DefaultBeep); }
+        if let Some(t) = title { *self.base_title.borrow_mut() = t; self.refresh_title(); }
+        self.follow.set(true);
+        self.update_scrollbar();
+        self.area.queue_draw();
     }
 
     fn send(&self, bytes: &[u8]) {

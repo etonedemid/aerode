@@ -27,6 +27,11 @@ EOT
 command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
 xsetroot -cursor_name left_ptr 2>/dev/null
 
+# settings saved by Control Panel (resolution + refresh rate, keyboard layouts, screen timeout)
+[ -x "$CONF/displays.sh" ] || [ -f "$CONF/displays.sh" ] && sh "$CONF/displays.sh"
+[ -f "$CONF/keyboard.sh" ] && sh "$CONF/keyboard.sh"
+[ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && { xset -dpms; xset s off; } || { xset +dpms dpms "$t" "$t" "$t"; xset s "$t"; }; }
+
 dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP 2>/dev/null
 # helpers Plasma would provide (all optional)
 # UAC-style polkit agent (falls back to other agents if ours is missing)

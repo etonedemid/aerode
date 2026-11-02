@@ -335,14 +335,30 @@ impl Cp {
         v.pack_start(&title("Change the appearance of your displays"), false, false, 0);
         // parse xrandr
         let xr = out(&["xrandr", "--query"]);
-        let mut outputs: Vec<(String, bool, Vec<String>, String)> = vec![];
+        // (name, primary, [(mode, [rates])], current mode, current rate, active)
+        type Out = (String, bool, Vec<(String, Vec<String>)>, String, String, bool);
+        let mut outputs: Vec<Out> = vec![];
         for l in xr.lines() {
             if !l.starts_with(' ') && l.contains(" connected") {
                 let name = l.split_whitespace().next().unwrap_or("").to_string();
-                let cur = l.split_whitespace().find(|w| w.contains('x') && w.contains('+')).map(|w| w.split('+').next().unwrap().to_string()).unwrap_or_default();
-                outputs.push((name, l.contains("primary"), vec![], cur));
+                let geom = l.split_whitespace().find(|w| w.contains('x') && w.contains('+'));
+                let cur = geom.map(|w| w.split('+').next().unwrap().to_string()).unwrap_or_default();
+                outputs.push((name, l.contains("primary"), vec![], cur, String::new(), geom.is_some()));
             } else if l.starts_with("   ") {
-                if let Some(o) = outputs.last_mut() { if let Some(m) = l.split_whitespace().next() { if !o.2.contains(&m.to_string()) { o.2.push(m.to_string()); } } }
+                if let Some(o) = outputs.last_mut() {
+                    let mut it = l.split_whitespace();
+                    let Some(mode) = it.next() else { continue };
+                    let mut rates = vec![];
+                    for r in it {
+                        let clean = r.trim_end_matches(['*', '+', ' ']).to_string();
+                        if clean.is_empty() { continue; }
+                        if r.contains('*') { o.4 = clean.clone(); }
+                        if !rates.contains(&clean) { rates.push(clean); }
+                    }
+                    // highest refresh first, like the Win7 list
+                    rates.sort_by(|a, b| b.parse::<f64>().unwrap_or(0.0).partial_cmp(&a.parse::<f64>().unwrap_or(0.0)).unwrap());
+                    match o.2.iter_mut().find(|(m, _)| m == mode) { Some(e) => { for r in rates { if !e.1.contains(&r) { e.1.push(r); } } } None => o.2.push((mode.to_string(), rates)) }
+                }
             }
         }
         if outputs.is_empty() { v.pack_start(&text("No displays found (xrandr is not available)."), false, false, 0); return v.upcast(); }
@@ -353,25 +369,40 @@ impl Cp {
         for (i, o) in outputs.iter().enumerate() { disp.append(Some(&o.0), &format!("{}. {}{}", i + 1, o.0, if o.1 { " (primary)" } else { "" })); }
         disp.set_active(Some(0));
         let res = gtk::ComboBoxText::new();
+        let rate = gtk::ComboBoxText::new();
         let orient = gtk::ComboBoxText::new();
         for (id, l) in [("normal", "Landscape"), ("left", "Portrait"), ("inverted", "Landscape (flipped)"), ("right", "Portrait (flipped)")] { orient.append(Some(id), l); }
         orient.set_active_id(Some("normal"));
         let multi = gtk::ComboBoxText::new();
         for (id, l) in [("extend", "Extend these displays"), ("dup", "Duplicate these displays"), ("only", "Show desktop only on this display")] { multi.append(Some(id), l); }
         multi.set_active_id(Some("extend"));
+        let fill_rates = {
+            let (rate, res, disp, outputs) = (rate.clone(), res.clone(), disp.clone(), outputs.clone());
+            move || {
+                rate.remove_all();
+                let (Some(name), Some(mode)) = (disp.active_id(), res.active_id()) else { return };
+                let Some(o) = outputs.iter().find(|o| o.0 == name.as_str()) else { return };
+                let rates = o.2.iter().find(|(m, _)| *m == mode.as_str()).map(|(_, r)| r.clone()).unwrap_or_default();
+                for r in &rates { rate.append(Some(r), &format!("{} Hertz", r.parse::<f64>().map(|v| v.round() as i64).unwrap_or(0))); }
+                // keep the current rate if this is the current mode, otherwise pick the highest
+                if mode.as_str() == o.3 && rates.contains(&o.4) { rate.set_active_id(Some(&o.4)); } else { rate.set_active(Some(0)); }
+            }
+        };
         let fill_res = {
             let (res, outputs) = (res.clone(), outputs.clone());
             move |name: &str| {
                 res.remove_all();
                 if let Some(o) = outputs.iter().find(|o| o.0 == name) {
-                    for (i, m) in o.2.iter().enumerate() { res.append(Some(m), &format!("{m}{}", if i == 0 { " (Recommended)" } else { "" })); }
+                    for (i, (m, _)) in o.2.iter().enumerate() { res.append(Some(m), &format!("{m}{}", if i == 0 { " (Recommended)" } else { "" })); }
                     res.set_active_id(Some(&o.3));
                 }
             }
         };
         fill_res(&outputs[0].0);
-        { let f = fill_res.clone(); disp.connect_changed(move |d| if let Some(id) = d.active_id() { f(&id) }); }
-        for (i, (l, w)) in [("Display:", disp.clone().upcast::<gtk::Widget>()), ("Resolution:", res.clone().upcast()), ("Orientation:", orient.clone().upcast()), ("Multiple displays:", multi.clone().upcast())].into_iter().enumerate() {
+        fill_rates();
+        { let (f, fr) = (fill_res.clone(), fill_rates.clone()); disp.connect_changed(move |d| if let Some(id) = d.active_id() { f(&id); fr(); }); }
+        { let fr = fill_rates.clone(); res.connect_changed(move |_| fr()); }
+        for (i, (l, w)) in [("Display:", disp.clone().upcast::<gtk::Widget>()), ("Resolution:", res.clone().upcast()), ("Screen refresh rate:", rate.clone().upcast()), ("Orientation:", orient.clone().upcast()), ("Multiple displays:", multi.clone().upcast())].into_iter().enumerate() {
             let lab = gtk::Label::new(Some(l));
             lab.set_xalign(1.0);
             g.attach(&lab, 0, i as i32, 1, 1);
@@ -407,14 +438,24 @@ impl Cp {
         let (w, outs) = (self.win.clone(), outputs.clone());
         apply.connect_clicked(move |_| {
             let (Some(o), Some(m)) = (disp.active_id(), res.active_id()) else { return };
-            let old = outs.iter().find(|x| x.0 == o.as_str()).map(|x| x.3.clone()).unwrap_or_default();
+            let this = outs.iter().find(|x| x.0 == o.as_str()).cloned();
+            let (old, old_rate) = this.as_ref().map(|x| (x.3.clone(), x.4.clone())).unwrap_or_default();
             let rot = orient.active_id().map(|s| s.to_string()).unwrap_or_else(|| "normal".into());
-            let mut cmd = vec!["xrandr".to_string(), "--output".into(), o.to_string(), "--mode".into(), m.to_string(), "--rotate".into(), rot];
-            let others: Vec<&String> = outs.iter().map(|x| &x.0).filter(|n| **n != o.as_str()).collect();
+            let r = rate.active_id().map(|s| s.to_string()).unwrap_or_default();
+            let mut cmd = vec!["xrandr".to_string(), "--output".into(), o.to_string(), "--mode".into(), m.to_string()];
+            // always pass the rate: without it xrandr may fall back to 60 Hz
+            if !r.is_empty() { cmd.extend(["--rate".into(), r.clone()]); }
+            cmd.extend(["--rotate".into(), rot]);
+            let others: Vec<&Out> = outs.iter().filter(|x| x.0 != o.as_str()).collect();
             match multi.active_id().as_deref() {
-                Some("dup") => for n in &others { cmd.extend(["--output".into(), (*n).clone(), "--same-as".into(), o.to_string()]); },
-                Some("only") => for n in &others { cmd.extend(["--output".into(), (*n).clone(), "--off".into()]); },
-                _ => if let Some(n) = others.first() { cmd.extend(["--output".into(), (*n).clone(), "--auto".into(), "--right-of".into(), o.to_string()]); },
+                Some("dup") => for n in &others { cmd.extend(["--output".into(), n.0.clone(), "--same-as".into(), o.to_string()]); },
+                Some("only") => for n in &others { cmd.extend(["--output".into(), n.0.clone(), "--off".into()]); },
+                _ => if let Some(n) = others.first() {
+                    // leave the other monitor's own mode/rate alone unless it was off
+                    cmd.extend(["--output".into(), n.0.clone()]);
+                    if !n.5 { cmd.push("--auto".into()); }
+                    cmd.extend(["--right-of".into(), o.to_string()]);
+                },
             }
             let refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
             util::output(&refs);
@@ -433,7 +474,12 @@ impl Cp {
             }); }
             let r = d.run();
             d.close();
-            if r != gtk::ResponseType::Yes && !old.is_empty() { util::output(&["xrandr", "--output", &o, "--mode", &old, "--rotate", "normal"]); }
+            if r != gtk::ResponseType::Yes && !old.is_empty() {
+                let mut back = vec!["xrandr", "--output", &o, "--mode", &old];
+                if !old_rate.is_empty() { back.extend(["--rate", old_rate.as_str()]); }
+                back.extend(["--rotate", "normal"]);
+                util::output(&back);
+            }
             else {
                 // remember for next login
                 let _ = std::fs::create_dir_all(config::conf_dir());
