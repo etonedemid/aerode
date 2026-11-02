@@ -823,9 +823,21 @@ impl Wm {
 
     // ---------------------------------------------------------- event loop
     pub fn run(&mut self) -> Result<()> {
+        let mut pending: std::collections::VecDeque<Event> = std::collections::VecDeque::new();
         loop {
             self.conn.flush()?;
-            let ev = self.conn.wait_for_event()?;
+            let ev = match pending.pop_front() { Some(e) => e, None => self.conn.wait_for_event()? };
+            // Motion compression: high-rate mice/high-refresh screens produce far more motion
+            // events than we need – only act on the newest queued position.
+            let ev = if let Event::MotionNotify(mut m) = ev {
+                while let Ok(Some(next)) = self.conn.poll_for_event() {
+                    match next {
+                        Event::MotionNotify(n) if n.event == m.event => m = n,
+                        other => { pending.push_back(other); break; }
+                    }
+                }
+                Event::MotionNotify(m)
+            } else { ev };
             if let Err(e) = self.handle(ev) { eprintln!("aerode-wm: {e}"); }
         }
     }
