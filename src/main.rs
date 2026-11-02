@@ -70,8 +70,34 @@ fn autostart() {
     }
 }
 
+/// Is another process's aerode taskbar on this display? (Then this one was meant to reach it over
+/// D-Bus and must not build a second desktop and taskbar.)
+fn other_shell_running() -> bool {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
+    let Ok((conn, screen)) = x11rb::connect(None) else { return false };
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
+    let (list, pid_a) = (atom("_NET_CLIENT_LIST"), atom("_NET_WM_PID"));
+    let wins: Vec<u32> = conn.get_property(false, root, list, AtomEnum::WINDOW, 0, 4096).ok().and_then(|c| c.reply().ok())
+        .and_then(|r| r.value32().map(|v| v.collect())).unwrap_or_default();
+    let me = std::process::id();
+    wins.into_iter().any(|w| {
+        let name = conn.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
+        let class = conn.get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
+        let pid = conn.get_property(false, w, pid_a, AtomEnum::CARDINAL, 0, 1).ok().and_then(|c| c.reply().ok()).and_then(|r| r.value32().and_then(|mut v| v.next())).unwrap_or(0);
+        name == b"Taskbar" && class.starts_with(b"aerode\0") && pid != me && pid != 0
+    })
+}
+
 fn command(app: &gtk::Application, args: &[String]) -> i32 {
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("shell");
+    // we are the primary instance but a shell is already running: D-Bus did not connect us to it
+    // (no session bus, or a different one) – never stack a second desktop and taskbar on top
+    if cmd != "quit" && SHELL.with(|s| s.borrow().is_none()) && other_shell_running() {
+        eprintln!("aerode: a shell is already running on this display but could not be reached over the session bus");
+        return 1;
+    }
     match cmd {
         "shell" => build(app),
         "start" => { build(app); SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.start.toggle() }); }

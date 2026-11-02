@@ -27,6 +27,8 @@ pub struct StartMenu {
     expanded: RefCell<Vec<String>>,
     pub on_hide: RefCell<Option<Box<dyn Fn()>>>,
     hidden_at: Cell<Option<std::time::Instant>>,
+    /// the menu got keyboard focus since it was last shown (see the window-state handler)
+    armed: Cell<bool>,
 }
 
 const CATS: &[(&str, &str, &str)] = &[
@@ -122,6 +124,7 @@ impl StartMenu {
         let sm = Rc::new(StartMenu {
             win: win.clone(), list, search: search.clone(), avatar: avatar.clone(), mode: Cell::new(0),
             all_btn_label: all_lbl, expanded: RefCell::new(vec![]), on_hide: RefCell::new(None), hidden_at: Cell::new(None),
+            armed: Cell::new(false),
         });
 
         let user = glib::real_name().to_string_lossy().into_owned();
@@ -231,7 +234,22 @@ impl StartMenu {
                 glib::Propagation::Proceed
             });
         }
-        { let s = sm.clone(); win.connect_focus_out_event(move |_, _| { s.hide(); glib::Propagation::Proceed }); }
+        // Close when the WM makes another window active (_NET_WM_STATE_FOCUSED, which GDK reports as the
+        // FOCUSED window state), not on every focus-out: the WM's passive grab on the Windows key and the
+        // menu's own popups (power options, item context menus) cause NotifyGrab focus-outs. Hiding on those
+        // closed the menu on the key *press*, so the window behind it was activated while the key was still
+        // held (its WM caption at the press, its own content only at the release) and a long press reopened
+        // the menu; it also closed the menu as soon as the power-options arrow was clicked. Armed by the
+        // first focus-in after show(), so a stale FOCUSED flag from the previous opening cannot close it.
+        { let s = sm.clone(); win.connect_focus_in_event(move |_, _| { s.armed.set(true); glib::Propagation::Proceed }); }
+        {
+            let s = sm.clone();
+            win.connect_window_state_event(move |_, e| {
+                let lost = e.changed_mask().contains(gdk::WindowState::FOCUSED) && !e.new_window_state().contains(gdk::WindowState::FOCUSED);
+                if lost && s.armed.get() { s.hide(); }
+                glib::Propagation::Proceed
+            });
+        }
         win.connect_draw(move |w, cr| {
             let (ww, hh) = (w.allocated_width() as f64, w.allocated_height() as f64);
             let (x, y) = w.position();
@@ -249,8 +267,8 @@ impl StartMenu {
 
     pub fn toggle(self: &Rc<Self>) {
         if self.visible() { self.hide(); return; }
-        // pressing Win / clicking the orb while the menu is open first steals its focus (which hides
-        // it); that same press must not then reopen it
+        // a Windows-key press that reaches the menu itself (no WM key grab) hides it in the key handler;
+        // the `aerode start` sent for that same press must not then reopen it
         if self.hidden_at.get().map(|t| t.elapsed().as_millis() < 400).unwrap_or(false) { return; }
         self.show()
     }
@@ -263,6 +281,7 @@ impl StartMenu {
         self.populate();
         let g = util::primary_geometry();
         self.win.move_(g.x(), g.y() + g.height() - config::get().taskbar_height - H);
+        self.armed.set(false);
         self.win.show();
         self.win.present_with_time(gtk::current_event_time());
         self.search.grab_focus();
@@ -271,6 +290,7 @@ impl StartMenu {
     pub fn hide(&self) {
         if self.win.is_visible() {
             self.hidden_at.set(Some(std::time::Instant::now()));
+            self.armed.set(false);
             self.win.hide();
             if let Some(f) = self.on_hide.borrow().as_ref() { f(); }
         }
