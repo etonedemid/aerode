@@ -52,4 +52,10 @@ else
     echo ":: no ISO given – run './install.sh /path/to/windows7.iso' (or aerode-extract) for the real Win7 look"
   fi
 fi
+# window managers built before 2026-11-02 cannot re-exec a replaced binary ("aerode-wm (deleted)"),
+# so 'aerode restart' would leave the old one running: tell the user once
+if pgrep -x aerode-wm >/dev/null; then
+  echo ":: run 'aerode restart' to load the new version – if you updated from a build older than"
+  echo "   2026-11-02 (window titles still glow strongly), log out and back in once instead"
+fi
 echo ":: done. Log out and pick the 'Aerode' session in your login manager."

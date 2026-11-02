@@ -184,6 +184,11 @@ impl Wm {
         wm.update_monitors();
         wm.set_supported()?;
         wm.keys.grab(&wm.conn, wm.root)?;
+        // the root shows the arrow too (the session's `xsetroot` may be missing): the desktop, docks,
+        // override-redirect popups and the snap preview inherit it instead of X's default cross
+        if let Some(cur) = keys::cursor(&wm.conn, wm.screen_num, "left_ptr").filter(|c| *c != x11rb::NONE) {
+            let _ = wm.conn.change_window_attributes(wm.root, &ChangeWindowAttributesAux::new().cursor(cur));
+        }
         wm.manage_existing()?;
         wm.conn.flush()?;
         spawn_compositor_watch(wm.check_win);
@@ -1030,14 +1035,7 @@ impl Wm {
             return;
         }
         let fr = self.frame_rect(c);
-        let (fw, fh) = (fr.w, fr.h);
-        let (b, k, t) = (BORDER, 16, 4); // border, corner length, top grab height (caption above)
-        let rects = [
-            (k, 0, fw - 2 * k, t), (k, fh - b, fw - 2 * k, b), (0, k, b, fh - 2 * k), (fw - b, k, b, fh - 2 * k),
-            (0, 0, k, t), (0, 0, b, k), (fw - k, 0, k, t), (fw - b, 0, b, k),
-            (0, fh - b, k, b), (0, fh - k, b, k), (fw - k, fh - b, k, b), (fw - b, fh - k, b, k),
-        ];
-        for (z, (x, y, zw, zh)) in c.zones.iter().zip(rects) {
+        for (z, (x, y, zw, zh)) in c.zones.iter().zip(zone_rects(fr.w, fr.h)) {
             let _ = self.conn.configure_window(*z, &ConfigureWindowAux::new().x(x).y(y).width(zw.max(1) as u32).height(zh.max(1) as u32).stack_mode(StackMode::ABOVE));
             let _ = self.conn.map_window(*z);
         }
@@ -1063,14 +1061,33 @@ impl Wm {
         for (b, r) in self.decor.button_rects(fr.w, c.maximized, &self.buttons_for(c)) {
             if x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3] { return Hit::Button(b); }
         }
-        if c.maximized || !c.resizable { return Hit::Caption; }
-        let corner = 16;
-        let mut e = 0u8;
-        if x < BORDER || (x < corner && (y < BORDER || y > fr.h - BORDER)) { e |= 1; }
-        if x >= fr.w - BORDER || (x >= fr.w - corner && (y < BORDER || y > fr.h - BORDER)) { e |= 2; }
-        if y < 4 || (y < corner && (x < BORDER || x >= fr.w - BORDER)) { e |= 4; }
-        if y >= fr.h - BORDER || (y >= fr.h - corner && (x < BORDER || x >= fr.w - BORDER)) { e |= 8; }
-        if e != 0 { Hit::Edge(e) } else { Hit::Caption }
+        if c.maximized || c.fullscreen || !c.resizable { return Hit::Caption; }
+        // exactly the zones that carry the resize cursors: a click resizes only where the cursor says so
+        for ((zx, zy, zw, zh), e) in zone_rects(fr.w, fr.h).into_iter().zip(ZONE_EDGES) {
+            if x >= zx && y >= zy && x < zx + zw && y < zy + zh { return Hit::Edge(e); }
+        }
+        Hit::Caption
+    }
+
+    /// Cursor held for the whole of a drag: the matching sizing arrow, or the plain arrow while moving
+    /// (Win7). A grab without a cursor shows whatever the pointer happens to cross while the frame lags
+    /// behind it – the app's cursor, the 8 px side zones (horizontal arrows), the window underneath.
+    fn drag_cursor(&self, d: &Drag) -> u32 {
+        let name = match *d {
+            Drag::Resize { edges, .. } => match edges {
+                1 => "left_side", 2 => "right_side", 4 => "top_side", 8 => "bottom_side",
+                5 => "top_left_corner", 6 => "top_right_corner", 9 => "bottom_left_corner", _ => "bottom_right_corner",
+            },
+            _ => "left_ptr",
+        };
+        keys::cursor(&self.conn, self.screen_num, name).unwrap_or(x11rb::NONE)
+    }
+
+    /// Put the drag cursor on the automatic grab of a frame click.
+    fn pin_drag_cursor(&self, time: u32) {
+        let Some((_, d)) = self.drag else { return };
+        let _ = self.conn.change_active_pointer_grab(self.drag_cursor(&d), time,
+            EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION | EventMask::ENTER_WINDOW | EventMask::LEAVE_WINDOW);
     }
 
     // ---------------------------------------------------------- event loop
@@ -1292,7 +1309,8 @@ impl Wm {
                 let edges = [5u8, 4, 6, 2, 10, 8, 9, 1][dir as usize];
                 Drag::Resize { edges, start: c.geom, px, py }
             } else { return };
-            let ok = self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, CURRENT_TIME)
+            let cur = self.drag_cursor(&drag);
+            let ok = self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, cur, CURRENT_TIME)
                 .ok().and_then(|c| c.reply().ok()).map(|r| r.status == GrabStatus::SUCCESS).unwrap_or(false);
             if ok { self.drag = Some((w, drag)); }
         }
@@ -1309,7 +1327,8 @@ impl Wm {
                 let c = &self.clients[&w];
                 self.drag = Some((w, Drag::Move { cx: e.root_x as i32, cy: e.root_y as i32, ox: c.geom.x, oy: c.geom.y, from_max: c.maximized }));
                 self.conn.allow_events(Allow::ASYNC_POINTER, e.time)?;
-                self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, e.time)?;
+                let cur = self.drag.map(|(_, d)| self.drag_cursor(&d)).unwrap_or(x11rb::NONE);
+                self.conn.grab_pointer(false, self.root, EventMask::POINTER_MOTION | EventMask::BUTTON_RELEASE, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, cur, e.time)?;
                 return Ok(());
             }
             self.conn.allow_events(Allow::REPLAY_POINTER, e.time)?;
@@ -1339,9 +1358,11 @@ impl Wm {
                 }
                 self.last_click = (w, now, x, y);
                 self.drag = Some((w, Drag::Move { cx: e.root_x as i32, cy: e.root_y as i32, ox: c.geom.x, oy: c.geom.y, from_max: c.maximized || c.snapped.is_some() }));
+                self.pin_drag_cursor(e.time);
             }
             (1, Hit::Edge(edges)) => {
                 self.drag = Some((w, Drag::Resize { edges, start: c.geom, px: e.root_x as i32, py: e.root_y as i32 }));
+                self.pin_drag_cursor(e.time);
             }
             (3, Hit::Caption) | (3, Hit::Button(_)) => {
                 crate::util::spawn(&["aerode", "sysmenu", &w.to_string(), &e.root_x.to_string(), &e.root_y.to_string()]);
@@ -1468,6 +1489,7 @@ impl Wm {
                     c.maximized = false; c.snapped = None; c.restore = None;
                     self.configure(w, Rect { x: nx, y: ry + 10, ..r });
                     self.update_net_state(w);
+                    self.layout_zones(w);
                     let g = self.clients[&w].geom;
                     self.drag = Some((w, Drag::Move { cx: rx, cy: ry, ox: g.x, oy: g.y, from_max: false }));
                     return;
@@ -1640,10 +1662,21 @@ impl Wm {
             } else if !c.minimized && c.wm_hidden { let _ = self.conn.map_window(w); }
         }
         let _ = self.conn.flush();
-        let exe = std::env::current_exe().unwrap_or_else(|_| "aerode-wm".into());
+        // after ./install.sh replaced the binary, /proc/self/exe reads "/usr/bin/aerode-wm (deleted)":
+        // exec'ing that fails and the old code would keep running with every frame already gone
+        let exe = std::env::current_exe().ok()
+            .map(|p| std::path::PathBuf::from(p.to_string_lossy().trim_end_matches(" (deleted)")))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| "aerode-wm".into());
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new(exe).args(std::env::args().skip(1)).exec();
         eprintln!("aerode-wm: restart failed: {err}");
+        // keep running: adopt the windows we just released again
+        self.clients.clear();
+        self.frames.clear();
+        self.stack.clear();
+        self.active = 0;
+        let _ = self.manage_existing();
     }
 
     fn switch_commit(&mut self, time: u32) {
@@ -1690,6 +1723,20 @@ fn spawn_compositor_watch(check_win: u32) {
 }
 
 fn c_kind_focusable(c: &Client) -> bool { !matches!(c.kind, Kind::Dock | Kind::Desktop) }
+
+/// The 12 resize zones of a frame (frame coordinates), in the order of `ZONE_CURSORS`:
+/// four sides, then two arms per corner.
+fn zone_rects(fw: i32, fh: i32) -> [(i32, i32, i32, i32); 12] {
+    let (b, k, t) = (BORDER, 16, 4); // border, corner length, top grab height (caption above)
+    [
+        (k, 0, fw - 2 * k, t), (k, fh - b, fw - 2 * k, b), (0, k, b, fh - 2 * k), (fw - b, k, b, fh - 2 * k),
+        (0, 0, k, t), (0, 0, b, k), (fw - k, 0, k, t), (fw - b, 0, b, k),
+        (0, fh - b, k, b), (0, fh - k, b, k), (fw - k, fh - b, k, b), (fw - b, fh - k, b, k),
+    ]
+}
+
+/// Resize edges (1 left, 2 right, 4 top, 8 bottom) of each zone in `zone_rects`.
+const ZONE_EDGES: [u8; 12] = [4, 8, 1, 2, 5, 5, 6, 6, 9, 9, 10, 10];
 
 /// Win7 DWM colourisation (0xRRGGBB with alpha) derived from the Personalize tint.
 pub fn colorization(t: &[f64; 4]) -> [f64; 4] {
