@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 DEPS=(gtk3 python cairo pango libx11 libxcb xorg-xsetroot xsettingsd picom
-      7zip wimlib papirus-icon-theme noto-fonts i3lock xss-lock polkit
+      7zip wimlib papirus-icon-theme noto-fonts xsecurelock i3lock xss-lock polkit
       pipewire-pulse wireplumber pavucontrol networkmanager brightnessctl
       playerctl ddcutil udiskie power-profiles-daemon rust)
 # KDE users already have KWallet; a second keyring hijacks org.freedesktop.secrets and logs apps out
@@ -29,6 +29,10 @@ echo ":: installing to /usr (sudo)"
 for b in aerode aerode-wm aerode-extract aerode-polkit; do sudo install -Dm755 "target/release/$b" "/usr/bin/$b"; done
 for b in target/release/aerode-*; do [ -x "$b" ] && [ -f "$b" ] && sudo install -Dm755 "$b" "/usr/bin/$(basename "$b")"; done
 sudo install -Dm755 data/aerode-session /usr/bin/aerode-session
+# the Win7 locked screen: xsecurelock modules (xsecurelock wants auth_* / saver_* names)
+sudo install -d /usr/lib/aerode
+sudo ln -sf /usr/bin/aerode-lockui /usr/lib/aerode/auth_aerode
+sudo ln -sf /usr/bin/aerode-lockui /usr/lib/aerode/saver_aerode
 sudo install -Dm644 data/picom.conf /usr/share/aerode/picom.conf
 sudo install -Dm644 data/gtk.css /usr/share/themes/Aerode/gtk-3.0/gtk.css
 sudo install -Dm644 -t /usr/share/themes/Aerode/gtk-3.0/assets data/gtk-assets/*.png

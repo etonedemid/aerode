@@ -1,12 +1,31 @@
-//! Lock screen: renders a Win7-style "Locked" image and hands off to i3lock
-//! (a proven, secure locker) – we never implement password handling ourselves.
+//! Lock screen. With xsecurelock installed, Win7's locked screen with a live password box comes
+//! from aerode's xsecurelock modules (`aerode-lockui` as auth_aerode / saver_aerode); otherwise a
+//! Win7-style "Locked" picture is handed to i3lock. Either way a proven locker grabs the input and
+//! PAM checks the password – we never implement password handling ourselves.
 use gtk::cairo;
 use gtk::gdk::prelude::GdkContextExt;
 use gtk::glib;
 
 use crate::{config, glass, util};
 
+/// One of aerode's xsecurelock modules, if installed.
+fn module(name: &str) -> Option<String> {
+    ["/usr/lib/aerode", "/usr/local/lib/aerode"].iter().map(|d| format!("{d}/{name}")).find(|p| std::path::Path::new(p).exists())
+}
+
 pub fn lock() {
+    if util::which("xsecurelock") {
+        if let (Some(auth), Some(saver)) = (module("auth_aerode"), module("saver_aerode")) {
+            let ok = std::process::Command::new("xsecurelock")
+                .env("XSECURELOCK_AUTH", auth)
+                .env("XSECURELOCK_SAVER", saver)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            // a non-zero exit means it could not lock (e.g. another grab): lock another way
+            if ok { return; }
+        }
+    }
     let g = util::primary_geometry();
     let (w, h) = (g.width(), g.height());
     // Win7's logon background (extracted from authui/imageres as lockscreen.png)
