@@ -88,8 +88,6 @@ fn kv_grid(rows: &[(&str, String)]) -> gtk::Grid {
     g
 }
 
-fn out(argv: &[&str]) -> String { util::output(argv).unwrap_or_default() }
-
 /// Win7 "Text Services and Input Languages": default input language, installed keyboards
 /// (Add / Remove / Move Up / Move Down), the hot key between input languages, Apply.
 fn input_languages() -> gtk::Widget {
@@ -250,13 +248,6 @@ fn add_input_language(parent: Option<&gtk::Window>) -> Option<aerode::kbdlayout:
     if r == gtk::ResponseType::Ok { pick.filter(|l| !l.layout.is_empty()) } else { None }
 }
 
-/// Run a privileged command through polkit (shows our UAC prompt).
-fn admin(argv: &[&str]) -> bool {
-    let mut a = vec!["pkexec"];
-    a.extend_from_slice(argv);
-    std::process::Command::new(a[0]).args(&a[1..]).status().map(|s| s.success()).unwrap_or(false)
-}
-
 impl Cp {
     fn open(self: &Rc<Self>, page: &str) {
         for c in self.body.children() { self.body.remove(&c); }
@@ -275,7 +266,8 @@ impl Cp {
         } else if let Some((c, w)) = pages::hw::subpage(self, page) {
             // pages inside an applet (Screen Resolution, Change plan settings, a tab of a sheet …)
             (c, w)
-        } else if let Some(a) = all.iter().find(|a| a.id == page) {
+        } else if let Some(a) = all.iter().find(|a| a.id == page || page.strip_prefix(a.id).is_some_and(|r| r.starts_with('/'))) {
+            // "users/picture": the applet's own sub page (the page reads it from the history)
             (format!("{} ▸ {}", registry::category_name(a.cat), a.name), (a.build)(self))
         } else {
             ("All Control Panel Items".into(), self.page_home())
@@ -478,6 +470,8 @@ fn build(app: &gtk::Application, page: String) {
     addr.pack_start(&util::image("preferences-system", 16), false, false, 0);
     let crumb = gtk::Label::new(Some("Control Panel ▸"));
     crumb.set_xalign(0.0);
+    // a long path never widens the window (Win7 cuts the first levels off)
+    crumb.set_ellipsize(gtk::pango::EllipsizeMode::Start);
     addr.pack_start(&crumb, true, true, 0);
     header.pack_start(&addr, true, true, 0);
     let search = gtk::Entry::new();
@@ -535,6 +529,8 @@ fn build(app: &gtk::Application, page: String) {
 fn main() -> glib::ExitCode {
     let page = std::env::args().nth(1).unwrap_or_default();
     if page == "--action-center-summary" { return action_center_summary(); }
+    // run by the session at log on: the Ease of Access settings that start each time you log on
+    if page == "--apply-access" { return pages::core::apply_at_logon(); }
     let app = gtk::Application::new(Some("org.aerode.ControlPanel"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(move |app| build(app, page.clone()));
     app.run_with_args::<&str>(&[])

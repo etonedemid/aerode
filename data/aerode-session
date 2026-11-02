@@ -13,8 +13,16 @@ KWALLET=; [ -f "$HOME/.local/share/kwalletd/kdewallet.kwl" ] && KWALLET=1 && exp
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 mkdir -p "$CONF"
 SHARE=/usr/share/aerode
+# Ease of Access > Make the computer easier to see > High Contrast (GTK's built-in high contrast themes)
+[ -s "$CONF/high-contrast" ] && export GTK_THEME="$(cat "$CONF/high-contrast")"
+# Region and Language: formats and display language (~/.config/locale.conf), which not every
+# display manager reads for X sessions
+LOCALECONF="${XDG_CONFIG_HOME:-$HOME/.config}/locale.conf"
+[ -r "$LOCALECONF" ] && { set -a; . "$LOCALECONF"; set +a; }
 # pointer scheme chosen in Control Panel > Mouse > Pointers
 [ -s "$CONF/cursor-theme" ] && export XCURSOR_THEME="$(cat "$CONF/cursor-theme")"
+# pointer size chosen in Ease of Access > Make the mouse easier to use (Large / Extra Large)
+[ -s "$CONF/cursor-size" ] && export XCURSOR_SIZE="$(cat "$CONF/cursor-size")"
 # user variables from System Properties > Environment Variables (~/.config/environment.d), which
 # display managers don't read for X sessions
 ENVGEN=/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator
@@ -38,6 +46,7 @@ cat > "$CONF/xsettingsd.conf" <<EOT
 Net/ThemeName "Aerode"
 Net/IconThemeName "$ICONS"
 Gtk/CursorThemeName "${XCURSOR_THEME:-Adwaita}"
+${XCURSOR_SIZE:+Gtk/CursorThemeSize $XCURSOR_SIZE}
 Gtk/FontName "Segoe UI 9"
 Gtk/MenuImages 1
 Gtk/ButtonImages 1
@@ -46,6 +55,9 @@ EOT
 command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
 xsetroot -cursor_name left_ptr 2>/dev/null
 [ -f "$CONF/Xresources" ] && xrdb -merge "$CONF/Xresources"
+# Ease of Access settings that start each time you log on (Sticky/Filter/Mouse Keys, pointer
+# size and colour, Magnifier/Narrator/On-Screen Keyboard)
+command -v aerode-control >/dev/null && aerode-control --apply-access &
 
 # settings saved by Control Panel (resolution + refresh rate, keyboard layouts, screen timeout)
 [ -x "$CONF/displays.sh" ] || [ -f "$CONF/displays.sh" ] && sh "$CONF/displays.sh"

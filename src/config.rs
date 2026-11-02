@@ -54,6 +54,13 @@ pub struct Config {
     /// Control Panel hardware / system applets: System Properties, Sound, Date and Time, Power
     /// Options, Mouse, Keyboard, Display text size
     pub hw: HwOptions,
+    /// User Account Control Settings slider: 3 Always notify, 2 Default, 1 Notify without dimming
+    /// the desktop, 0 Never notify (None = 2, the default)
+    pub uac_level: Option<u32>,
+    /// Region and Language > Location (ISO 3166 country code; "" = the one the locale names)
+    pub location: String,
+    /// Ease of Access settings that start each time you log on ("stickykeys" -> "1", "cursor" -> "large"…)
+    pub ease_of_access: HashMap<String, String>,
 }
 
 /// The Win7 Visual Effects list (System Properties > Advanced > Performance Settings), in its order:
@@ -415,6 +422,9 @@ impl Default for Config {
             autoplay: true,
             autoplay_actions: HashMap::new(),
             hw: HwOptions::default(),
+            uac_level: None,
+            location: String::new(),
+            ease_of_access: HashMap::new(),
         }
     }
 }
