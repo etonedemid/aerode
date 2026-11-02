@@ -1,5 +1,7 @@
 //! Control Panel applets that live outside main.rs, one file per group so they can grow independently.
 pub mod admin;
+pub mod core;
+pub mod hw;
 pub mod desktop;
 pub mod extras;
 
