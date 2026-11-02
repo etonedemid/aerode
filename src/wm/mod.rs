@@ -38,7 +38,7 @@ x11rb::atom_manager! {
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
-        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS,
+        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS,
     }
 }
 
@@ -428,6 +428,8 @@ impl Wm {
                 self.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, frame, self.root, fx as i16, fy as i16, fw.max(1) as u16, fh.max(1) as u16, 0, WindowClass::INPUT_OUTPUT, 0, &aux)
             };
             if res.is_err() { return; }
+            // picom blurs only windows tagged as aerode glass (not the shadow margins of client-drawn apps)
+            let _ = self.conn.change_property32(PropMode::REPLACE, frame, self.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
             let _ = self.conn.change_save_set(SetMode::INSERT, w);
             let _ = self.conn.reparent_window(w, frame, BORDER as i16, TOP as i16);
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().border_width(0));
@@ -1485,6 +1487,7 @@ impl Wm {
         if cmap != 0 { aux = aux.colormap(cmap); }
         let r2 = Rect { x: r.x + 8, y: r.y + 8, w: r.w - 16, h: r.h - 16 };
         if self.conn.create_window(depth, win, self.root, r2.x as i16, r2.y as i16, r2.w as u16, r2.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return; }
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
         let _ = self.conn.map_window(win);
         // paint: glass rectangle with white edge (Win7 "peek" outline)
         if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r2.w, r2.h) {

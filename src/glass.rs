@@ -198,6 +198,13 @@ pub fn composited() -> bool {
 /// Give a toplevel an RGBA visual so it can be truly translucent.
 pub fn enable_rgba(w: &gtk::Window) {
     use gtk::prelude::*;
+    // tag it as aerode glass: picom blurs behind tagged windows only
+    let tag = |w: &gtk::Window| if let Some(gw) = w.window() {
+        gtk::gdk::property_change(&gw, &gtk::gdk::Atom::intern("_AERODE_GLASS"), &gtk::gdk::Atom::intern("CARDINAL"), 32,
+            gtk::gdk::PropMode::Replace, gtk::gdk::ChangeData::ULongs(&[1]));
+    };
+    if w.is_realized() { tag(w); }
+    w.connect_realize(move |w| tag(w));
     if let Some(v) = gtk::prelude::WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }
     w.connect_screen_changed(|w, _| {
         if let Some(v) = gtk::prelude::WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }

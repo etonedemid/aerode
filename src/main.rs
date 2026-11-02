@@ -176,6 +176,16 @@ fn restart_session() {
         let _ = std::process::Command::new("pkill").args(["-x", "picom"]).status();
         std::thread::sleep(std::time::Duration::from_millis(300));
         let user = aerode::config::conf_dir().join("picom.conf");
+        // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off)
+        if let Ok(old) = std::fs::read_to_string(&user) {
+            if !old.contains("_AERODE_GLASS") {
+                match std::fs::read_to_string("/usr/share/aerode/picom.conf") {
+                    Ok(base) if old.contains("vsync = false") => { let _ = std::fs::write(&user, base.replace("vsync = true;", "vsync = false;")); }
+                    Ok(_) => { let _ = std::fs::remove_file(&user); }
+                    Err(_) => {}
+                }
+            }
+        }
         let user = user.to_string_lossy().into_owned();
         let conf = [user.as_str(), "/usr/share/aerode/picom.conf"].into_iter().find(|p| std::path::Path::new(p).exists());
         if !aerode::config::conf_dir().join("no-compositor").exists() {
