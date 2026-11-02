@@ -51,6 +51,174 @@ pub struct Config {
     pub autoplay: bool,
     /// AutoPlay action per media type (key from autoplay::MEDIA): "ask" | "none" | "open" | "run" | "app:<desktop id>"
     pub autoplay_actions: HashMap<String, String>,
+    /// Control Panel hardware / system applets: System Properties, Sound, Date and Time, Power
+    /// Options, Mouse, Keyboard, Display text size
+    pub hw: HwOptions,
+}
+
+/// The Win7 Visual Effects list (System Properties > Advanced > Performance Settings), in its order:
+/// (key in `HwOptions::effects_off`, label).
+pub const VISUAL_EFFECTS: &[(&str, &str)] = &[
+    ("animate_controls", "Animate controls and elements inside windows"),
+    ("animate_minmax", "Animate windows when minimizing and maximizing"),
+    ("animate_taskbar", "Animations in the taskbar and Start Menu"),
+    ("aero_peek", "Enable Aero Peek"),
+    ("composition", "Enable desktop composition"),
+    ("glass", "Enable transparent glass"),
+    ("menu_fade", "Fade or slide menus into view"),
+    ("tooltip_fade", "Fade or slide ToolTips into view"),
+    ("menu_item_fade", "Fade out menu items after clicking"),
+    ("thumb_cache", "Save taskbar thumbnail previews"),
+    ("pointer_shadow", "Show shadows under mouse pointer"),
+    ("window_shadow", "Show shadows under windows"),
+    ("thumbnails", "Show thumbnails instead of icons"),
+    ("selection_rect", "Show translucent selection rectangle"),
+    ("drag_full", "Show window contents while dragging"),
+    ("combo_slide", "Slide open combo boxes"),
+    ("font_smoothing", "Smooth edges of screen fonts"),
+    ("list_smooth", "Smooth-scroll list boxes"),
+    ("icon_shadow", "Use drop shadows for icon labels on the desktop"),
+    ("visual_styles", "Use visual styles on windows and buttons"),
+];
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct HwOptions {
+    /// Performance Options > Visual Effects: auto | appearance | performance | custom
+    pub visual_effects: String,
+    /// visual effects turned off (keys of `VISUAL_EFFECTS`); see `HwOptions::effect`
+    pub effects_off: Vec<String>,
+    /// Performance Options > Advanced > Processor scheduling: programs | services
+    pub scheduling: String,
+    /// System Properties > Hardware > Device Installation Settings: auto | ask | never
+    pub driver_downloads: String,
+    /// System Properties > Remote: Remote Assistance (x11vnc on localhost, started at logon)
+    pub remote_assistance: bool,
+    /// Sound > Communications: mute | reduce80 | reduce50 | none
+    pub comms_action: String,
+    /// Sound: the Default Communication Device (PulseAudio/PipeWire name, "" = the default device)
+    pub comms_sink: String,
+    pub comms_source: String,
+    /// Date and Time > Additional Clocks (Win7 has two)
+    pub clocks: Vec<ExtraClock>,
+    /// Date and Time: "Notify me when the clock changes" (daylight saving time)
+    pub dst_notify: bool,
+    /// Display: text size in dots per inch (96 = 100 %, 120 = 125 %, 144 = 150 %)
+    pub dpi: u32,
+    pub power: PowerOptions,
+    pub mouse: MouseOptions,
+    pub keyboard: KeyboardOptions,
+}
+
+impl Default for HwOptions {
+    fn default() -> Self {
+        HwOptions { visual_effects: "auto".into(), effects_off: vec![], scheduling: "programs".into(), driver_downloads: "auto".into(),
+            remote_assistance: false, comms_action: "reduce80".into(), comms_sink: String::new(), comms_source: String::new(),
+            clocks: vec![], dst_notify: true, dpi: 96, power: PowerOptions::default(), mouse: MouseOptions::default(),
+            keyboard: KeyboardOptions::default() }
+    }
+}
+
+impl HwOptions {
+    /// Is this visual effect (a key of `VISUAL_EFFECTS`) turned on?
+    pub fn effect(&self, key: &str) -> bool { !self.effects_off.iter().any(|k| k == key) }
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct ExtraClock {
+    pub show: bool,
+    /// IANA time zone ("Europe/Berlin")
+    pub tz: String,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct PowerOptions {
+    /// the active plan: balanced | power-saver | performance | an id of `custom`
+    pub plan: String,
+    /// per-plan settings changed in Control Panel (missing = the Win7 defaults, see `power::defaults`)
+    pub plans: HashMap<String, PowerPlan>,
+    /// plans made with "Create a power plan"
+    pub custom: Vec<CustomPlan>,
+    /// "Require a password on wakeup"
+    pub require_password: bool,
+    /// "Show additional plans" expanded
+    pub show_more: bool,
+}
+
+impl Default for PowerOptions {
+    fn default() -> Self {
+        PowerOptions { plan: "balanced".into(), plans: HashMap::new(), custom: vec![], require_password: true, show_more: false }
+    }
+}
+
+/// Timers in minutes (0 = never), brightness in percent; `_dc` = on battery, `_ac` = plugged in.
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Debug)]
+#[serde(default)]
+pub struct PowerPlan {
+    pub display_dc: u32,
+    pub display_ac: u32,
+    pub sleep_dc: u32,
+    pub sleep_ac: u32,
+    pub bright_dc: u32,
+    pub bright_ac: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CustomPlan {
+    pub id: String,
+    pub name: String,
+    /// the plan it was based on (its power profile): balanced | power-saver | performance
+    pub base: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct MouseOptions {
+    /// Buttons: switch primary and secondary buttons
+    pub left_handed: bool,
+    /// double-click time in ms (Win7 default 500)
+    pub double_click: u32,
+    /// ClickLock (libinput tap-and-drag lock) and how long to hold before it locks (ms)
+    pub click_lock: bool,
+    pub click_lock_ms: u32,
+    /// Pointer Options: speed -1..1 (libinput Accel Speed), Enhance pointer precision (adaptive profile)
+    pub speed: f64,
+    pub precision: bool,
+    /// Hide pointer while typing (unclutter/xbanish when installed)
+    pub hide_typing: bool,
+    /// Wheel: lines per notch, or one screen at a time; characters per tilt
+    pub wheel_lines: u32,
+    pub wheel_page: bool,
+    pub wheel_chars: u32,
+    /// Pointers: cursor theme ("" = the session default)
+    pub cursor_theme: String,
+    pub cursor_shadow: bool,
+}
+
+impl Default for MouseOptions {
+    fn default() -> Self {
+        MouseOptions { left_handed: false, double_click: 500, click_lock: false, click_lock_ms: 1200, speed: 0.0, precision: true,
+            hide_typing: true, wheel_lines: 3, wheel_page: false, wheel_chars: 3, cursor_theme: String::new(), cursor_shadow: true }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct KeyboardOptions {
+    /// repeat delay in ms (Win7: 250 / 500 / 750 / 1000) and repeat rate in characters per second;
+    /// 0 = never set here (the X server's own values stay)
+    pub delay: u32,
+    pub rate: u32,
+    /// cursor blink time in ms (0 = no blinking)
+    pub blink: u32,
+}
+
+impl Default for KeyboardOptions {
+    fn default() -> Self { KeyboardOptions { delay: 0, rate: 0, blink: 530 } }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -246,6 +414,7 @@ impl Default for Config {
             desktop_icon_art: HashMap::new(),
             autoplay: true,
             autoplay_actions: HashMap::new(),
+            hw: HwOptions::default(),
         }
     }
 }

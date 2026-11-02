@@ -13,6 +13,19 @@ KWALLET=; [ -f "$HOME/.local/share/kwalletd/kdewallet.kwl" ] && KWALLET=1 && exp
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 mkdir -p "$CONF"
 SHARE=/usr/share/aerode
+# pointer scheme chosen in Control Panel > Mouse > Pointers
+[ -s "$CONF/cursor-theme" ] && export XCURSOR_THEME="$(cat "$CONF/cursor-theme")"
+# user variables from System Properties > Environment Variables (~/.config/environment.d), which
+# display managers don't read for X sessions
+ENVGEN=/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator
+if [ -x "$ENVGEN" ]; then
+  ENVD=$("$ENVGEN" 2>/dev/null)
+  # the generator prints KEY=value, quoting values that contain spaces
+  while IFS= read -r l; do case "$l" in [A-Za-z_]*=*) k=${l%%=*}; v=${l#*=}
+    case "$v" in \"*\") v=${v#\"}; v=${v%\"};; esac; export "$k=$v";; esac; done <<EOT
+$ENVD
+EOT
+fi
 
 # GTK/Xsettings for the session only (icons, cursors, fonts)
 ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aerode/index.theme" ] && ICONS=Aerode
@@ -37,7 +50,10 @@ xsetroot -cursor_name left_ptr 2>/dev/null
 # settings saved by Control Panel (resolution + refresh rate, keyboard layouts, screen timeout)
 [ -x "$CONF/displays.sh" ] || [ -f "$CONF/displays.sh" ] && sh "$CONF/displays.sh"
 [ -f "$CONF/keyboard.sh" ] && sh "$CONF/keyboard.sh"
-[ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && { xset -dpms; xset s off; } || { xset +dpms dpms "$t" "$t" "$t"; xset s "$t"; }; }
+# Mouse and Keyboard Properties (xinput pointer speed/buttons, key repeat)
+[ -f "$CONF/input.sh" ] && sh "$CONF/input.sh"
+# Power Options > Turn off the display (the shell's power watcher keeps it up to date with the plan)
+[ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && xset -dpms || xset +dpms dpms 0 0 "$t"; }
 # Screen Saver Settings > Wait (seconds, 0 = no screen saver and no lock); xss-lock below runs it
 [ -f "$CONF/screensaver-wait" ] && { t=$(cat "$CONF/screensaver-wait"); [ "$t" = 0 ] && xset s off || xset s "$t"; }
 

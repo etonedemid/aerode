@@ -53,6 +53,8 @@ fn build(app: &gtk::Application) {
     aerode::sounds::start_watchers();
     // AutoPlay for discs, drives and devices plugged in from now on
     aerode::autoplay::watch();
+    // Power Options: display-off and sleep timers of the active plan, on battery / plugged in
+    aerode::power::start();
     SHELL.with(|s| *s.borrow_mut() = Some(Shell { _desktop: d, taskbar: tb, start: sm }));
 }
 

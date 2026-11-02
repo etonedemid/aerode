@@ -162,7 +162,7 @@ fn ram_gb() -> f64 {
 pub fn page(cp: &Rc<Cp>) -> gtk::Widget {
     let holder = vbox(0);
     holder.style_context().add_class("adm");
-    { let cp2 = cp.clone(); side_action(cp, "Adjust visual effects", move || cp2.open("display")); }
+    { let cp2 = cp.clone(); side_action(cp, "Adjust visual effects", move || super::super::hw::visual_effects(&cp2)); }
     { let cp2 = cp.clone(); side_action(cp, "Adjust power settings", move || cp2.open("power")); }
     side_action(cp, "Open disk cleanup", || spawn_tool("cleanmgr"));
     { let (cp2, h) = (cp.clone(), holder.clone()); side_action(cp, "Advanced tools", move || advanced(&cp2, &h)); }
@@ -387,7 +387,7 @@ fn advanced(cp: &Rc<Cp>, holder: &gtk::Box) {
         (&["utilities-system-monitor"], "Open Resource Monitor", Box::new(|| { util::spawn(&["aerode-taskmgr"]); })),
         (&["utilities-system-monitor"], "Open Task Manager", Box::new(|| { util::spawn(&["aerode-taskmgr"]); })),
         (&["aerode-msinfo", "dialog-information"], "View advanced system details in System Information", Box::new(|| spawn_tool("sysinfo"))),
-        (&["preferences-desktop-display"], "Adjust the appearance and performance of Windows", { let cp = cp.clone(); Box::new(move || cp.open("display")) }),
+        (&["preferences-desktop-display"], "Adjust the appearance and performance of Windows", { let cp = cp.clone(); Box::new(move || super::super::hw::visual_effects(&cp)) }),
         (&["aerode-cleanmgr", "user-trash-full"], "Open Disk Cleanup", Box::new(|| spawn_tool("cleanmgr"))),
     ];
     let list = vbox(6);

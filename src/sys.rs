@@ -265,8 +265,10 @@ fn play_blocking(ev: crate::sounds::Event) {
 }
 pub fn shutdown() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "poweroff"]); }
 pub fn restart() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "reboot"]); }
-pub fn sleep() { lock(); spawn(&["systemctl", "suspend"]); }
-pub fn hibernate() { lock(); spawn(&["systemctl", "hibernate"]); }
+/// Power Options > "Require a password on wakeup": lock before sleeping / hibernating.
+fn lock_for_wakeup() { if crate::config::get().hw.power.require_password { lock(); } }
+pub fn sleep() { lock_for_wakeup(); spawn(&["systemctl", "suspend"]); }
+pub fn hibernate() { lock_for_wakeup(); spawn(&["systemctl", "hibernate"]); }
 pub fn log_off() {
     play_blocking(crate::sounds::Event::Logoff);
     // ending the window manager ends the session (it is the session leader)

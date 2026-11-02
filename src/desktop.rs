@@ -498,7 +498,7 @@ impl Desktop {
         m.append(&ni);
         m.append(&gtk::SeparatorMenuItem::new());
         let res = gtk::MenuItem::with_label("Screen resolution");
-        res.connect_activate(|_| { util::spawn(&["aerode-control", "display"]); });
+        res.connect_activate(|_| { util::spawn(&["aerode-control", "resolution"]); });
         util::menu_icon(&res, "preferences-desktop-display");
         m.append(&res);
         let gad = gtk::MenuItem::with_label("Gadgets");

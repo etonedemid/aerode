@@ -772,7 +772,7 @@ fn sample_box(antialias: cairo::Antialias, order: cairo::SubpixelOrder, hint: ca
     a
 }
 
-fn cleartype_tuner(cp: &Rc<Cp>) {
+pub(crate) fn cleartype_tuner(cp: &Rc<Cp>) {
     let o = config::get().fonts;
     let w = gtk::Window::new(gtk::WindowType::Toplevel);
     w.set_title("ClearType Text Tuner");
