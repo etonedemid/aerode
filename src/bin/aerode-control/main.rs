@@ -283,7 +283,10 @@ impl Cp {
         // the left task pane (Win7 shows "Control Panel Home" on every sub page)
         if !(page.is_empty() || page == "home") {
             let me = self.clone();
-            self.side.pack_start(&link("Control Panel Home", move || me.open("home")), false, false, 0);
+            let home = link("Control Panel Home", move || me.open("home"));
+            self.side.pack_start(&home, false, false, 0);
+            // above the page's own task links
+            self.side.reorder_child(&home, 0);
             self.side.show_all();
             self.side.set_visible(true);
         } else { self.side.set_visible(false); }
@@ -448,6 +451,8 @@ fn build(app: &gtk::Application, page: String) {
     theme::init_app();
     theme::load_css(aerode::explorer::CSS);
     theme::load_css(CSS);
+    // Event Viewer, Device Manager, Disk Management… have their own window, like MMC consoles
+    if pages::admin::standalone(app, &page) { return; }
     let win = gtk::ApplicationWindow::new(app);
     win.set_default_size(880, 620);
     win.set_icon_name(Some(util::first_icon(&["preferences-system"])));

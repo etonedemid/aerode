@@ -35,6 +35,49 @@ pub struct Config {
     pub tray_icons: HashMap<String, String>,
     /// "Always show all icons and notifications on the taskbar"
     pub tray_show_all: bool,
+    /// Control Panel ▸ System and Security: Windows Update, Action Center, Backup, Experience Index
+    pub maintenance: Maintenance,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct Maintenance {
+    /// Windows Update: "" / "check" = look for updates once a day, "never"
+    pub update_mode: String,
+    /// Windows Update: leave out AUR updates (yay/paru)
+    pub update_no_aur: bool,
+    /// Action Center message kinds that are turned off ("firewall", "updates", "backup", …)
+    pub ac_off: Vec<String>,
+    /// Backup and Restore: the home-folder backup set up there
+    pub backup: Option<Backup>,
+    /// Performance Information and Tools: the last Windows Experience Index assessment
+    pub wei: Option<Wei>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct Backup {
+    /// folder on the backup drive that holds the copy
+    pub dest: String,
+    /// folders under home to back up; empty = the whole home folder
+    pub folders: Vec<String>,
+    /// "daily" | "weekly" | "monthly" | "" (no schedule)
+    pub schedule: String,
+    /// weekday (0 = Sunday) or day of the month
+    pub day: u32,
+    pub hour: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct Wei {
+    pub cpu: f64,
+    pub mem: f64,
+    pub gfx: f64,
+    pub game: f64,
+    pub disk: f64,
+    /// unix time of the assessment
+    pub when: i64,
 }
 
 impl Default for Config {
@@ -57,6 +100,7 @@ impl Default for Config {
             kbd_switch: None,
             tray_icons: HashMap::new(),
             tray_show_all: false,
+            maintenance: Maintenance::default(),
         }
     }
 }
