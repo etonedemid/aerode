@@ -29,7 +29,7 @@ pub struct Desktop {
     _monitor: RefCell<Option<gio::FileMonitor>>,
     /// rubber-band selection: (start x, start y, current x, current y, ctrl held)
     band: RefCell<Option<(f64, f64, f64, f64, bool)>>,
-    band_area: gtk::DrawingArea,
+    band_area: gtk::Box,
     band_base: RefCell<Vec<gtk::Button>>,
 }
 
@@ -66,7 +66,11 @@ impl Desktop {
         // the selection rectangle is drawn on an overlay that lets all input through
         let overlay = gtk::Overlay::new();
         overlay.add(&ev);
-        let band_area = gtk::DrawingArea::new();
+        // a window-less widget: a DrawingArea has its own input window, which pass-through does not
+        // cover, and it swallowed every click on the desktop
+        let band_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        band_area.set_halign(gtk::Align::Fill);
+        band_area.set_valign(gtk::Align::Fill);
         overlay.add_overlay(&band_area);
         overlay.set_overlay_pass_through(&band_area, true);
         win.add(&overlay);
