@@ -31,6 +31,7 @@ for b in target/release/aerode-*; do [ -x "$b" ] && [ -f "$b" ] && sudo install 
 sudo install -Dm755 data/aerode-session /usr/bin/aerode-session
 sudo install -Dm644 data/picom.conf /usr/share/aerode/picom.conf
 sudo install -Dm644 data/gtk.css /usr/share/themes/Aerode/gtk-3.0/gtk.css
+sudo install -Dm644 -t /usr/share/themes/Aerode/gtk-3.0/assets data/gtk-assets/*.png
 sudo install -Dm644 data/aerode.desktop /usr/share/xsessions/aerode.desktop
 for f in data/applications/*.desktop; do [ -f "$f" ] && sudo install -Dm644 "$f" "/usr/share/applications/$(basename "$f")"; done
 if [ -n "$1" ]; then

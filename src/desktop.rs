@@ -186,7 +186,20 @@ impl Desktop {
         }
         let mut files: Vec<_> = std::fs::read_dir(desktop_dir()).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default();
         files.retain(|p: &PathBuf| !p.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(true));
-        files.sort_by_key(|p| (!p.is_dir(), p.file_name().map(|n| n.to_string_lossy().to_lowercase())));
+        let cfg = config::get();
+        let name_of = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let ext_of = |p: &PathBuf| p.extension().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let meta = |p: &PathBuf| std::fs::metadata(p).ok();
+        files.sort_by(|a, b| {
+            let o = match cfg.desktop_sort.as_str() {
+                "size" => meta(a).map(|m| m.len()).cmp(&meta(b).map(|m| m.len())),
+                "type" => ext_of(a).cmp(&ext_of(b)),
+                "date" => meta(a).and_then(|m| m.modified().ok()).cmp(&meta(b).and_then(|m| m.modified().ok())),
+                _ => std::cmp::Ordering::Equal,
+            }.then_with(|| name_of(a).cmp(&name_of(b)));
+            let o = if cfg.desktop_sort_desc { o.reverse() } else { o };
+            b.is_dir().cmp(&a.is_dir()).then(o)
+        });
         for p in files {
             if p.extension().map(|e| e == "desktop").unwrap_or(false) {
                 if let Some(a) = gio::DesktopAppInfo::from_filename(&p) {
@@ -367,7 +380,62 @@ impl Desktop {
         m.append(&vi);
         let refresh = gtk::MenuItem::with_label("Refresh");
         { let d = Rc::downgrade(self); refresh.connect_activate(move |_| if let Some(d) = d.upgrade() { d.rebuild() }); }
+        let sort = gtk::Menu::new();
+        let cur = config::get().desktop_sort;
+        let mut group: Option<gtk::RadioMenuItem> = None;
+        for (l, key) in [("Name", "name"), ("Size", "size"), ("Item type", "type"), ("Date modified", "date")] {
+            let i = match &group { Some(g) => gtk::RadioMenuItem::with_label_from_widget(g, Some(l)), None => gtk::RadioMenuItem::with_label(l) };
+            i.set_active(cur == key);
+            group.get_or_insert_with(|| i.clone());
+            let d = Rc::downgrade(self);
+            // choosing the current key again flips the order, like Explorer
+            i.connect_activate(move |_| {
+                config::update(|c| { if c.desktop_sort == key { c.desktop_sort_desc = !c.desktop_sort_desc } else { c.desktop_sort = key.into(); c.desktop_sort_desc = false } });
+                if let Some(d) = d.upgrade() { d.rebuild(); }
+            });
+            sort.append(&i);
+        }
+        let si = gtk::MenuItem::with_label("Sort by");
+        si.set_submenu(Some(&sort));
+        m.append(&si);
         m.append(&refresh);
+        m.append(&gtk::SeparatorMenuItem::new());
+        let clip = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+        let has_files = clip.wait_is_target_available(&gdk::Atom::intern("x-special/gnome-copied-files")) || clip.wait_is_uris_available();
+        let paste = gtk::MenuItem::with_label("Paste");
+        paste.set_sensitive(has_files);
+        {
+            let d = Rc::downgrade(self);
+            paste.connect_activate(move |_| {
+                let d = d.clone();
+                crate::explorer::ops::get_clipboard(move |files, cut| {
+                    if files.is_empty() { return; }
+                    let kind = if cut { crate::explorer::ops::Kind::Move } else { crate::explorer::ops::Kind::Copy };
+                    let d = d.clone();
+                    crate::explorer::ops::transfer(files, desktop_dir(), kind, move || if let Some(d) = d.upgrade() { d.rebuild() });
+                });
+            });
+        }
+        m.append(&paste);
+        let paste_sc = gtk::MenuItem::with_label("Paste shortcut");
+        paste_sc.set_sensitive(has_files);
+        {
+            let d = Rc::downgrade(self);
+            paste_sc.connect_activate(move |_| {
+                let d = d.clone();
+                crate::explorer::ops::get_clipboard(move |files, _| {
+                    for f in files {
+                        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        let mut dst = desktop_dir().join(format!("{name} - Shortcut"));
+                        let mut n = 2;
+                        while dst.exists() { dst = desktop_dir().join(format!("{name} - Shortcut ({n})")); n += 1; }
+                        let _ = std::os::unix::fs::symlink(&f, &dst);
+                    }
+                    if let Some(d) = d.upgrade() { d.rebuild(); }
+                });
+            });
+        }
+        m.append(&paste_sc);
         m.append(&gtk::SeparatorMenuItem::new());
         let new = gtk::Menu::new();
         for (l, kind) in [("Folder", 0), ("Shortcut", 2), ("Text Document", 1)] {
@@ -403,12 +471,15 @@ impl Desktop {
         m.append(&gtk::SeparatorMenuItem::new());
         let res = gtk::MenuItem::with_label("Screen resolution");
         res.connect_activate(|_| { util::spawn(&["aerode-control", "display"]); });
+        util::menu_icon(&res, "preferences-desktop-display");
         m.append(&res);
         let gad = gtk::MenuItem::with_label("Gadgets");
         gad.connect_activate(|_| crate::gadgets::show_gallery());
+        util::menu_icon(&gad, util::first_icon(&["aerode-gadgets", "preferences-desktop-gadgets"]));
         m.append(&gad);
         let per = gtk::MenuItem::with_label("Personalize");
         per.connect_activate(|_| crate::dialogs::personalize());
+        util::menu_icon(&per, "preferences-desktop-wallpaper");
         m.append(&per);
         m.show_all();
         m.popup_at_pointer(Some(e));

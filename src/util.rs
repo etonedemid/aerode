@@ -18,6 +18,19 @@ pub fn pixbuf(name: &str, size: i32) -> Option<Pixbuf> {
         .flatten()
 }
 
+/// Show a 16px icon in a menu item's gutter (on the check-background box position), like Win7.
+pub fn menu_icon(item: &gtk::MenuItem, name: &str) {
+    let Some(pb) = pixbuf(name, 16) else { return };
+    item.connect_local("draw", true, move |args| {
+        let w = args[0].get::<gtk::Widget>().ok()?;
+        let cr = args[1].get::<gtk::cairo::Context>().ok()?;
+        let y = (w.allocated_height() - 16) as f64 / 2.0;
+        cr.set_source_pixbuf(&pb, 3.0, y.floor());
+        if w.is_sensitive() { cr.paint().ok(); } else { cr.paint_with_alpha(0.45).ok(); }
+        Some(false.to_value())
+    });
+}
+
 pub fn pixbuf_or(name: &str, size: i32, fallback: &str) -> Option<Pixbuf> {
     pixbuf(name, size).or_else(|| pixbuf(fallback, size))
 }
