@@ -2,8 +2,9 @@
 use gtk::gdk::prelude::GdkContextExt;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
-use std::cell::RefCell;
-use std::path::PathBuf;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::{config, glass, util};
@@ -31,7 +32,29 @@ pub struct Desktop {
     band: RefCell<Option<(f64, f64, f64, f64, bool)>>,
     band_area: gtk::Box,
     band_base: RefCell<Vec<gtk::Button>>,
+    /// icon key → its top-left on the desktop, as laid out now
+    placed: RefCell<HashMap<String, (i32, i32)>>,
+    /// grid step (width, height) of the current icon size
+    step: Cell<(i32, i32)>,
+    /// a drag from the desktop: the keys of the dragged icons, the one under the pointer and
+    /// where inside it the pointer was
+    dragging: RefCell<Vec<String>>,
+    drag_anchor: RefCell<Option<(String, f64, f64)>>,
+    /// the press on an already selected icon: becomes "select only this one" if no drag follows
+    pending_single: RefCell<Option<gtk::Button>>,
+    /// where a drop would go: a folder, the Recycle Bin ("trash:") or None = onto the desktop
+    drop_target: RefCell<Option<(Option<PathBuf>, gdk::DragAction)>>,
+    drop_hl: RefCell<Option<gtk::Button>>,
 }
+
+/// Desktop icon spacing, like Win7's icon grid.
+const GRID_X0: i32 = 4;
+const GRID_Y0: i32 = 4;
+
+fn item_key(t: &Target) -> String {
+    match t { Target::Path(p) => p.to_string_lossy().into_owned(), Target::Uri(u) => u.clone() }
+}
+
 
 fn desktop_dir() -> PathBuf {
     util::special_dir(glib::UserDirectory::Desktop, "Desktop")
@@ -97,7 +120,13 @@ impl Desktop {
             glib::Propagation::Proceed
         });
         let d = Rc::new(Desktop { win: win.clone(), fixed, selected: RefCell::new(vec![]), _monitor: RefCell::new(None),
-            band: RefCell::new(None), band_area: band_area.clone(), band_base: RefCell::new(vec![]) });
+            band: RefCell::new(None), band_area: band_area.clone(), band_base: RefCell::new(vec![]),
+            placed: RefCell::new(HashMap::new()), step: Cell::new((1, 1)), dragging: RefCell::new(vec![]),
+            drag_anchor: RefCell::new(None), pending_single: RefCell::new(None), drop_target: RefCell::new(None),
+            drop_hl: RefCell::new(None) });
+        // on the overlay: GTK's drop-target lookup stops at the (input pass-through) selection
+        // rectangle layer on top, which would hide every drop on the desktop
+        d.wire_drop(overlay.upcast_ref());
         {
             let d2 = d.clone();
             ev.connect_button_press_event(move |_, e| {
@@ -248,18 +277,202 @@ impl Desktop {
     }
 
     pub fn rebuild(self: &Rc<Self>) {
+        // keep the selection across a rebuild (icons moved, a file appeared)
+        let was_selected: Vec<String> = self.selected.borrow().iter().filter_map(|b| unsafe { b.data::<String>("key").map(|k| k.as_ref().clone()) }).collect();
         for c in self.fixed.children() { self.fixed.remove(&c); }
         self.selected.borrow_mut().clear();
-        let size = config::get().icon_size;
+        let cfg = config::get();
+        let size = cfg.icon_size;
         let g = util::primary_geometry();
         let (cw, ch) = (size + 30, size + 44);
-        let rows = ((g.height() - config::get().taskbar_height - 8) / (ch + 4)).max(1);
-        for (i, it) in self.items().into_iter().enumerate() {
-            let (col, row) = (i as i32 / rows, i as i32 % rows);
-            let w = self.icon_widget(it, size, cw);
-            self.fixed.put(&w, 4 + col * (cw + 6), 4 + row * (ch + 4));
+        let (sx, sy) = (cw + 6, ch + 4);
+        self.step.set((sx, sy));
+        let rows = ((g.height() - cfg.taskbar_height - 8) / sy).max(1);
+        let cols = ((g.width() - 8) / sx).max(1);
+        let items = self.items();
+        // icons the user placed keep their spot (snapped to the grid when Align icons to grid is
+        // on); the rest fill the first free cells top to bottom, left to right, like Win7
+        let mut placed: HashMap<String, (i32, i32)> = HashMap::new();
+        let mut taken = std::collections::HashSet::new();
+        let cell_of = |x: i32, y: i32| (((x - GRID_X0) as f64 / sx as f64).round().max(0.0) as i32, ((y - GRID_Y0) as f64 / sy as f64).round().max(0.0) as i32);
+        if !cfg.desktop_auto_arrange {
+            for it in &items {
+                let k = item_key(&it.target);
+                if let Some(&(x, y)) = cfg.desktop_positions.get(&k) {
+                    let (c, r) = cell_of(x, y);
+                    if c >= cols || r >= rows || taken.contains(&(c, r)) { continue; }
+                    taken.insert((c, r));
+                    let pos = if cfg.desktop_align_grid { (GRID_X0 + c * sx, GRID_Y0 + r * sy) } else { (x, y) };
+                    placed.insert(k, pos);
+                }
+            }
         }
+        let mut next = 0;
+        for it in &items {
+            let k = item_key(&it.target);
+            if placed.contains_key(&k) { continue; }
+            while taken.contains(&(next / rows, next % rows)) { next += 1; }
+            let (c, r) = (next / rows, next % rows);
+            taken.insert((c, r));
+            placed.insert(k, (GRID_X0 + c * sx, GRID_Y0 + r * sy));
+        }
+        for it in items {
+            let k = item_key(&it.target);
+            let (x, y) = placed[&k];
+            let sel = was_selected.contains(&k);
+            let w = self.icon_widget(it, size, cw);
+            if sel { w.style_context().add_class("selected"); self.selected.borrow_mut().push(w.clone()); }
+            self.fixed.put(&w, x, y);
+        }
+        *self.placed.borrow_mut() = placed;
         self.fixed.show_all();
+    }
+
+    /// The icon button under a point of the desktop.
+    fn icon_at(&self, x: f64, y: f64) -> Option<gtk::Button> {
+        self.fixed.children().into_iter().filter_map(|c| c.downcast::<gtk::Button>().ok()).find(|b| {
+            let a = b.allocation();
+            x >= a.x() as f64 && y >= a.y() as f64 && x < (a.x() + a.width()) as f64 && y < (a.y() + a.height()) as f64
+        })
+    }
+
+    fn key_of(b: &gtk::Button) -> Option<String> { unsafe { b.data::<String>("key").map(|k| k.as_ref().clone()) } }
+
+    /// Desktop icons are drop targets too: folders (move/copy into them), the Recycle Bin (delete),
+    /// the desktop itself (move the icons there, or bring files in from Explorer).
+    fn wire_drop(self: &Rc<Self>, ev: &gtk::Widget) {
+        let targets = [gtk::TargetEntry::new("text/uri-list", gtk::TargetFlags::empty(), 0)];
+        ev.drag_dest_set(gtk::DestDefaults::empty(), &targets, gdk::DragAction::COPY | gdk::DragAction::MOVE | gdk::DragAction::LINK);
+        let d = Rc::downgrade(self);
+        ev.connect_drag_motion(move |w, ctx, x, y, time| {
+            let Some(d) = d.upgrade() else { return false };
+            let dragging = d.dragging.borrow().clone();
+            let sources: Vec<PathBuf> = dragging.iter().filter(|k| k.starts_with('/')).map(PathBuf::from).collect();
+            let over = d.icon_at(x as f64, y as f64).filter(|b| Self::key_of(b).map(|k| !dragging.contains(&k)).unwrap_or(false));
+            // what is under the pointer: a folder or the Recycle Bin takes the drop
+            let into = over.as_ref().and_then(Self::key_of).and_then(|k| {
+                if k == "trash:///" { Some(PathBuf::from("trash:")) } else if Path::new(&k).is_dir() { Some(PathBuf::from(k)) } else { None }
+            });
+            let hl = if into.is_some() { over.clone() } else { None };
+            if d.drop_hl.borrow().as_ref() != hl.as_ref() {
+                if let Some(o) = d.drop_hl.borrow().as_ref() { o.style_context().remove_class("drop"); }
+                if let Some(n) = &hl { n.style_context().add_class("drop"); }
+                *d.drop_hl.borrow_mut() = hl;
+            }
+            let act = match &into {
+                Some(p) if p == Path::new("trash:") => gdk::DragAction::MOVE,
+                Some(p) if sources.iter().any(|s| p.starts_with(s)) => gdk::DragAction::empty(),
+                Some(p) => crate::explorer::drop_action(w.upcast_ref(), ctx, p, &sources),
+                // icons of this desktop just move; files from elsewhere come to ~/Desktop
+                None if !dragging.is_empty() => gdk::DragAction::MOVE,
+                None => crate::explorer::drop_action(w.upcast_ref(), ctx, &desktop_dir(), &sources),
+            };
+            *d.drop_target.borrow_mut() = Some((into, act));
+            ctx.drag_status(act, time);
+            true
+        });
+        let d = Rc::downgrade(self);
+        ev.connect_drag_leave(move |_, _, _| {
+            let Some(d) = d.upgrade() else { return };
+            if let Some(o) = d.drop_hl.borrow_mut().take() { o.style_context().remove_class("drop"); }
+        });
+        ev.connect_drag_drop(move |w, ctx, _, _, time| {
+            w.drag_get_data(ctx, &gdk::Atom::intern("text/uri-list"), time);
+            true
+        });
+        let d = Rc::downgrade(self);
+        ev.connect_drag_data_received(move |_, ctx, x, y, data, _, time| {
+            let Some(d) = d.upgrade() else { return };
+            if let Some(o) = d.drop_hl.borrow_mut().take() { o.style_context().remove_class("drop"); }
+            let target = d.drop_target.borrow_mut().take();
+            let uris: Vec<String> = data.uris().iter().map(|u| u.to_string()).collect();
+            let files: Vec<PathBuf> = uris.iter().filter_map(|u| gio::File::for_uri(u).path()).collect();
+            let internal = !d.dragging.borrow().is_empty();
+            let ok = match target {
+                Some((_, act)) if act.is_empty() => false,
+                Some((Some(p), _)) if p == Path::new("trash:") => {
+                    let dd = Rc::downgrade(&d);
+                    if !files.is_empty() { crate::explorer::ops::delete(files, false, None, true, move || if let Some(d) = dd.upgrade() { d.rebuild() }); }
+                    true
+                }
+                Some((Some(dir), act)) => {
+                    let dd = Rc::downgrade(&d);
+                    if act.contains(gdk::DragAction::LINK) { crate::explorer::ops::create_shortcuts(&files, &dir); }
+                    else if !files.is_empty() {
+                        let kind = if act.contains(gdk::DragAction::MOVE) { crate::explorer::ops::Kind::Move } else { crate::explorer::ops::Kind::Copy };
+                        crate::explorer::ops::transfer(files, dir, kind, None, move |_| if let Some(d) = dd.upgrade() { d.rebuild() });
+                    }
+                    true
+                }
+                Some((None, _)) if internal => { d.move_dragged(x as f64, y as f64); true }
+                Some((None, act)) => {
+                    // files from Explorer or another program: into ~/Desktop, placed where they were dropped
+                    let dd = Rc::downgrade(&d);
+                    let (px, py) = (x, y);
+                    let done = move |made: Vec<PathBuf>| if let Some(d) = dd.upgrade() { d.place_new(&made, px, py); };
+                    if act.contains(gdk::DragAction::LINK) { let made = crate::explorer::ops::create_shortcuts(&files, &desktop_dir()); done(made); }
+                    else if !files.is_empty() {
+                        let kind = if act.contains(gdk::DragAction::MOVE) { crate::explorer::ops::Kind::Move } else { crate::explorer::ops::Kind::Copy };
+                        crate::explorer::ops::transfer(files, desktop_dir(), kind, None, done);
+                    }
+                    true
+                }
+                None => false,
+            };
+            ctx.drag_finish(ok, false, time);
+        });
+    }
+
+    /// Icons dragged within the desktop: the one under the pointer goes where it was dropped, the
+    /// others keep their place relative to it; occupied cells push an icon to the next free one.
+    fn move_dragged(self: &Rc<Self>, x: f64, y: f64) {
+        let keys = self.dragging.borrow().clone();
+        let Some((anchor, ox, oy)) = self.drag_anchor.borrow().clone() else { return };
+        let placed = self.placed.borrow().clone();
+        let Some(&(ax, ay)) = placed.get(&anchor) else { return };
+        let (nx, ny) = ((x - ox).round() as i32, (y - oy).round() as i32);
+        let (dx, dy) = (nx - ax, ny - ay);
+        let g = util::primary_geometry();
+        let (sx, sy) = self.step.get();
+        let maxx = (g.width() - sx).max(0);
+        let maxy = (g.height() - config::get().taskbar_height - sy).max(0);
+        let align = config::get().desktop_align_grid;
+        let snap = |x: i32, y: i32| -> (i32, i32) {
+            let (x, y) = (x.clamp(0, maxx), y.clamp(0, maxy));
+            if !align { return (x, y); }
+            (GRID_X0 + ((x - GRID_X0) as f64 / sx as f64).round() as i32 * sx, GRID_Y0 + ((y - GRID_Y0) as f64 / sy as f64).round() as i32 * sy)
+        };
+        let mut pos: HashMap<String, (i32, i32)> = placed.iter().filter(|(k, _)| !keys.contains(k)).map(|(k, v)| (k.clone(), *v)).collect();
+        let occupied = |pos: &HashMap<String, (i32, i32)>, p: (i32, i32)| pos.values().any(|q| (q.0 - p.0).abs() < sx / 2 && (q.1 - p.1).abs() < sy / 2);
+        for k in &keys {
+            let Some(&(kx, ky)) = placed.get(k) else { continue };
+            let mut p = snap(kx + dx, ky + dy);
+            // next free cell downwards, then in the next column
+            let mut guard = 0;
+            while occupied(&pos, p) && guard < 500 {
+                p.1 += sy;
+                if p.1 > maxy { p.1 = GRID_Y0; p.0 += sx; if p.0 > maxx { p.0 = GRID_X0; } }
+                guard += 1;
+            }
+            pos.insert(k.clone(), p);
+        }
+        config::update(|c| { c.desktop_auto_arrange = false; c.desktop_positions = pos.clone(); });
+        self.rebuild();
+    }
+
+    /// Files that just arrived on the desktop by a drop: put them where they were dropped.
+    fn place_new(self: &Rc<Self>, made: &[PathBuf], x: i32, y: i32) {
+        if config::get().desktop_auto_arrange || made.is_empty() { self.rebuild(); return; }
+        let (sx, sy) = self.step.get();
+        let mut pos = self.placed.borrow().clone();
+        let (px, mut py) = (x - sx / 2, y - sy / 3);
+        for m in made {
+            let k = m.to_string_lossy().into_owned();
+            pos.insert(k, (px.max(0), py.max(0)));
+            py += sy;
+        }
+        config::update(|c| c.desktop_positions = pos.clone());
+        self.rebuild();
     }
 
     fn icon_widget(self: &Rc<Self>, it: Item, size: i32, cw: i32) -> gtk::Button {
@@ -286,6 +499,56 @@ impl Desktop {
         v.pack_start(&l, false, false, 0);
         eb.add(&v);
         let it = Rc::new(it);
+        unsafe { eb.set_data("key", item_key(&it.target)); }
+        // drag the icon (and the rest of the selection): around the desktop, into folders or the
+        // Recycle Bin, into Explorer windows and other programs (text/uri-list). Set up before the
+        // press handler so GTK's drag detection sees the press first.
+        eb.drag_source_set(gdk::ModifierType::BUTTON1_MASK, &[gtk::TargetEntry::new("text/uri-list", gtk::TargetFlags::empty(), 0)],
+            gdk::DragAction::COPY | gdk::DragAction::MOVE | gdk::DragAction::LINK);
+        if let Some(p) = &pb { eb.drag_source_set_icon_pixbuf(p); }
+        {
+            let d = Rc::downgrade(self);
+            eb.connect_drag_begin(move |eb, _| {
+                let Some(d) = d.upgrade() else { return };
+                d.pending_single.borrow_mut().take();
+                if !d.selected.borrow().contains(eb) { d.clear_selection(); eb.style_context().add_class("selected"); d.selected.borrow_mut().push(eb.clone()); }
+                *d.dragging.borrow_mut() = d.selected.borrow().iter().filter_map(Self::key_of).collect();
+            });
+        }
+        {
+            let d = Rc::downgrade(self);
+            eb.connect_drag_data_get(move |_, _, data, _, _| {
+                let Some(d) = d.upgrade() else { return };
+                let keys = d.dragging.borrow().clone();
+                let uris: Vec<String> = keys.iter().map(|k| if k.starts_with('/') { gio::File::for_path(k).uri().to_string() } else { k.clone() }).collect();
+                let refs: Vec<&str> = uris.iter().map(|s| s.as_str()).collect();
+                data.set_uris(&refs);
+            });
+        }
+        {
+            let d = Rc::downgrade(self);
+            eb.connect_drag_end(move |_, _| {
+                let Some(d) = d.upgrade() else { return };
+                d.dragging.borrow_mut().clear();
+                // a move into another folder/program removed files: the monitor rebuilds
+            });
+        }
+        // never let GTK's default handler fail drags of special items (Computer, Network…)
+        eb.connect_drag_failed(|_, _, _| glib::Propagation::Stop);
+        {
+            let d = Rc::downgrade(self);
+            eb.connect_button_release_event(move |eb, e| {
+                let Some(d) = d.upgrade() else { return glib::Propagation::Proceed };
+                // a click (no drag) on one icon of a selection selects just that one
+                if e.button() == 1 && d.pending_single.borrow().as_ref() == Some(eb) {
+                    d.pending_single.borrow_mut().take();
+                    d.clear_selection();
+                    eb.style_context().add_class("selected");
+                    d.selected.borrow_mut().push(eb.clone());
+                }
+                glib::Propagation::Proceed
+            });
+        }
         let d = Rc::downgrade(self);
         let it2 = it.clone();
         eb.connect_button_press_event(move |eb, e| {
@@ -297,12 +560,28 @@ impl Desktop {
                 open_item(&it2);
                 return glib::Propagation::Stop;
             }
-            if !e.state().contains(gdk::ModifierType::CONTROL_MASK) { d.clear_selection(); }
-            eb.style_context().add_class("selected");
-            d.selected.borrow_mut().push(eb.clone());
+            let ctrl = e.state().contains(gdk::ModifierType::CONTROL_MASK);
+            let already = d.selected.borrow().contains(eb);
+            if e.button() == 1 {
+                // where inside the icon the drag grabbed it (for dropping it in place)
+                let (px, py) = e.position();
+                if let Some(k) = Self::key_of(eb) { *d.drag_anchor.borrow_mut() = Some((k, px, py)); }
+            }
+            if ctrl && already && e.button() == 1 {
+                eb.style_context().remove_class("selected");
+                d.selected.borrow_mut().retain(|b| b != eb);
+            } else if already && !ctrl {
+                // keep the selection so it can be dragged; a plain click narrows it on release
+                if e.button() == 1 { *d.pending_single.borrow_mut() = Some(eb.clone()); }
+            } else {
+                if !ctrl { d.clear_selection(); }
+                eb.style_context().add_class("selected");
+                d.selected.borrow_mut().push(eb.clone());
+            }
             eb.queue_draw();
             d.win.present();
             if e.button() == 3 { d.item_menu(&it2, e); }
+            // GTK's drag detection (connected first) has already seen the press
             glib::Propagation::Stop
         });
         unsafe { eb.set_data("path", match &it.target { Target::Path(p) => p.clone(), Target::Uri(u) => PathBuf::from(u) }); }
@@ -399,6 +678,15 @@ impl Desktop {
             view.append(&i);
         }
         view.append(&gtk::SeparatorMenuItem::new());
+        let auto = gtk::CheckMenuItem::with_label("Auto arrange icons");
+        auto.set_active(config::get().desktop_auto_arrange);
+        { let d = Rc::downgrade(self); auto.connect_toggled(move |c| { let on = c.is_active(); config::update(|cf| cf.desktop_auto_arrange = on); if let Some(d) = d.upgrade() { d.rebuild(); } }); }
+        view.append(&auto);
+        let align = gtk::CheckMenuItem::with_label("Align icons to grid");
+        align.set_active(config::get().desktop_align_grid);
+        { let d = Rc::downgrade(self); align.connect_toggled(move |c| { let on = c.is_active(); config::update(|cf| cf.desktop_align_grid = on); if let Some(d) = d.upgrade() { d.rebuild(); } }); }
+        view.append(&align);
+        view.append(&gtk::SeparatorMenuItem::new());
         let show = gtk::CheckMenuItem::with_label("Show desktop icons");
         show.set_active(true);
         let fx = self.fixed.clone();
@@ -419,7 +707,8 @@ impl Desktop {
             let d = Rc::downgrade(self);
             // choosing the current key again flips the order, like Explorer
             i.connect_activate(move |_| {
-                config::update(|c| { if c.desktop_sort == key { c.desktop_sort_desc = !c.desktop_sort_desc } else { c.desktop_sort = key.into(); c.desktop_sort_desc = false } });
+                // sorting rearranges every icon (Win7 forgets where they were dragged)
+                config::update(|c| { if c.desktop_sort == key { c.desktop_sort_desc = !c.desktop_sort_desc } else { c.desktop_sort = key.into(); c.desktop_sort_desc = false } c.desktop_positions.clear(); });
                 if let Some(d) = d.upgrade() { d.rebuild(); }
             });
             sort.append(&i);
