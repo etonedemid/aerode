@@ -588,6 +588,8 @@ impl Wm {
         if focusable && visible { self.focus(w); }
         self.redraw(w);
         self.update_net_state(w);
+        // the client was placed and reparented without a configure(): give it its real position
+        self.notify_geometry(w);
     }
 
     fn unmanage(&mut self, w: u32, destroyed: bool) {
@@ -671,6 +673,18 @@ impl Wm {
     }
 
     /// Move/resize a client so that its *client* area is `g`.
+    /// ICCCM 4.1.5: tell the client where it is on the root window with a synthetic
+    /// ConfigureNotify. A reparented client only gets real events relative to its frame (or none
+    /// when only the frame moves), so without this GTK and Qt keep the position they asked for –
+    /// usually (0,0) – and put popups, drop targets and pointer coordinates in the wrong place.
+    fn notify_geometry(&self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let g = c.geom;
+        let ev = ConfigureNotifyEvent { response_type: CONFIGURE_NOTIFY_EVENT, sequence: 0, event: w, window: w, above_sibling: x11rb::NONE,
+            x: g.x as i16, y: g.y as i16, width: g.w as u16, height: g.h as u16, border_width: 0, override_redirect: false };
+        let _ = self.conn.send_event(false, w, EventMask::STRUCTURE_NOTIFY, ev);
+    }
+
     pub fn configure(&mut self, w: u32, g: Rect) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         let g = Rect { w: g.w.max(c.min_size.0.max(1)), h: g.h.max(c.min_size.1.max(1)), ..g };
@@ -686,10 +700,7 @@ impl Wm {
         } else {
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(g.x).y(g.y).width(g.w as u32).height(g.h as u32));
         }
-        // ICCCM synthetic ConfigureNotify with root coordinates
-        let ev = ConfigureNotifyEvent { response_type: CONFIGURE_NOTIFY_EVENT, sequence: 0, event: w, window: w, above_sibling: x11rb::NONE,
-            x: g.x as i16, y: g.y as i16, width: g.w as u16, height: g.h as u16, border_width: 0, override_redirect: false };
-        let _ = self.conn.send_event(false, w, EventMask::STRUCTURE_NOTIFY, ev);
+        self.notify_geometry(w);
         if size_changed {
             self.layout_zones(w);
             self.redraw(w);
