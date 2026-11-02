@@ -7,7 +7,7 @@ use std::rc::Rc;
 use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11};
 
 const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|gadgets|reload|lock|quit|restart]
-       aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME]
+       aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME] | autoplay DIR
        aerode query-volume | query-network";
 
 struct Shell {
@@ -51,6 +51,8 @@ fn build(app: &gtk::Application) {
     autostart();
     util::sound(aerode::sounds::Event::Logon);
     aerode::sounds::start_watchers();
+    // AutoPlay for discs, drives and devices plugged in from now on
+    aerode::autoplay::watch();
     SHELL.with(|s| *s.borrow_mut() = Some(Shell { _desktop: d, taskbar: tb, start: sm }));
 }
 
@@ -124,6 +126,13 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             let n = |i: usize| args.get(i).and_then(|s| s.parse::<i64>().ok());
             if let (Some(w), Some(x), Some(y)) = (n(2), n(3), n(4)) {
                 SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { aerode::sysmenu::show(s.taskbar.wm.clone(), w as u32, x as i32, y as i32) });
+            }
+        }
+        "autoplay" => {
+            build(app);
+            match args.get(2) {
+                Some(p) if std::path::Path::new(p).is_dir() => aerode::autoplay::for_path(std::path::Path::new(p)),
+                _ => { eprintln!("aerode autoplay: DIR must be a folder"); return 2; }
             }
         }
         "taskbar-launch" => {

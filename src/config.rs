@@ -47,6 +47,10 @@ pub struct Config {
     pub fonts: FontOptions,
     /// Desktop Icon Settings > Change Icon: item ("computer", "home", "network", "trash", "trash-full", "control") -> icon name or file
     pub desktop_icon_art: HashMap<String, String>,
+    /// AutoPlay: "Use AutoPlay for all media and devices"
+    pub autoplay: bool,
+    /// AutoPlay action per media type (key from autoplay::MEDIA): "ask" | "none" | "open" | "run" | "app:<desktop id>"
+    pub autoplay_actions: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -240,6 +244,8 @@ impl Default for Config {
             screensaver: ScreenSaverOptions::default(),
             fonts: FontOptions::default(),
             desktop_icon_art: HashMap::new(),
+            autoplay: true,
+            autoplay_actions: HashMap::new(),
         }
     }
 }

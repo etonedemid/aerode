@@ -10,6 +10,7 @@ use super::{text, title, Cp};
 use gtk::prelude::*;
 
 /// Placeholder for an applet that is not implemented yet.
+#[allow(dead_code)]
 pub fn todo(_cp: &Rc<Cp>, name: &str, what: &str) -> gtk::Widget {
     let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
     v.pack_start(&title(name), false, false, 0);
