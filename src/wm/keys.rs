@@ -91,6 +91,11 @@ impl Keys {
                 if sym != 0 { code_of.entry(sym).or_insert(code); self.sym_of.insert(code, sym); }
             }
         }
+        // with a non-Latin first layout (e.g. "ru,us") the letters of Win+E / Win+R / Win+D… only exist in
+        // a later XKB group: the core map lists every group's levels after the first, so look there too
+        for (i, chunk) in km.keysyms.chunks(per.max(1)).enumerate() {
+            for &sym in chunk.iter().skip(1) { if sym != 0 { code_of.entry(sym).or_insert(min + i as u8); } }
+        }
         let _ = conn.ungrab_key(Grab::ANY, root, ModMask::ANY);
         self.map.clear();
         for (mods, sym, act) in bindings() {

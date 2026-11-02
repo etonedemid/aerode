@@ -117,6 +117,8 @@ pub fn build_tray(tb: &Rc<Taskbar>) {
     volume(tb);
     network(tb);
     crate::tray::attach(tb);
+    // the docked language bar sits just left of the notification icons
+    crate::kbdlayout::attach(&tb.tray);
 }
 
 // ---------------------------------------------------------------- clock
@@ -228,6 +230,36 @@ fn volume(tb: &Rc<Taskbar>) {
     };
     refresh();
     { let r = refresh.clone(); glib::timeout_add_seconds_local(3, move || { r(); glib::ControlFlow::Continue }); }
+    // mouse wheel over the speaker changes the volume in 2 % steps (touchpads: accumulated smooth deltas)
+    {
+        let (img, acc) = (img.clone(), Rc::new(std::cell::Cell::new(0.0f64)));
+        let level: Rc<std::cell::Cell<Option<u32>>> = Rc::new(std::cell::Cell::new(None));
+        b.add_events(gdk::EventMask::SCROLL_MASK | gdk::EventMask::SMOOTH_SCROLL_MASK);
+        b.connect_scroll_event(move |b, e| {
+            let steps = match e.direction() {
+                gdk::ScrollDirection::Up => 1,
+                gdk::ScrollDirection::Down => -1,
+                gdk::ScrollDirection::Smooth => {
+                    let a = acc.get() - e.delta().1;
+                    let n = a.trunc() as i32;
+                    acc.set(a - n as f64);
+                    n
+                }
+                _ => 0,
+            };
+            if steps == 0 { return glib::Propagation::Stop; }
+            let cur = level.get().or_else(|| sys::volume().map(|v| v.0)).unwrap_or(0);
+            let v = (cur as i32 + 2 * steps).clamp(0, 100) as u32;
+            level.set(Some(v));
+            sys::set_volume(v);
+            if let Some(p) = util::pixbuf(sys::volume_icon(Some((v, false))), 16) { img.set_from_pixbuf(Some(&p)); }
+            b.set_tooltip_text(Some(&format!("Speakers: {v}%")));
+            // forget the cached level once the wheel stops, so changes made elsewhere are picked up
+            let l = level.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || l.set(None));
+            glib::Propagation::Stop
+        });
+    }
     b.connect_clicked(move |b| {
         if close_open() { return; }
         let (pct, muted) = sys::volume().unwrap_or((0, false));

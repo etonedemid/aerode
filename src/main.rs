@@ -27,6 +27,8 @@ fn build(app: &gtk::Application) {
         Err(e) => { eprintln!("aerode: cannot connect to X: {e}"); std::process::exit(1) }
     };
     theme::write_openbox_theme();
+    // keyboard layouts set up in Plasma would otherwise be lost under aerode
+    aerode::kbdlayout::import_plasma();
     let d = desktop::Desktop::new(app);
     let tb = taskbar::Taskbar::new(app, wm);
     let sm = startmenu::StartMenu::new(app);
