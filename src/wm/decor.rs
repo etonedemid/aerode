@@ -257,12 +257,13 @@ impl Decor {
             let ty = if p.maximized { ((top - lh as f64) / 2.0).round() } else { (b + (CAPTION as f64 - lh as f64) / 2.0).round() };
             // Aero caption glow: the text shape, blurred, painted white behind the text
             let _ = lw;
-            let ga = if p.active { 1.0 } else { 0.7 };
-            if let Some(mask) = text_glow(&layout, 7) {
+            // a soft haze rather than a solid halo: one pass, wide falloff, partial opacity
+            let ga = if p.active { 0.72 } else { 0.45 };
+            const GR: usize = 8;
+            if let Some(mask) = text_glow(&layout, GR) {
                 cr.save().ok();
                 cr.set_source_rgba(1.0, 1.0, 1.0, ga);
-                cr.mask_surface(&mask, tx - 7.0 * 2.0, ty - 7.0 * 2.0).ok();
-                cr.mask_surface(&mask, tx - 7.0 * 2.0, ty - 7.0 * 2.0).ok();
+                cr.mask_surface(&mask, tx - (2 * GR) as f64, ty - (2 * GR) as f64).ok();
                 cr.restore().ok();
             }
             cr.move_to(tx, ty);
@@ -340,7 +341,7 @@ fn text_glow(layout: &pangocairo::pango::Layout, r: usize) -> Option<ImageSurfac
         let cr = Context::new(&s).ok()?;
         cr.move_to(pad as f64, pad as f64);
         pangocairo::functions::layout_path(&cr, layout);
-        cr.set_line_width(3.0);
+        cr.set_line_width(1.5);
         cr.set_line_join(cairo::LineJoin::Round);
         cr.stroke_preserve().ok();
         cr.fill().ok();
@@ -357,7 +358,7 @@ fn text_glow(layout: &pangocairo::pango::Layout, r: usize) -> Option<ImageSurfac
             let t2 = tmp.clone();
             blur_pass(&t2, &mut buf, w, h, r / 2 + 1, false);
         }
-        for y in 0..h { for x in 0..w { d[y * stride + x] = (buf[y * w + x] * 1.6).min(255.0) as u8; } }
+        for y in 0..h { for x in 0..w { d[y * stride + x] = (buf[y * w + x] * 1.25).min(255.0) as u8; } }
     }
     s.mark_dirty();
     Some(s)
