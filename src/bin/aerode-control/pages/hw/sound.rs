@@ -831,7 +831,9 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
     let sw = scrolled(&tv);
     sw.set_size_request(-1, 150);
     v.pack_start(&sw, true, true, 0);
-    let startup = check("_Play Windows Startup sound", map.borrow().get(sounds::Event::Logon.key()).map(|f| !f.is_empty()).unwrap_or(true));
+    // Win7's checkbox is about the startup tune (BootAnimation\\DisableStartupSound), not the
+    // Windows Logon event
+    let startup = check("_Play Windows Startup sound", sounds::startup_sound_enabled());
     v.pack_start(&startup, false, false, 0);
     v.pack_start(&lbl("_Sounds:"), false, false, 0);
     let row = hbox(6);
@@ -917,13 +919,11 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
             }
         }
     }); }
-    { let (map, d) = (map.clone(), dirty.clone()); startup.connect_toggled(move |c| {
-        if c.is_active() { map.borrow_mut().remove(sounds::Event::Logon.key()); } else { map.borrow_mut().insert(sounds::Event::Logon.key().to_string(), String::new()); }
-        d();
-    }); }
+    { let d = dirty.clone(); startup.connect_toggled(move |_| d()); }
     let apply = Box::new(move || {
         let (m, mu) = (map.borrow().clone(), muted.get());
         config::update(|c| { c.sounds = m; c.sounds_muted = mu; });
+        sounds::set_startup_sound(startup.is_active());
     });
     (v, apply)
 }

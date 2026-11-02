@@ -237,8 +237,16 @@ pub fn watch_lines(argv: &[&str], wanted: fn(&str) -> bool, debounce: std::time:
     let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     let (tx, rx) = async_channel::bounded::<()>(1);
     std::thread::spawn(move || loop {
-        let child = std::process::Command::new(&argv[0]).args(&argv[1..]).env("LC_ALL", "C")
-            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
+        let mut cmd = std::process::Command::new(&argv[0]);
+        cmd.args(&argv[1..]).env("LC_ALL", "C").stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+        // the monitor dies with us: `pactl subscribe` / `nmcli monitor` only notice a dead reader
+        // when their next write fails, which can be never on a quiet system. (The death signal
+        // follows the spawning thread, which is this loop and lives as long as the watch.)
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM); Ok(()) });
+        }
+        let child = cmd.spawn();
         let Ok(mut child) = child else { return };
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines() {

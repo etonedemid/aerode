@@ -439,7 +439,7 @@ impl Console {
         // `color XY` recolours the whole console, like Windows; `color` alone restores the configured colours
         if let Some(col) = color { self.color_override.set(col); }
         if !replies.is_empty() { self.send(&replies); }
-        if bell { sounds::play(sounds::Event::DefaultBeep); }
+        if bell { sounds::console_beep(); }
         if let Some(t) = title { *self.base_title.borrow_mut() = t; self.refresh_title(); }
         self.follow.set(true);
         self.update_scrollbar();

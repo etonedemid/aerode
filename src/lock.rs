@@ -13,7 +13,20 @@ fn module(name: &str) -> Option<String> {
     ["/usr/lib/aerode", "/usr/local/lib/aerode"].iter().map(|d| format!("{d}/{name}")).find(|p| std::path::Path::new(p).exists())
 }
 
-pub fn lock() {
+/// Lock the screen. Like Win7's Explorer (WTS_SESSION_LOCK / UNLOCK) this plays Windows Logoff
+/// as the screen locks – unless `lock_sound` is false (locking for sleep) – and Windows Logon
+/// once it has been unlocked.
+pub fn lock(lock_sound: bool) {
+    if lock_sound { crate::sounds::play_with(crate::sounds::Event::Logoff, crate::sounds::Policy::Yield); }
+    if run_locker() {
+        crate::sounds::play_sync(crate::sounds::Event::Logon);
+    } else {
+        let _ = std::process::Command::new("loginctl").arg("lock-session").status();
+    }
+}
+
+/// Run a locker until it is unlocked; false when none could lock.
+fn run_locker() -> bool {
     if util::which("xsecurelock") {
         if let (Some(auth), Some(saver)) = (module("auth_aerode"), module("saver_aerode")) {
             let ok = std::process::Command::new("xsecurelock")
@@ -23,7 +36,7 @@ pub fn lock() {
                 .map(|s| s.success())
                 .unwrap_or(false);
             // a non-zero exit means it could not lock (e.g. another grab): lock another way
-            if ok { return; }
+            if ok { return true; }
         }
     }
     let g = util::primary_geometry();
@@ -75,7 +88,5 @@ pub fn lock() {
         .or_else(|_| std::process::Command::new("xsecurelock").status())
         .map(|s| s.success())
         .unwrap_or(false);
-    if !ok {
-        let _ = std::process::Command::new("loginctl").arg("lock-session").status();
-    }
+    ok
 }
