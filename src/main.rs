@@ -7,6 +7,7 @@ use std::rc::Rc;
 use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11};
 
 const USAGE: &str = "usage: aerode [shell|start|run|personalize|reload|lock|quit|restart]
+       aerode sysmenu WINDOW X Y | taskbar-launch N
        aerode query-volume | query-network";
 
 struct Shell {
@@ -56,6 +57,9 @@ fn autostart() {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.ends_with(".desktop") || !seen.insert(name) { continue; }
             let Some(a) = gio::DesktopAppInfo::from_filename(e.path()) else { continue };
+            // the session starts the compositor with aerode's config; picom's own autostart entry would race it
+            let exe = a.executable().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            if matches!(exe.as_str(), "picom" | "compton" | "xcompmgr" | "compiz") { continue; }
             if a.is_hidden() || !a.shows_in(Some("Aerode")) { continue; }
             if a.boolean("X-GNOME-Autostart-enabled") == false && a.has_key("X-GNOME-Autostart-enabled") { continue; }
             let _ = a.launch(&[], None::<&gio::AppLaunchContext>);
@@ -78,6 +82,19 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.taskbar.refresh() });
         }
         "quit" => app.quit(),
+        "sysmenu" => {
+            build(app);
+            let n = |i: usize| args.get(i).and_then(|s| s.parse::<i64>().ok());
+            if let (Some(w), Some(x), Some(y)) = (n(2), n(3), n(4)) {
+                SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { aerode::sysmenu::show(s.taskbar.wm.clone(), w as u32, x as i32, y as i32) });
+            }
+        }
+        "taskbar-launch" => {
+            build(app);
+            if let Some(i) = args.get(2).and_then(|s| s.parse::<usize>().ok()) {
+                SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.taskbar.launch_index(i) });
+            }
+        }
         _ => { eprintln!("{USAGE}"); return 2; }
     }
     0

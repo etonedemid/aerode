@@ -311,6 +311,21 @@ impl Taskbar {
         });
     }
 
+    /// Win+1..9: like clicking the Nth taskbar button; with several windows, cycle through them.
+    pub fn launch_index(self: &Rc<Self>, n: usize) {
+        let groups = self.groups.borrow();
+        let Some(g) = n.checked_sub(1).and_then(|i| groups.get(i)) else { return };
+        let active = self.wm.active();
+        match g.windows.len() {
+            0 => { if let Some(a) = &g.app { util::launch(a); } }
+            1 => { let w = &g.windows[0]; if w.id == active && !w.minimized { self.wm.minimize(w.id) } else { self.wm.activate(w.id) } }
+            k => {
+                let next = g.windows.iter().position(|w| w.id == active).map(|i| (i + 1) % k).unwrap_or(0);
+                self.wm.activate(g.windows[next].id);
+            }
+        }
+    }
+
     fn window_menu(self: &Rc<Self>, wins: &[Client]) -> gtk::Menu {
         let m = gtk::Menu::new();
         for w in wins {
