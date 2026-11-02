@@ -43,7 +43,8 @@ elif [ -d "$HOME/.local/share/aerode/sysfiles" ] || [ -f "$HOME/.local/share/aer
   aerode-extract --icons || echo "   (run ./install.sh /path/to/windows7.iso to refresh the icons)"
 else
   # first extraction: look for a Windows 7 ISO in the usual places
-  ISO=$(find "$HOME" -maxdepth 3 -type f \( -iname '*win*7*.iso' -o -iname '*7*win*.iso' \) -size +1G 2>/dev/null | head -n1)
+  # a standalone 7 only: build numbers like Windows_10_19044.7663 must not match
+  ISO=$(find "$HOME" -maxdepth 3 -type f -iregex '.*/[^/]*win\([^/]*[^0-9]\)?7\([^0-9][^/]*\)?\.iso' -size +1G 2>/dev/null | head -n1)
   if [ -n "$ISO" ]; then
     echo ":: extracting Windows 7 artwork from $ISO (stays in your home directory)"
     aerode-extract "$ISO"
