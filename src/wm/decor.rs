@@ -401,10 +401,12 @@ impl Decor {
         cr.restore().ok();
         if !drawn { fallback_rims(cr, p, w, h); }
         // ---- icon + title with the Aero text glow
+        // native Win7 frame: the icon box starts 8 px from the frame's left edge, the title's
+        // first stem 30 px (a layout origin 21 px after the icon)
         let bx = if p.maximized { 0.0 } else { b };
-        let mut tx = bx + 2.0;
+        let mut tx = if p.maximized { 2.0 } else { bx };
         if let Some(icon) = p.icon {
-            let iy = if p.maximized { ((MAX_TOP as f64 - 16.0) / 2.0).round() } else { (b + (CAPTION as f64 - 16.0) / 2.0 - 3.0).round() };
+            let iy = if p.maximized { ((MAX_TOP as f64 - 16.0) / 2.0).round() } else { (b + (CAPTION as f64 - 16.0) / 2.0 - 5.0).round() };
             cr.save().ok();
             cr.translate(tx, iy);
             let s = 16.0 / icon.width().max(1) as f64;
@@ -413,7 +415,7 @@ impl Decor {
             cr.source().set_filter(cairo::Filter::Good);
             cr.paint().ok();
             cr.restore().ok();
-            tx += 22.0;
+            tx += if p.maximized { 22.0 } else { 21.0 };
         }
         let rects = self.button_rects(p.w, p.maximized, p.small, p.buttons);
         let tmax = rects.last().map(|r| r.1[0] as f64).unwrap_or(w) - tx - 8.0;
@@ -427,9 +429,10 @@ impl Decor {
             layout.set_ellipsize(pangocairo::pango::EllipsizeMode::End);
             let (_, lr) = layout.pixel_extents();
             let lh = lr.height() as f64;
-            let ty = if p.maximized { ((MAX_TOP as f64 - lh) / 2.0).round() } else { (b + (CAPTION as f64 - lh) / 2.0 - 3.0).round() };
-            // (Win7 puts the caption's baseline level with the bottom of the caption buttons, a
-            // little above the caption band's middle)
+            let ty = if p.maximized { ((MAX_TOP as f64 - lh) / 2.0).round() } else { (b + (CAPTION as f64 - lh) / 2.0 - 6.0).round() };
+            // measured on a native Win7 DWM frame (learn.microsoft.com dwm/images/white-sidebyside.png):
+            // the title's cap height spans rows 9–17 from the frame's top edge (baseline 17, one
+            // above the caption buttons' bottom) and the 16 px icon box rows 6–21
             // TEXTGLOW: the text box (+1 px) grown by the part's CONTENTMARGINS, nine-sliced
             if self.parts.contains_key(&TEXTGLOW) && !p.title.is_empty() {
                 let (cl, cr_, ct, cb) = self.glow_margins;
