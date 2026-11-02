@@ -15,6 +15,7 @@ pub mod extract;
 pub mod glass;
 pub mod kbdlayout;
 pub mod lock;
+pub mod mixer;
 pub mod msstyles;
 pub mod notify;
 pub mod power;

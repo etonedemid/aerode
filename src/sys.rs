@@ -1,65 +1,9 @@
 //! System backends: audio, network, battery, brightness, power, lock.
 use crate::util::{output, spawn, which};
 
-// ---------------------------------------------------------------- audio
-pub fn volume() -> Option<(u32, bool)> {
-    if let Some(s) = output(&["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]) {
-        let v: f64 = s.split_whitespace().nth(1)?.parse().ok()?;
-        return Some(((v * 100.0).round() as u32, s.contains("MUTED")));
-    }
-    let s = output(&["pactl", "get-sink-volume", "@DEFAULT_SINK@"])?;
-    let pct = s.split('/').nth(1)?.trim().trim_end_matches('%').parse().ok()?;
-    let m = output(&["pactl", "get-sink-mute", "@DEFAULT_SINK@"]).map(|m| m.contains("yes")).unwrap_or(false);
-    Some((pct, m))
-}
-
-pub fn set_volume(pct: u32) {
-    let pct = pct.min(100);
-    if which("wpctl") {
-        spawn(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", pct as f64 / 100.0)]);
-    } else {
-        spawn(&["pactl", "set-sink-volume", "@DEFAULT_SINK@", &format!("{pct}%")]);
-    }
-}
-
-pub fn toggle_mute() {
-    if which("wpctl") {
-        spawn(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
-    } else {
-        spawn(&["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"]);
-    }
-}
-
-pub fn volume_icon(v: Option<(u32, bool)>) -> &'static str {
-    match v {
-        None => "audio-volume-muted",
-        Some((_, true)) | Some((0, _)) => "audio-volume-muted",
-        Some((p, _)) if p < 34 => "audio-volume-low",
-        Some((p, _)) if p < 67 => "audio-volume-medium",
-        _ => "audio-volume-high",
-    }
-}
-
-/// Output devices: (id, description, is_default)
-pub fn sinks() -> Vec<(String, String, bool)> {
-    let def = output(&["pactl", "get-default-sink"]).unwrap_or_default().trim().to_string();
-    let Some(s) = output(&["pactl", "list", "sinks"]) else { return vec![] };
-    let mut out = vec![];
-    let mut name = String::new();
-    for l in s.lines() {
-        let l = l.trim();
-        if let Some(n) = l.strip_prefix("Name: ") {
-            name = n.to_string();
-        } else if let Some(d) = l.strip_prefix("Description: ") {
-            out.push((name.clone(), d.to_string(), name == def));
-        }
-    }
-    out
-}
-
-pub fn set_default_sink(name: &str) {
-    spawn(&["pactl", "set-default-sink", name]);
-}
+// audio (volume, mute, devices, the serialised writer): src/sys/audio.rs
+mod audio;
+pub use audio::*;
 
 // ---------------------------------------------------------------- network
 /// Split an `nmcli -t` line, honouring `\:` escapes.

@@ -571,23 +571,32 @@ fn sound_event(name: &str) -> Option<sounds::Event> {
         "battery-caution" | "power-unplug-battery-low" => CriticalBattery,
         "dialog-error" => CriticalStop,
         "dialog-warning" => Exclamation,
+        "dialog-information" => Asterisk,
+        "dialog-question" => Question,
         "bell" | "bell-window-system" => DefaultBeep,
         "trash-empty" => EmptyRecycleBin,
         _ => return None,
     })
 }
 
-fn play_sound(n: &Note) {
+/// Win7 plays no balloon sound within 5 s of the last one (explorer.exe tray balloon code).
+const SOUND_GAP: Duration = Duration::from_secs(5);
+
+/// The balloon's sound: "Windows Balloon.wav" (System Notification) unless the program asked for
+/// another one (sound-file / sound-name) or none (suppress-sound, Win7's NIIF_NOSOUND). Like
+/// Explorer's own sounds it doesn't cut off a sound already playing in the shell.
+fn play_sound(n: &Note, last: &Cell<Option<Instant>>) {
     if n.suppress_sound { return; }
+    if last.get().map(|t| t.elapsed() < SOUND_GAP).unwrap_or(false) { return; }
+    last.set(Some(Instant::now()));
     if let Some(f) = &n.sound_file {
         let p = if f.starts_with("file://") { gio::File::for_uri(f).path() } else { Some(std::path::PathBuf::from(f)) };
         if let Some(p) = p.filter(|p| p.is_file()) {
-            if !config::get().sounds_muted { sounds::play_file(&p); }
+            if !sounds::muted() { sounds::play_file_with(&p, sounds::Policy::Yield); }
             return;
         }
     }
-    // Win7 plays "Windows Balloon.wav" (System Notification) for every balloon
-    sounds::play(n.sound_name.as_deref().and_then(sound_event).unwrap_or(sounds::Event::SystemNotification));
+    sounds::play_with(n.sound_name.as_deref().and_then(sound_event).unwrap_or(sounds::Event::SystemNotification), sounds::Policy::Yield);
 }
 
 // ------------------------------------------------------------------ balloon chrome
@@ -786,6 +795,8 @@ struct Daemon {
     pressed: Cell<bool>,
     out: async_channel::Sender<Signal>,
     fullscreen_atom: Cell<u32>,
+    /// when the last balloon sound played
+    last_sound: Cell<Option<Instant>>,
 }
 
 /// Start serving org.freedesktop.Notifications; balloons point into `tray`.
@@ -858,6 +869,7 @@ impl Daemon {
             tray, wm, win: win.clone(), body, close_state: Rc::new(Cell::new(0)), assets: load_assets(),
             bg: RefCell::new(None), anchor: Cell::new((0, 0)), queue: RefCell::new(VecDeque::new()),
             cur: RefCell::new(None), busy: Cell::new(false), pressed: Cell::new(false), out, fullscreen_atom: Cell::new(0),
+            last_sound: Cell::new(None),
         });
         let weak = Rc::downgrade(&d);
 
@@ -999,6 +1011,10 @@ impl Daemon {
             }
             q.push_back((n, Instant::now()));
         }
+        // a balloon that waits for the user (critical, or no timeout) gives way once others queue
+        // up behind it: since Vista every balloon times out, so one can't hold back all the rest
+        let waits = self.cur.borrow().as_ref().map(|s| s.note.timeout().is_none() && s.timer.is_none() && s.paused.is_none()).unwrap_or(false);
+        if waits && !self.busy.get() { self.arm_timer(); }
         self.next();
     }
 
@@ -1110,7 +1126,7 @@ impl Daemon {
             // balloons are tooltips: "Fade or slide ToolTips into view"
             crate::anim::show_faded(&d.win, crate::anim::BALLOON_IN, crate::anim::effect("tooltip_fade"));
             d.busy.set(false);
-            if let Some(s) = d.cur.borrow().as_ref() { play_sound(&s.note); }
+            if let Some(s) = d.cur.borrow().as_ref() { play_sound(&s.note, &d.last_sound); }
             d.arm_timer();
             glib::ControlFlow::Break
         });
@@ -1270,7 +1286,7 @@ impl Daemon {
         if let Some(t) = s.timer.take() { t.remove(); }
         s.paused = None;
         s.deadline = None;
-        let Some(dur) = s.note.timeout() else { return };
+        let Some(dur) = s.note.timeout().or_else(|| (!self.queue.borrow().is_empty()).then_some(DEFAULT_TIMEOUT)) else { return };
         if self.hovered() {
             s.paused = Some(dur);
             return;

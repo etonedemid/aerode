@@ -8,7 +8,8 @@ use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11}
 
 const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|gadgets|reload|lock|quit|restart]
        aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME] | autoplay DIR
-       aerode query-volume | query-network | picom-config [CONFIG]";
+       aerode query-volume | query-network | picom-config [CONFIG]
+       aerode mixer | volume-step up|down [N] | audio-mute | mic-mute";
 
 struct Shell {
     _desktop: Rc<desktop::Desktop>,
@@ -50,8 +51,12 @@ fn build(app: &gtk::Application) {
     // notification daemon (balloon tips above the notification area); before autostart so
     // that programs started there find it instead of D-Bus-activating another daemon
     aerode::notify::start(&tb.tray, tb.wm.clone());
-    autostart();
-    util::sound(aerode::sounds::Event::Logon);
+    // Startup programs and the logon (or, first after boot, startup) sound once per logon session:
+    // not again when the shell restarts (`aerode restart`, a crash), like Explorer
+    if aerode::sounds::first_shell_of_session() {
+        autostart();
+        aerode::sounds::logon();
+    }
     aerode::sounds::start_watchers();
     // AutoPlay for discs, drives and devices plugged in from now on
     aerode::autoplay::watch();
@@ -158,9 +163,26 @@ fn main() -> glib::ExitCode {
     // helper commands that must not go through the single-instance shell
     match args.get(1).map(|s| s.as_str()) {
         Some("query-volume") => {
-            if let Some((p, m)) = sys::volume() { println!("{p} {}", m as u8); }
+            // "<level> <muted>\t<tooltip>" (the level is the loudest channel)
+            if let Some(i) = sys::audio_info(false) {
+                match i.level() { Some((p, m)) => println!("{p} {}\t{}", m as u8, i.tooltip()), None => println!("- -\t{}", i.tooltip()) }
+            }
             return glib::ExitCode::SUCCESS;
         }
+        // the volume keys (bound by aerode-wm): Win7's 2 % steps, unmuting, keeping the balance
+        Some("volume-step") => {
+            let n: i32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
+            match args.get(2).map(|s| s.as_str()) {
+                Some("up") => sys::apply_step(n),
+                Some("down") => sys::apply_step(-n),
+                _ => { eprintln!("{USAGE}"); return glib::ExitCode::FAILURE; }
+            }
+            return glib::ExitCode::SUCCESS;
+        }
+        Some("audio-mute") => { sys::apply_mute(None, None); return glib::ExitCode::SUCCESS; }
+        Some("mic-mute") => { sys::apply_mic_mute_toggle(); return glib::ExitCode::SUCCESS; }
+        // Win7's Volume Mixer (sndvol.exe): its own process
+        Some("mixer") => { aerode::mixer::run(); return glib::ExitCode::SUCCESS; }
         Some("query-network") => {
             let n = sys::net_status();
             println!("{}\t{}\t{}", n.kind, n.signal, n.name);
