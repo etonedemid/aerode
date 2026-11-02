@@ -83,13 +83,51 @@ pub fn describe(layout: &str, variant: &str) -> String {
     ls.iter().find(|(c, _)| c == layout).map(|(_, d)| d.clone()).unwrap_or_else(|| layout.to_string())
 }
 
-/// Win7 "Advanced Key Settings" choices for switching input languages, as XKB options.
+/// Hot keys for switching input languages (Win7 "Advanced Key Settings" plus common extras), as XKB
+/// options. Alt+Space is left out: it opens the window menu.
 pub const HOTKEYS: &[(&str, &str)] = &[
-    ("Left Alt+Shift", "grp:alt_shift_toggle"),
+    ("Alt+Shift (Windows default)", "grp:alt_shift_toggle"),
+    ("Left Alt+Left Shift", "grp:lalt_lshift_toggle"),
     ("Ctrl+Shift", "grp:ctrl_shift_toggle"),
-    ("Grave Accent (`)", "grp:toggle"),
+    ("Left Ctrl+Left Shift", "grp:lctrl_lshift_toggle"),
+    ("Windows logo key+Space", "grp:win_space_toggle"),
+    ("Caps Lock", "grp:caps_toggle"),
+    ("Shift+Caps Lock", "grp:shift_caps_toggle"),
+    ("Right Alt", "grp:toggle"),
+    ("Right Ctrl", "grp:rctrl_toggle"),
+    ("Menu key", "grp:menu_toggle"),
+    ("Scroll Lock", "grp:sclk_toggle"),
     ("(None)", ""),
 ];
+
+pub const DEFAULT_SWITCH: &str = "grp:alt_shift_toggle";
+
+/// The configured switching option ("" = none).
+pub fn switch_option() -> String {
+    config::get().kbd_switch.unwrap_or_else(|| DEFAULT_SWITCH.to_string())
+}
+
+fn code(l: &Layout) -> String { if l.variant.is_empty() { l.layout.clone() } else { format!("{}({})", l.layout, l.variant) } }
+
+fn parse_code(c: &str) -> Layout {
+    match c.split_once('(') {
+        Some((l, v)) => Layout { layout: l.to_string(), variant: v.trim_end_matches(')').to_string() },
+        None => Layout { layout: c.to_string(), variant: String::new() },
+    }
+}
+
+/// Make the X server use the configured layouts and switching key: at login, and again whenever a
+/// keyboard appears (X gives a hot-plugged keyboard the system defaults, losing both).
+pub fn ensure() {
+    let (cur, cur_opts) = current();
+    let cfg = config::get();
+    let want: Vec<Layout> = if cfg.kbd_layouts.is_empty() { cur.clone() } else { cfg.kbd_layouts.iter().map(|c| parse_code(c)).collect() };
+    let mut opts: Vec<String> = cur_opts.iter().filter(|o| !o.starts_with("grp:")).cloned().collect();
+    let sw = switch_option();
+    if !sw.is_empty() { opts.push(sw); }
+    let same_opts = { let mut a = opts.clone(); let mut b = cur_opts.clone(); a.sort(); b.sort(); a == b };
+    if want != cur || !same_opts { apply_with_options(&want, &opts); }
+}
 
 fn rules_names(conn: &RustConnection, root: u32) -> Vec<String> {
     let Ok(atom) = conn.intern_atom(false, b"_XKB_RULES_NAMES").map_err(|_| ()).and_then(|c| c.reply().map_err(|_| ())) else { return vec![] };
@@ -137,11 +175,14 @@ pub fn apply_with_options(layouts: &[Layout], options: &[String]) {
     let _ = std::fs::write(config::conf_dir().join("keyboard.sh"), script);
 }
 
-/// Apply layouts with a switching hot key, keeping the user's other XKB options (compose, caps…).
+/// Apply layouts with a switching hot key ("" = none), keeping the user's other XKB options
+/// (compose, caps…), and remember both in the config.
 pub fn apply(layouts: &[Layout], hot: &str) {
     let (_, opts) = current();
     let mut opts: Vec<String> = opts.into_iter().filter(|o| !o.starts_with("grp:")).collect();
-    if !hot.is_empty() && layouts.len() > 1 { opts.push(hot.to_string()); }
+    if !hot.is_empty() { opts.push(hot.to_string()); }
+    let codes: Vec<String> = layouts.iter().map(code).collect();
+    config::update(|c| { c.kbd_layouts = codes.clone(); c.kbd_switch = Some(hot.to_string()); });
     apply_with_options(layouts, &opts);
 }
 
@@ -160,7 +201,10 @@ pub fn import_plasma() {
     let layouts = split_layouts(kv.get("LayoutList").map(String::as_str).unwrap_or(""), kv.get("VariantList").map(String::as_str).unwrap_or(""));
     if layouts.is_empty() { return; }
     let mut opts: Vec<String> = kv.get("Options").map(|o| o.split(',').filter(|s| !s.is_empty()).map(String::from).collect()).unwrap_or_default();
-    if layouts.len() > 1 && !opts.iter().any(|o| o.starts_with("grp:")) { opts.push("grp:alt_shift_toggle".into()); }
+    if !opts.iter().any(|o| o.starts_with("grp:")) { opts.push(DEFAULT_SWITCH.into()); }
+    let sw = opts.iter().find(|o| o.starts_with("grp:")).cloned().unwrap_or_default();
+    let codes: Vec<String> = layouts.iter().map(code).collect();
+    config::update(|c| { c.kbd_layouts = codes.clone(); c.kbd_switch = Some(sw.clone()); });
     apply_with_options(&layouts, &opts);
 }
 
@@ -176,6 +220,7 @@ struct Indicator {
     /// the active window and the key its language is remembered under (its process, like Win7's per-program language)
     active: Cell<(u32, u32)>,
     per_app: RefCell<HashMap<u32, u8>>,
+    ensure_pending: Rc<Cell<bool>>,
     button: gtk::Button,
     label: gtk::Label,
 }
@@ -240,7 +285,13 @@ impl Indicator {
                         self.update();
                     }
                 }
-                Event::XkbNewKeyboardNotify(_) => self.reload(),
+                Event::XkbNewKeyboardNotify(_) => {
+                    self.reload();
+                    if !self.ensure_pending.replace(true) {
+                        let p = self.ensure_pending.clone();
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || { p.set(false); ensure(); });
+                    }
+                }
                 Event::PropertyNotify(p) if p.window == self.root && p.atom == self.a_rules => self.reload(),
                 Event::PropertyNotify(p) if p.window == self.root && p.atom == self.a_active => self.active_changed(),
                 _ => {}
@@ -325,7 +376,7 @@ pub fn attach(tray: &gtk::Box) {
     let ind = Rc::new(Indicator {
         conn, root, a_active, a_rules, a_pid,
         layouts: RefCell::new(vec![]), group: Cell::new(0), active: Cell::new((0, 0)), per_app: RefCell::new(HashMap::new()),
-        button: button.clone(), label,
+        ensure_pending: Rc::new(Cell::new(false)), button: button.clone(), label,
     });
     let _ = ind.conn.flush();
     ind.reload();

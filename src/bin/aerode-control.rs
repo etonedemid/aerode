@@ -120,9 +120,9 @@ fn input_languages() -> gtk::Widget {
     row.pack_start(&btns, false, false, 0);
     v.pack_start(&row, false, false, 0);
     let hk = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    hk.pack_start(&gtk::Label::new(Some("Between input languages:")), false, false, 0);
+    hk.pack_start(&gtk::Label::new(Some("Hot key to switch between input languages:")), false, false, 0);
     let hot = gtk::ComboBoxText::new();
-    let cur_hot = kbdlayout::hotkey(&opts);
+    let cur_hot = aerode::config::get().kbd_switch.unwrap_or_else(|| { let h = kbdlayout::hotkey(&opts); if h.is_empty() { kbdlayout::DEFAULT_SWITCH.to_string() } else { h } });
     for (label, opt) in kbdlayout::HOTKEYS { hot.append(Some(opt), label); }
     if !hot.set_active_id(Some(&cur_hot)) { if cur_hot.is_empty() { hot.set_active_id(Some("")); } else { hot.append(Some(&cur_hot), &cur_hot); hot.set_active_id(Some(&cur_hot)); } }
     hk.pack_start(&hot, false, false, 0);
