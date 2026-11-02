@@ -51,7 +51,7 @@ fn bindings() -> Vec<(u16, u32, Action)> {
         (SUPER, 'e' as u32, s("aerode-explorer")), (SUPER, 'r' as u32, s("aerode run")),
         (SUPER, 'l' as u32, s("aerode lock")), (SUPER, 'p' as u32, s("aerode-control display")),
         (SUPER, 'f' as u32, s("aerode start")), (SUPER, XK_PAUSE, s("aerode-control system")),
-        (SUPER | SHIFT, 's' as u32, s("aerode-snip")), (0, XK_PRINT, s("aerode-snip --full")),
+        (SUPER | SHIFT, 's' as u32, s("aerode-snip --clip")), (0, XK_PRINT, s("aerode-snip --full")),
         (CTRL | SHIFT, XK_ESCAPE, s("aerode-taskmgr")), (CTRL | ALT, XK_DELETE, s("aerode-taskmgr")),
         (CTRL, XK_ESCAPE, s("aerode start")),
         (0, 0x1008ff13, s("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 2%+ || pactl set-sink-volume @DEFAULT_SINK@ +2%")),

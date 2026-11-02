@@ -1,7 +1,10 @@
 //! Snipping Tool – Windows 7 Snipping Tool remake.
 //!   aerode-snip           open the tool
 //!   aerode-snip --full    Print Screen: copy the whole screen to the clipboard (and save a copy)
-//!   aerode-snip --rect    start a rectangular snip immediately (Win+Shift+S)
+//!   aerode-snip --clip    Win+Shift+S: rectangular snip of the frozen screen straight to the clipboard
+//!   aerode-snip --rect    start a rectangular snip immediately, then open it in the editor
+//! X11 clipboard contents live in the process that owns CLIPBOARD, so after copying a snip the process
+//! stays alive (windowless once its windows are closed) until another client copies something.
 use gtk::gdk::prelude::GdkContextExt;
 use gtk::gdk_pixbuf::Pixbuf;
 use gtk::prelude::*;
@@ -187,10 +190,46 @@ fn select(kind: Kind, shot: Pixbuf, done: Rc<dyn Fn(Option<Pixbuf>)>) {
         win.connect_key_press_event(move |_, e| { if e.keyval() == gdk::keys::constants::Escape { fin(true); } glib::Propagation::Stop });
     }
     win.show_all();
-    if let (Some(seat), Some(gw)) = (gdk::Display::default().and_then(|d| d.default_seat()), win.window()) {
-        let cur = gdk::Cursor::from_name(&gdk::Display::default().unwrap(), "crosshair");
-        let _ = seat.grab(&gw, gdk::SeatCapabilities::ALL, true, cur.as_ref(), None, None);
+    // pointer + keyboard grab (crosshair cursor, Esc). Started by the WM's Win+Shift+S binding, the WM's key
+    // grab is still active while the keys are held and our grab fails - retry until they are released
+    fn grab(win: &gtk::Window) -> bool {
+        let (Some(d), Some(gw)) = (gdk::Display::default(), win.window()) else { return true };
+        let Some(seat) = d.default_seat() else { return true };
+        let cur = gdk::Cursor::from_name(&d, "crosshair");
+        seat.grab(&gw, gdk::SeatCapabilities::ALL, true, cur.as_ref(), None, None) == gdk::GrabStatus::Success
     }
+    if !grab(&win) {
+        let (win, tries) = (win.clone(), Cell::new(0));
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            tries.set(tries.get() + 1);
+            if !win.is_visible() || grab(&win) || tries.get() > 100 { glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
+        });
+    }
+}
+
+thread_local! { static CLIP_HOLD: RefCell<Option<gio::ApplicationHoldGuard>> = const { RefCell::new(None) }; }
+
+/// Put a snip on the clipboard and keep serving it. X11 clipboard data is held by the owning process and
+/// vanishes when it exits; `store()` only hands it over when a clipboard manager runs (none does in an
+/// aerode session). So the app is held - windowless once the editor is closed - until another client
+/// owns CLIPBOARD.
+fn copy_to_clipboard(img: &Pixbuf) {
+    let cb = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+    cb.set_image(img);
+    cb.store();
+    let Some(app) = gio::Application::default() else { return };
+    if CLIP_HOLD.with(|h| h.borrow().is_some()) { return; }
+    CLIP_HOLD.with(|h| *h.borrow_mut() = Some(app.hold()));
+    static WATCH: std::sync::Once = std::sync::Once::new();
+    WATCH.call_once(|| {
+        // GTK reports our own set_image as an owner change too, and wraps a foreign new owner in a FOREIGN
+        // GdkWindow (so selection_owner_get alone would still answer): let go only for someone else's window
+        cb.connect_local("owner-change", false, |_| {
+            let ours = gdk::selection_owner_get(&gdk::SELECTION_CLIPBOARD).is_some_and(|w| w.window_type() != gdk::WindowType::Foreign);
+            if !ours { drop(CLIP_HOLD.with(|h| h.borrow_mut().take())); }
+            None
+        });
+    });
 }
 
 // ------------------------------------------------------------- editor
@@ -223,11 +262,7 @@ impl Editor {
         gdk::pixbuf_get_from_surface(&surf, 0, 0, w, h).unwrap()
     }
 
-    fn copy(&self) {
-        let cb = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
-        cb.set_image(&self.flatten());
-        cb.store();
-    }
+    fn copy(&self) { copy_to_clipboard(&self.flatten()); }
 
     fn save(&self) {
         let fc = gtk::FileChooserDialog::with_buttons(Some("Save As"), Some(&self.win), gtk::FileChooserAction::Save,
@@ -337,7 +372,7 @@ fn open_editor(app: &gtk::Application, shot: Pixbuf, main: Option<gtk::Window>) 
     }
     // toolbar: New Snip | Save | Copy | Send | Pen ▾ | Highlighter | Eraser
     let new_b = tool_button("accessories-screenshot", "New Snip");
-    { let (a, w) = (app.clone(), win.clone()); new_b.connect_clicked(move |_| { w.close(); start(&a, current_kind(), None); }); }
+    { let (a, w) = (app.clone(), win.clone()); new_b.connect_clicked(move |_| { w.close(); start(&a, current_kind(), None, Dest::Editor); }); }
     tb.insert(&new_b, -1);
     tb.insert(&gtk::SeparatorToolItem::new(), -1);
     let save_b = tool_button("document-save", "Save Snip");
@@ -392,7 +427,7 @@ fn open_editor(app: &gtk::Application, shot: Pixbuf, main: Option<gtk::Window>) 
         m.append(&it);
     };
     let m = gtk::Menu::new();
-    { let (a, w) = (app.clone(), win.clone()); add(&m, "_New Snip", "<Control>n", Box::new(move || { w.close(); start(&a, current_kind(), None); })); }
+    { let (a, w) = (app.clone(), win.clone()); add(&m, "_New Snip", "<Control>n", Box::new(move || { w.close(); start(&a, current_kind(), None, Dest::Editor); })); }
     { let e = ed.clone(); add(&m, "Save _As...", "<Control>s", Box::new(move || e.save())); }
     m.append(&gtk::SeparatorMenuItem::new());
     { let w = win.clone(); add(&m, "E_xit", "", Box::new(move || w.close())); }
@@ -455,16 +490,27 @@ fn options(parent: &gtk::Window) {
     d.close();
 }
 
-/// Begin a snip: hide our windows, grab the screen, let the user select.
-fn start(app: &gtk::Application, kind: Kind, main: Option<gtk::Window>) {
+/// Where a finished snip goes.
+#[derive(Clone, Copy, PartialEq)]
+enum Dest { Editor, Clipboard }
+
+/// Begin a snip: hide our windows, grab the screen, let the user select. The app is held until the
+/// selection ends: "New Snip" in the editor has already closed the last window, the quick modes have none.
+fn start(app: &gtk::Application, kind: Kind, main: Option<gtk::Window>, dest: Dest) {
     if let Some(m) = &main { m.hide(); }
-    let app = app.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
-        let Some(shot) = capture_screen() else { return };
-        let (a, m) = (app.clone(), main.clone());
-        select(kind, shot, Rc::new(move |res| match res {
-            Some(img) => open_editor(&a, img, m.clone()),
-            None => if let Some(m) = &m { m.show(); },
+    let (app, hold) = (app.clone(), app.hold());
+    // our own windows need a moment to leave the screen; Win+Shift+S freezes the screen at once
+    let delay = if dest == Dest::Clipboard { 0 } else { 250 };
+    glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
+        let Some(shot) = capture_screen() else { if let Some(m) = &main { m.show(); } return };
+        let (a, m, hold) = (app.clone(), main.clone(), RefCell::new(Some(hold)));
+        select(kind, shot, Rc::new(move |res| {
+            match res {
+                Some(img) if dest == Dest::Clipboard => copy_to_clipboard(&img),
+                Some(img) => open_editor(&a, img, m.clone()),
+                None => if let Some(m) = &m { m.show(); },
+            }
+            drop(hold.borrow_mut().take());
         }));
     });
 }
@@ -489,13 +535,13 @@ fn main_window(app: &gtk::Application) {
         it.connect_activate(move |_| {
             let _ = std::fs::create_dir_all(config::conf_dir());
             let _ = std::fs::write(config::conf_dir().join("snip.kind"), match k { Kind::Free => "free", Kind::Rect => "rect", Kind::Window => "window", Kind::Full => "full" });
-            start(&a, k, Some(w.clone().upcast()));
+            start(&a, k, Some(w.clone().upcast()), Dest::Editor);
         });
         kinds.append(&it);
     }
     kinds.show_all();
     new_b.set_menu(&kinds);
-    { let (a, w) = (app.clone(), win.clone()); new_b.connect_clicked(move |_| start(&a, current_kind(), Some(w.clone().upcast()))); }
+    { let (a, w) = (app.clone(), win.clone()); new_b.connect_clicked(move |_| start(&a, current_kind(), Some(w.clone().upcast()), Dest::Editor)); }
     tb.insert(&new_b, -1);
     let cancel = gtk::ToolButton::new(None::<&gtk::Widget>, Some("Cancel"));
     cancel.set_is_important(true);
@@ -521,27 +567,25 @@ fn main_window(app: &gtk::Application) {
 
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--full") {
-        // Print Screen: whole screen → clipboard (and Pictures/Screenshots), like Win7 PrtScn
-        gtk::init().expect("gtk");
-        let Some(shot) = capture_screen() else { return glib::ExitCode::FAILURE };
-        let dir = util::special_dir(glib::UserDirectory::Pictures, "Pictures").join("Screenshots");
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = shot.savev(dir.join(chrono::Local::now().format("Screenshot %Y-%m-%d %H.%M.%S.png").to_string()), "png", &[]);
-        let cb = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
-        cb.set_image(&shot);
-        cb.store();
-        // keep serving the clipboard until someone else owns it (or 10 minutes pass)
-        cb.connect_local("owner-change", false, |_| { gtk::main_quit(); None });
-        glib::timeout_add_seconds_local_once(600, gtk::main_quit);
-        gtk::main();
-        return glib::ExitCode::SUCCESS;
-    }
-    let quick = args.iter().any(|a| a == "--rect");
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    let (full, clip, rect) = (has("--full"), has("--clip"), has("--rect"));
     let app = gtk::Application::new(Some("org.aerode.SnippingTool"), gio::ApplicationFlags::NON_UNIQUE);
     app.connect_activate(move |app| {
+        if full {
+            // Print Screen: whole screen → clipboard (and Pictures/Screenshots), like Win7 PrtScn
+            let Some(shot) = capture_screen() else { return };
+            let dir = util::special_dir(glib::UserDirectory::Pictures, "Pictures").join("Screenshots");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = shot.savev(dir.join(chrono::Local::now().format("Screenshot %Y-%m-%d %H.%M.%S.png").to_string()), "png", &[]);
+            copy_to_clipboard(&shot);
+            return;
+        }
         theme::init_app();
-        if quick { let h = app.hold(); start(app, Kind::Rect, None); std::mem::forget(h); } else { main_window(app); }
+        if clip || rect {
+            start(app, Kind::Rect, None, if clip { Dest::Clipboard } else { Dest::Editor });
+        } else {
+            main_window(app);
+        }
     });
     app.run_with_args::<&str>(&[])
 }
