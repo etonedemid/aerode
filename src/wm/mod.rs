@@ -225,6 +225,7 @@ impl Wm {
         conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(mask))?
             .check().context("another window manager is already running")?;
         let _ = conn.randr_select_input(root, x11rb::protocol::randr::NotifyMask::SCREEN_CHANGE);
+        xbell_init(&conn);
         // repaint frames when a compositor starts/stops (glass vs. opaque)
         if conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some() {
             let _ = conn.xfixes_select_selection_input(root, atoms._NET_WM_CM_S0,
@@ -1532,6 +1533,7 @@ impl Wm {
                 for w in ids { self.redraw(w); }
             }
             Event::RandrScreenChangeNotify(_) => { self.update_monitors(); self.load_wallpaper(); self.sync_bar(); }
+            Event::XkbBellNotify(_) => xbell_ring(),
             _ => {}
         }
         Ok(())
@@ -2509,3 +2511,26 @@ enum Hit { Button(Btn), Caption, Edge(u8) }
 
 /// Tool windows get Win7's small frame (SMALL* DWM parts, square corners, small close button).
 fn is_small(c: &Client) -> bool { c.kind == Kind::Utility }
+
+/// Applications' X bells (XBell, a terminal's BEL through the X server, GTK's error bell) are
+/// MessageBeep for Win7's purposes: they play the scheme's Default Beep. The server's own bell
+/// (the PC speaker) is switched off like metacity/mutter do, so there is one sound, not two.
+fn xbell_init(conn: &impl x11rb::connection::Connection) {
+    use x11rb::protocol::xkb::{self, ConnectionExt as _};
+    if !conn.xkb_use_extension(1, 0).ok().and_then(|c| c.reply().ok()).map(|r| r.supported).unwrap_or(false) { return; }
+    let _ = conn.xkb_select_events(xkb::ID::USE_CORE_KBD.into(), xkb::EventType::from(0u16),
+        xkb::EventType::BELL_NOTIFY, xkb::MapPart::from(0u16), xkb::MapPart::from(0u16), &xkb::SelectEventsAux::new());
+    let (m, v, ax) = (x11rb::protocol::xproto::ModMask::from(0u16), xkb::VMod::from(0u16), xkb::AXOption::from(0u16));
+    let _ = conn.xkb_set_controls(xkb::ID::USE_CORE_KBD.into(), m, m, m, m, v, v, v, v, 0, 0, ax,
+        xkb::BoolCtrl::AUDIBLE_BELL_MASK, xkb::BoolCtrl::from(0u32), xkb::Control::CONTROLS_ENABLED,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, xkb::BoolCtrl::from(0u32), xkb::BoolCtrl::from(0u32), ax, ax, &[0u8; 32]);
+}
+
+fn xbell_ring() {
+    thread_local! { static LAST: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }
+    // a burst of bells (a binary file in a terminal) is one beep, not a storm
+    let now = Instant::now();
+    if LAST.with(|l| l.get().map(|t| now.duration_since(t) < std::time::Duration::from_millis(100)).unwrap_or(false)) { return; }
+    LAST.with(|l| l.set(Some(now)));
+    crate::sounds::play(crate::sounds::Event::DefaultBeep);
+}

@@ -190,7 +190,7 @@ fn main() -> glib::ExitCode {
         }
         Some("lock") => {
             gtk::init().expect("gtk");
-            aerode::lock::lock();
+            aerode::lock::lock(!args.iter().any(|a| a == "--sleep"));
             return glib::ExitCode::SUCCESS;
         }
         Some("screensaver") => {

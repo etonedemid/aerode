@@ -1,5 +1,5 @@
 //! System backends: audio, network, battery, brightness, power, lock.
-use crate::util::{output, spawn, which};
+use crate::util::{output, spawn};
 
 // audio (volume, mute, devices, the serialised writer): src/sys/audio.rs
 mod audio;
@@ -199,26 +199,31 @@ pub fn set_brightness(pct: u32) {
 }
 
 // ---------------------------------------------------------------- power
-/// Play an event sound to completion (used before the session goes away).
-fn play_blocking(ev: crate::sounds::Event) {
-    if let Some(f) = crate::sounds::file_for(ev) {
-        for pl in ["pw-play", "paplay", "aplay"] {
-            if which(pl) { let _ = std::process::Command::new(pl).arg(&f).status(); return; }
-        }
+/// End the session the Win7 way: the Log off / Exit Windows sound plays to its end (bounded by
+/// `sounds::play_sync`), then the session goes away. On a worker thread, so the caller's UI keeps
+/// painting meanwhile.
+fn end_session(ev: crate::sounds::Event, then: fn()) {
+    std::thread::spawn(move || { crate::sounds::play_sync(ev); then(); });
+}
+pub fn shutdown() { end_session(crate::sounds::Event::ExitWindows, || { spawn(&["systemctl", "poweroff"]); }); }
+pub fn restart() { end_session(crate::sounds::Event::ExitWindows, || { spawn(&["systemctl", "reboot"]); }); }
+/// Power Options > "Require a password on wakeup": lock before sleeping / hibernating (silently:
+/// Win7 skips the lock sound when the lock comes from suspending).
+fn lock_for_wakeup() {
+    if crate::config::get().hw.power.require_password {
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode".into());
+        spawn(&[&exe, "lock", "--sleep"]);
     }
 }
-pub fn shutdown() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "poweroff"]); }
-pub fn restart() { play_blocking(crate::sounds::Event::ExitWindows); spawn(&["systemctl", "reboot"]); }
-/// Power Options > "Require a password on wakeup": lock before sleeping / hibernating.
-fn lock_for_wakeup() { if crate::config::get().hw.power.require_password { lock(); } }
 pub fn sleep() { lock_for_wakeup(); spawn(&["systemctl", "suspend"]); }
 pub fn hibernate() { lock_for_wakeup(); spawn(&["systemctl", "hibernate"]); }
 pub fn log_off() {
-    play_blocking(crate::sounds::Event::Logoff);
-    // ending the window manager ends the session (it is the session leader)
-    if !spawn(&["pkill", "-TERM", "-x", "aerode-wm"]) {
-        spawn(&["loginctl", "terminate-session", &std::env::var("XDG_SESSION_ID").unwrap_or_default()]);
-    }
+    end_session(crate::sounds::Event::Logoff, || {
+        // ending the window manager ends the session (it is the session leader)
+        if !spawn(&["pkill", "-TERM", "-x", "aerode-wm"]) {
+            spawn(&["loginctl", "terminate-session", &std::env::var("XDG_SESSION_ID").unwrap_or_default()]);
+        }
+    });
 }
 pub fn lock() {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode".into());
