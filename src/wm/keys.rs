@@ -148,12 +148,30 @@ impl Keys {
     }
 }
 
-/// Load a named cursor via the cursor font fallback (left_ptr etc).
+/// Load a named cursor from the cursor theme, falling back to the X cursor font (left_ptr etc).
 pub fn cursor(conn: &RustConnection, screen: usize, name: &str) -> Option<u32> {
     thread_local! { static CACHE: std::cell::RefCell<HashMap<String, u32>> = Default::default(); }
     if let Some(c) = CACHE.with(|c| c.borrow().get(name).copied()) { return Some(c); }
     let handle = x11rb::cursor::Handle::new(conn, screen, &x11rb::resource_manager::new_from_default(conn).ok()?).ok()?.reply().ok()?;
-    let c = handle.load_cursor(conn, name).ok()?;
+    let mut c = handle.load_cursor(conn, name).ok()?;
+    // x11rb returns None (0) when no theme has the name – unlike libXcursor it has no cursor-font fallback
+    // (its own "core" theme path also passes the glyph index without the *2), so do it here
+    if c == x11rb::NONE { c = font_cursor(conn, name).unwrap_or(x11rb::NONE); }
     CACHE.with(|cc| cc.borrow_mut().insert(name.to_string(), c));
+    Some(c)
+}
+
+/// Glyph cursor from the core "cursor" font (indices from <X11/cursorfont.h>).
+fn font_cursor(conn: &RustConnection, name: &str) -> Option<u32> {
+    let glyph: u16 = match name {
+        "left_ptr" => 68, "fleur" => 52, "top_side" => 138, "bottom_side" => 16, "left_side" => 70, "right_side" => 96,
+        "top_left_corner" => 134, "top_right_corner" => 136, "bottom_left_corner" => 12, "bottom_right_corner" => 14,
+        _ => return None,
+    };
+    let font = conn.generate_id().ok()?;
+    conn.open_font(font, b"cursor").ok()?;
+    let c = conn.generate_id().ok()?;
+    let _ = conn.create_glyph_cursor(c, font, font, glyph, glyph + 1, 0, 0, 0, 0xffff, 0xffff, 0xffff);
+    let _ = conn.close_font(font);
     Some(c)
 }
