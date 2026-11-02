@@ -202,6 +202,9 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("utilities-log-viewer", "Windows/System32/eventvwr.exe", Some(101), &["gnome-logs", "org.gnome.Logs", "ksystemlog", "org.kde.ksystemlog", "qjournalctl"]),
     ("hwinfo", "Windows/System32/msinfo32.exe", Some(10002), &["kinfocenter", "org.kde.kinfocenter", "hardinfo", "hardinfo2"]),
     ("multimedia-volume-control", "Windows/System32/SndVol.exe", None, &["pavucontrol", "org.pulseaudio.pavucontrol"]),
+    // the Volume Mixer's / speaker flyout's mute buttons (SndVol.exe icon groups 110 and 111)
+    ("aerode-sndvol-unmuted", "Windows/System32/SndVol.exe", Some(110), &[]),
+    ("aerode-sndvol-muted", "Windows/System32/SndVol.exe", Some(111), &[]),
     ("preferences-desktop-sound", "Windows/System32/mmsys.cpl", Some(100), &["preferences-desktop-multimedia"]),
     // notification-area icons (the real Win7 tray art)
     ("audio-volume-muted", "Windows/System32/SndVolSSO.dll", Some(120), &["audio-volume-muted-blocking"]),

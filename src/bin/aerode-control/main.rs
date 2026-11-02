@@ -532,7 +532,7 @@ fn main() -> glib::ExitCode {
     // run by the session at log on: the Ease of Access settings that start each time you log on
     if page == "--apply-access" { return pages::core::apply_at_logon(); }
     let app = gtk::Application::new(Some("org.aerode.ControlPanel"), gio::ApplicationFlags::NON_UNIQUE);
-    app.connect_activate(move |app| build(app, page.clone()));
+    app.connect_activate(move |app| { aerode::util::message_dialog_sounds(); build(app, page.clone()) });
     app.run_with_args::<&str>(&[])
 }
 

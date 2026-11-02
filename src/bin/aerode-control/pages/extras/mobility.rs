@@ -147,8 +147,9 @@ fn brightness(cp: &Rc<Cp>) -> gtk::Widget {
 // ------------------------------------------------------------------ volume
 
 fn volume(cp: &Rc<Cp>) -> gtk::Widget {
-    let cur = sys::volume();
-    let t = tile(sys::volume_icon(cur), "Volume");
+    // the sound server is asked off the GTK thread (sys::query_async); the tile fills in when
+    // the answer comes
+    let t = tile(sys::volume_icon(Some((50, false))), "Volume");
     let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 2.0);
     s.set_draw_value(false);
     s.set_size_request(100, -1);
@@ -156,12 +157,20 @@ fn volume(cp: &Rc<Cp>) -> gtk::Widget {
     t.body.pack_start(&s, false, false, 0);
     t.body.pack_start(&mute, false, false, 0);
     { let me = cp.clone(); t.icon.connect_clicked(move |_| open_cp(&me, "sound")); }
-    match cur {
-        Some((v, m)) => { s.set_value(v as f64); mute.set_active(m); t.status.set_text(if m { "Muted" } else { "" }); }
-        None => { s.set_sensitive(false); mute.set_sensitive(false); t.status.set_text("No audio device"); }
+    let loading = Rc::new(Cell::new(true));
+    {
+        let (s, mute, st, ib, loading) = (s.clone(), mute.clone(), t.status.clone(), t.icon.clone(), loading.clone());
+        sys::query_async(false, move |info| {
+            match info.and_then(|i| i.level()) {
+                Some((v, m)) => { s.set_value(v as f64); mute.set_active(m); st.set_text(if m { "Muted" } else { "" }); }
+                None => { s.set_sensitive(false); mute.set_sensitive(false); st.set_text("No audio device"); }
+            }
+            set_icon(&ib, sys::volume_icon(Some((s.value() as u32, mute.is_active()))));
+            loading.set(false);
+        });
     }
-    let loading = Rc::new(Cell::new(false));
-    { let (ib, st, mute) = (t.icon.clone(), t.status.clone(), mute.clone()); s.connect_value_changed(move |s| {
+    { let (ib, st, mute, loading) = (t.icon.clone(), t.status.clone(), mute.clone(), loading.clone()); s.connect_value_changed(move |s| {
+        if loading.get() { return; }
         let v = s.value().round() as u32;
         sys::set_volume(v);
         set_icon(&ib, sys::volume_icon(Some((v, mute.is_active()))));
@@ -169,9 +178,8 @@ fn volume(cp: &Rc<Cp>) -> gtk::Widget {
     }); }
     { let (ib, st, s, loading) = (t.icon.clone(), t.status.clone(), s.clone(), loading.clone()); mute.connect_toggled(move |m| {
         if loading.get() { return; }
-        // toggle only when it differs from the real state (another program may have changed it)
-        let real = sys::volume().map(|(_, m)| m).unwrap_or(false);
-        if real != m.is_active() { sys::toggle_mute(); }
+        // set the state explicitly: another program may have toggled it meanwhile
+        sys::set_mute(m.is_active());
         set_icon(&ib, sys::volume_icon(Some((s.value() as u32, m.is_active()))));
         st.set_text(if m.is_active() { "Muted" } else { "" });
     }); }
