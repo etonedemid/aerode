@@ -50,7 +50,9 @@ is often missing), `picom --backend xrender` (no blur there). `cargo run --examp
 Title x y w h` opens windows of any EWMH type; `cargo run --example wmmsg -- ATOM data…` sends client
 messages to the WM (debug builds: `_AERODE_RESTART 0xDEAD` tests the crash recovery). Short-lived X
 clients must end with a round trip, not just a flush, or the server can drop their last request.
-Agents building into the shared `target/` overwrite each other's binaries: copy what you test.
+Copies of this crate in other directories (git worktrees) get the same artifact names from cargo,
+so builds sharing one `target/` overwrite each other's `libaerode` and binaries – use a separate
+`CARGO_TARGET_DIR` per checkout when you need reliable builds, and copy the binaries you test.
 
 Config lives in `~/.config/aerode/` (config.json, console.json, picom.conf override, displays.sh…),
 extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/Aerode`.
