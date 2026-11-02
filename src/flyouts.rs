@@ -147,9 +147,14 @@ fn clock(tb: &Rc<Taskbar>) {
     tb.tray.pack_end(&b, false, false, 0);
     let update = {
         let (t, d, b) = (t.clone(), d.clone(), b.clone());
+        let last = std::cell::RefCell::new(String::new());
         move || {
             let now = chrono::Local::now();
-            t.set_text(&if config::get().clock_24h { now.format("%H:%M").to_string() } else { now.format("%-I:%M %p").to_string() });
+            let time = if config::get().clock_24h { now.format("%H:%M").to_string() } else { now.format("%-I:%M %p").to_string() };
+            // only touch the labels when the minute changes (no relayout every second)
+            if *last.borrow() == time { return; }
+            t.set_text(&time);
+            *last.borrow_mut() = time;
             d.set_text(&now.format("%-m/%-d/%Y").to_string());
             b.set_tooltip_text(Some(&now.format("%A, %B %-d, %Y").to_string()));
         }
@@ -241,7 +246,11 @@ fn volume(tb: &Rc<Taskbar>) {
         }
     };
     refresh();
-    { let r = refresh.clone(); glib::timeout_add_seconds_local(3, move || { r(); glib::ControlFlow::Continue }); }
+    // follow the sound server's change events; poll only as a safety net (or without pactl)
+    let r = refresh.clone();
+    let events = util::watch_lines(&["pactl", "subscribe"], |l| l.contains(" on sink ") || l.contains(" on server") || l.contains(" on card "),
+        std::time::Duration::from_millis(60), move || r());
+    { let r = refresh.clone(); glib::timeout_add_seconds_local(if events { 60 } else { 3 }, move || { r(); glib::ControlFlow::Continue }); }
     // mouse wheel over the speaker changes the volume in 2 % steps (touchpads: accumulated smooth deltas)
     {
         let (img, acc) = (img.clone(), Rc::new(std::cell::Cell::new(0.0f64)));
@@ -325,7 +334,10 @@ fn network(tb: &Rc<Taskbar>) {
         }
     };
     refresh();
-    { let r = refresh.clone(); glib::timeout_add_seconds_local(5, move || { r(); glib::ControlFlow::Continue }); }
+    // NetworkManager reports connection changes; Wi-Fi signal strength still needs the slow poll
+    let r = refresh.clone();
+    let events = util::watch_lines(&["nmcli", "monitor"], |_| true, std::time::Duration::from_millis(300), move || r());
+    { let r = refresh.clone(); glib::timeout_add_seconds_local(if events { 30 } else { 5 }, move || { r(); glib::ControlFlow::Continue }); }
     b.connect_clicked(move |b| {
         if close_open() { return; }
         let st = sys::net_status();

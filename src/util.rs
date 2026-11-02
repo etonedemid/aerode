@@ -216,22 +216,50 @@ pub fn output(argv: &[&str]) -> Option<String> {
 
 /// Run a command asynchronously and hand stdout to `cb` on the main loop.
 pub fn output_async(argv: Vec<String>, cb: impl FnOnce(Option<String>) + 'static) {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-        let _ = tx.send(output(&refs));
+        let _ = tx.send_blocking(output(&refs));
     });
-    let mut cb = Some(cb);
-    glib::timeout_add_local(std::time::Duration::from_millis(30), move || match rx.try_recv() {
-        Ok(v) => {
-            if let Some(cb) = cb.take() {
-                cb(v);
+    // woken by the channel: no polling while the command runs
+    glib::MainContext::default().spawn_local(async move {
+        if let Ok(v) = rx.recv().await { cb(v); }
+    });
+}
+
+/// Run `on_change` (on the main loop, coalesced over `debounce`) whenever a line printed by the
+/// long-running monitor command `argv` (e.g. `pactl subscribe`, `nmcli monitor`) passes `wanted`.
+/// The command is restarted when it exits (audio/network daemons restart); returns false when it
+/// cannot be started at all, so the caller can fall back to polling.
+pub fn watch_lines(argv: &[&str], wanted: fn(&str) -> bool, debounce: std::time::Duration, on_change: impl Fn() + 'static) -> bool {
+    use std::io::BufRead;
+    if !which(argv[0]) { return false; }
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let (tx, rx) = async_channel::bounded::<()>(1);
+    std::thread::spawn(move || loop {
+        let child = std::process::Command::new(&argv[0]).args(&argv[1..]).env("LC_ALL", "C")
+            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
+        let Ok(mut child) = child else { return };
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines() {
+                let Ok(line) = line else { break };
+                // a full channel already means "changed": drop the extra notifications
+                if wanted(&line) && tx.try_send(()).is_err() && tx.is_closed() { let _ = child.kill(); return; }
             }
-            glib::ControlFlow::Break
         }
-        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(_) => glib::ControlFlow::Break,
+        let _ = child.wait();
+        if tx.is_closed() { return; }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let _ = tx.try_send(()); // the daemon restarted: state may have changed meanwhile
     });
+    glib::MainContext::default().spawn_local(async move {
+        while rx.recv().await.is_ok() {
+            glib::timeout_future(debounce).await;
+            while rx.try_recv().is_ok() {}
+            on_change();
+        }
+    });
+    true
 }
 
 /// Win+R semantics: path → open, URL → browser, else command line.
