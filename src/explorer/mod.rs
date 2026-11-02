@@ -391,9 +391,14 @@ impl Explorer {
                 cr.set_source_pixbuf(&glass::wallpaper().blurred, -x as f64, -y as f64);
                 cr.paint().ok();
                 let c = aerode_frame_color();
-                cr.set_source_rgba(c[0], c[1], c[2], if w.is_active() { 0.55 } else { 0.35 });
+                // active = the WM's active window (_NET_WM_STATE_FOCUSED → GDK's FOCUSED state), the same
+                // thing the WM-drawn caption above and GTK's :backdrop follow. is_active() is the X keyboard
+                // focus and also flips on the NotifyGrab focus-outs of the WM's Windows-key grab, so the
+                // header blinked inactive/active/inactive (caption untouched) when Start was opened with Win.
+                let active = w.window().map(|gw| gw.state().contains(gdk::WindowState::FOCUSED)).unwrap_or(false);
+                cr.set_source_rgba(c[0], c[1], c[2], if active { 0.55 } else { 0.35 });
                 cr.paint().ok();
-                cr.set_source_rgba(1.0, 1.0, 1.0, if w.is_active() { 0.18 } else { 0.38 });
+                cr.set_source_rgba(1.0, 1.0, 1.0, if active { 0.18 } else { 0.38 });
                 cr.paint().ok();
                 let _ = (ww, hh);
                 glib::Propagation::Proceed
@@ -401,7 +406,10 @@ impl Explorer {
             let h2 = header.clone();
             win.connect_configure_event(move |_, _| { h2.queue_draw(); false });
             let h3 = header.clone();
-            win.connect_is_active_notify(move |_| h3.queue_draw());
+            win.connect_window_state_event(move |_, e| {
+                if e.changed_mask().contains(gdk::WindowState::FOCUSED) { h3.queue_draw(); }
+                glib::Propagation::Proceed
+            });
         }
         // filter: hidden files + live search
         {

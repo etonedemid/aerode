@@ -107,6 +107,8 @@ pub struct Wm {
     pub frames: HashMap<u32, u32>, // frame → client
     pub stack: Vec<u32>,           // bottom → top (clients)
     pub active: u32,
+    /// the window that was active before `active` (focus returns to it when `active` goes away)
+    prev_active: u32,
     pub monitors: Vec<Rect>,
     pub workarea: Rect,
     pub decor: Decor,
@@ -166,7 +168,7 @@ impl Wm {
         let cfg = crate::config::get();
         let mut wm = Wm {
             conn, root, screen_num, atoms, clients: HashMap::new(), frames: HashMap::new(), stack: vec![],
-            active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
+            active: 0, prev_active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
             showing_desktop: false, current_desktop: 0, num_desktops: 1, drag: None,
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
@@ -530,11 +532,17 @@ impl Wm {
         }
         self.stack.retain(|x| *x != w);
         if c.kind == Kind::Dock { self.update_workarea(); }
+        if self.prev_active == w { self.prev_active = 0; }
         if self.active == w {
             self.active = 0;
-            // focus the owner of a closed dialog, else the next window down the stack
+            // focus the owner of a closed dialog, else the window that was active before this one (the
+            // desktop too: closing Start or a snip must not activate and raise some other window, like
+            // Win7), else the next window down the stack
             let owner_ok = self.clients.get(&c.transient_for).map(|o| self.should_show(o)).unwrap_or(false);
-            if owner_ok { self.focus(c.transient_for) } else { self.focus_fallback(w) }
+            let prev = self.prev_active;
+            let prev_ok = self.clients.get(&prev).map(|p| self.should_show(p) && !p.wm_hidden
+                && matches!(p.kind, Kind::Normal | Kind::Dialog | Kind::Utility | Kind::Desktop)).unwrap_or(false);
+            if owner_ok { self.focus(c.transient_for) } else if prev_ok { self.focus(prev) } else { self.focus_fallback(w) }
         }
         self.update_client_list();
     }
@@ -783,7 +791,9 @@ impl Wm {
     fn should_show(&self, c: &Client) -> bool {
         if c.minimized { return false; }
         if !is_app(c) { return true; }
-        if self.showing_desktop { return false; }
+        // Show desktop hides the windows that have taskbar buttons; Start, tray flyouts and other
+        // skip-taskbar helpers stay usable on top of the desktop (Win7)
+        if self.showing_desktop && !c.skip_taskbar { return false; }
         c.desktop == 0xffffffff || c.desktop == self.current_desktop
     }
 
@@ -857,10 +867,14 @@ impl Wm {
     pub fn focus(&mut self, w: u32) {
         let Some(c) = self.clients.get(&w) else { return };
         if c.minimized { self.unminimize(w); }
-        if self.showing_desktop { self.showing_desktop_set(false, false); }
+        // only activating a window that Show desktop hid ends it - not the desktop itself (clicking the
+        // empty desktop) or Start/flyouts
+        let hid_by_show_desktop = self.clients.get(&w).map(|c| is_app(c) && !c.skip_taskbar).unwrap_or(false);
+        if self.showing_desktop && hid_by_show_desktop { self.showing_desktop_set(false, false); }
         let c = &self.clients[&w];
         if c.desktop != self.current_desktop && c.desktop != 0xffffffff { let d = c.desktop; self.desktop_set(d, false); }
         let old = self.active;
+        if old != w && old != 0 { self.prev_active = old; }
         self.active = w;
         let c = &self.clients[&w];
         if c.protocols.contains(&self.atoms.WM_TAKE_FOCUS) {
