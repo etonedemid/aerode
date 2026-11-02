@@ -13,6 +13,8 @@ pub fn assets_dir() -> PathBuf {
 
 pub fn load_css(css: &str) {
     let p = gtk::CssProvider::new();
+    // GTK 3 reports parse errors only through this signal (load_from_data still succeeds)
+    p.connect_parsing_error(|_, section, err| eprintln!("aerode: css error, line {}: {err}", section.start_line() + 1));
     // CSS loaded from memory has no base for relative urls (and GTK 3 ignores data: urls)
     let css = css.replace("url(\"assets/", &format!("url(\"file://{}/", assets_dir().display()));
     if let Err(e) = p.load_from_data(css.as_bytes()) {

@@ -228,6 +228,40 @@ impl Wm {
         let _ = self.conn.flush();
     }
 
+    /// EWMH `_NET_WM_ICON_GEOMETRY`: where `win`'s taskbar button is (root coordinates). aerode-wm
+    /// aims the Win7 minimise and restore animations at it; for grouped windows pass the group's
+    /// button. Writes only when the rectangle changed.
+    pub fn set_icon_geometry(&self, win: u32, x: i32, y: i32, w: i32, h: i32) {
+        thread_local! {
+            static ATOM: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            static LAST: std::cell::RefCell<std::collections::HashMap<u32, [u32; 4]>> = std::cell::RefCell::new(Default::default());
+        }
+        let v = [x.max(0) as u32, y.max(0) as u32, w.max(0) as u32, h.max(0) as u32];
+        if LAST.with(|l| l.borrow().get(&win) == Some(&v)) { return; }
+        let mut atom = ATOM.with(|a| a.get());
+        if atom == 0 {
+            atom = self.conn.intern_atom(false, b"_NET_WM_ICON_GEOMETRY").ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
+            if atom == 0 { return; }
+            ATOM.with(|a| a.set(atom));
+        }
+        if self.conn.change_property32(PropMode::REPLACE, win, atom, AtomEnum::CARDINAL, &v).is_ok() {
+            LAST.with(|l| { let mut l = l.borrow_mut(); if l.len() > 512 { l.clear(); } l.insert(win, v); });
+        }
+        let _ = self.conn.flush();
+    }
+
+    /// `set_icon_geometry` for the taskbar button widget `button` (its allocation on screen).
+    pub fn set_icon_geometry_of(&self, win: u32, button: &impl gtk::prelude::IsA<gtk::Widget>) {
+        use gtk::prelude::*;
+        let b = button.upcast_ref::<gtk::Widget>();
+        let Some(top) = b.toplevel().and_then(|t| t.window()) else { return };
+        if !b.is_mapped() { return; }
+        let (_, ox, oy) = top.origin();
+        let Some((bx, by)) = b.translate_coordinates(&b.toplevel().unwrap(), 0, 0) else { return };
+        let a = b.allocation();
+        self.set_icon_geometry(win, ox + bx, oy + by, a.width(), a.height());
+    }
+
     /// Drain pending events; true if anything relevant to the taskbar changed.
     pub fn drain(&self) -> bool {
         let mut changed = false;

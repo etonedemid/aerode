@@ -326,6 +326,9 @@ impl Taskbar {
             }
         }
         for g in self.groups.borrow().iter() {
+            // where each window minimises to (_NET_WM_ICON_GEOMETRY: the WM's minimise animation
+            // flies into the button, like Win7); grouped windows share their group's button
+            for w in &g.windows { self.wm.set_icon_geometry_of(w.id, &g.button); }
             let sc = g.button.style_context();
             let running = !g.windows.is_empty();
             let is_active = g.windows.iter().any(|w| w.id == active && !w.minimized);
@@ -387,6 +390,18 @@ impl Taskbar {
     }
 
     fn wire(self: &Rc<Self>, button: &gtk::Button, key: String) {
+        // a new button is laid out after its first refresh: publish its rectangle once it has one
+        // (and whenever it moves along the taskbar)
+        {
+            let (tb, k) = (Rc::downgrade(self), key.clone());
+            button.connect_size_allocate(move |b, _| {
+                let Some(tb) = tb.upgrade() else { return };
+                let Ok(groups) = tb.groups.try_borrow() else { return };
+                if let Some(g) = groups.iter().find(|g| g.key == k) {
+                    for w in &g.windows { tb.wm.set_icon_geometry_of(w.id, b); }
+                }
+            });
+        }
         let tb = Rc::downgrade(self);
         let k = key.clone();
         button.connect_button_release_event(move |b, e| {

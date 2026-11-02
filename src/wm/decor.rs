@@ -67,6 +67,8 @@ pub struct Params<'a> {
     /// tool window: the SMALL* frame (square corners) and the small close button
     pub small: bool,
     pub buttons: &'a [(Btn, BState)],
+    /// hover glow of buttons in the middle of a fade (0 normal … 1 hot); the others show their state
+    pub glow: &'a [(Btn, f64)],
     pub composited: bool,
     /// fills the current clip with this frame's glass (`wm::glass::Glass::fill`) and returns the
     /// opacity of the reflection streaks
@@ -451,36 +453,66 @@ impl Decor {
         let n = p.buttons.len();
         for (i, (btn, rect)) in rects.iter().enumerate() {
             let state = p.buttons.iter().find(|(b, _)| b == btn).map(|x| x.1).unwrap_or(BState::Normal);
-            let [x, y, bw, bh] = rect.map(|v| v as f64);
-            let si = state as i32 - 1;
-            if p.small && self.parts.contains_key(&SMALLBUTTONACTIVECLOSE) {
-                if state == BState::Hot { self.nine(cr, SMALLBUTTONCLOSEGLOW, 0, x - 5.0, y - 6.0, bw + 10.0, bh + 12.0); }
-                self.nine(cr, if p.active { SMALLBUTTONACTIVECLOSE } else { SMALLBUTTONINACTIVECLOSE }, si, x, y, bw, bh);
-                self.glyph(cr, SMALLBUTTONCLOSEGLYPH96, if !p.active && state == BState::Normal { 3 } else { si }, x + bw / 2.0, y + bh / 2.0);
-                continue;
-            }
-            let alone = n == 1;
-            let leftmost = i == rects.len() - 1;
-            let (bg, glyph_part) = match btn {
-                Btn::Close => (if alone { if p.active { 9 } else { 10 } } else if p.active { 7 } else { 8 }, 12),
-                Btn::Max => (if p.active { 5 } else { 6 }, if p.maximized { 29 } else { 21 }),
-                Btn::Min => (if leftmost { if p.active { 3 } else { 4 } } else if p.active { 5 } else { 6 }, 25),
-                Btn::Help => (if p.active { 3 } else { 4 }, 17),
-            };
-            if self.parts.contains_key(&7) {
-                if state == BState::Hot {
-                    let glow = if *btn == Btn::Close { BUTTONCLOSEGLOW } else { BUTTONGLOW };
-                    self.nine(cr, glow, 0, x - 8.0, y - 7.0, bw + 16.0, bh + 15.0);
+            let level = p.glow.iter().find(|(b, _)| b == btn).map(|x| x.1.clamp(0.0, 1.0));
+            match (state, level) {
+                // DWM cross-fades the normal and the hot button (glow included) while the pointer
+                // comes and goes; pressing and disabling switch at once
+                (BState::Normal | BState::Hot, Some(l)) if l > 0.0 && l < 1.0 => {
+                    cr.push_group();
+                    cr.push_group();
+                    self.caption_button(cr, p, i, n, rects.len(), *btn, rect, BState::Normal);
+                    cr.pop_group_to_source().ok();
+                    cr.paint_with_alpha(1.0 - l).ok();
+                    cr.push_group();
+                    self.caption_button(cr, p, i, n, rects.len(), *btn, rect, BState::Hot);
+                    cr.pop_group_to_source().ok();
+                    cr.set_operator(cairo::Operator::Add);
+                    cr.paint_with_alpha(l).ok();
+                    cr.set_operator(cairo::Operator::Over);
+                    cr.pop_group_to_source().ok();
+                    cr.paint().ok();
                 }
-                self.nine(cr, bg, si, x, y, bw, bh);
-                let gidx = if p.active { si } else { 3.min(si.max(0)) };
-                self.glyph(cr, glyph_part, if !p.active && state == BState::Normal { 3 } else { gidx }, x + bw / 2.0, y + bh / 2.0);
-            } else {
-                fallback_button(cr, *btn, state, p.active, p.maximized, x, y, bw, bh);
+                (BState::Normal | BState::Hot, Some(l)) => self.caption_button(cr, p, i, n, rects.len(), *btn, rect, if l >= 1.0 { BState::Hot } else { BState::Normal }),
+                _ => self.caption_button(cr, p, i, n, rects.len(), *btn, rect, state),
             }
         }
         cr.restore().ok();
     }
+
+    /// One caption button (`i` of `count` drawn right to left, `n` buttons in all) in `state`.
+    fn caption_button(&self, cr: &Context, p: &Params, i: usize, n: usize, count: usize, btn: Btn, rect: &[i32; 4], state: BState) {
+        let [x, y, bw, bh] = rect.map(|v| v as f64);
+        let si = state as i32 - 1;
+        if p.small && self.parts.contains_key(&SMALLBUTTONACTIVECLOSE) {
+            if state == BState::Hot { self.nine(cr, SMALLBUTTONCLOSEGLOW, 0, x - 5.0, y - 6.0, bw + 10.0, bh + 12.0); }
+            self.nine(cr, if p.active { SMALLBUTTONACTIVECLOSE } else { SMALLBUTTONINACTIVECLOSE }, si, x, y, bw, bh);
+            self.glyph(cr, SMALLBUTTONCLOSEGLYPH96, if !p.active && state == BState::Normal { 3 } else { si }, x + bw / 2.0, y + bh / 2.0);
+            return;
+        }
+        let alone = n == 1;
+        let leftmost = i == count - 1;
+        let (bg, glyph_part) = match btn {
+            Btn::Close => (if alone { if p.active { 9 } else { 10 } } else if p.active { 7 } else { 8 }, 12),
+            Btn::Max => (if p.active { 5 } else { 6 }, if p.maximized { 29 } else { 21 }),
+            Btn::Min => (if leftmost { if p.active { 3 } else { 4 } } else if p.active { 5 } else { 6 }, 25),
+            Btn::Help => (if p.active { 3 } else { 4 }, 17),
+        };
+        if self.parts.contains_key(&7) {
+            if state == BState::Hot {
+                let glow = if btn == Btn::Close { BUTTONCLOSEGLOW } else { BUTTONGLOW };
+                self.nine(cr, glow, 0, x - 8.0, y - 7.0, bw + 16.0, bh + 15.0);
+            }
+            self.nine(cr, bg, si, x, y, bw, bh);
+            let gidx = if p.active { si } else { 3.min(si.max(0)) };
+            self.glyph(cr, glyph_part, if !p.active && state == BState::Normal { 3 } else { gidx }, x + bw / 2.0, y + bh / 2.0);
+        } else {
+            fallback_button(cr, btn, state, p.active, p.maximized, x, y, bw, bh);
+        }
+    }
+
+    /// The frame area a caption button's paint (its hover glow included) can touch, in frame
+    /// coordinates: what a glow fade has to repaint.
+    pub fn button_paint_rect(rect: &[i32; 4]) -> [i32; 4] { [rect[0] - 9, rect[1] - 8, rect[2] + 18, rect[3] + 17] }
 }
 
 /// The Win7 reflection streaks (DWMWindow part 40 REFLECTIONMAP) over the current clip: the map

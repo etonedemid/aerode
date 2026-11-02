@@ -8,7 +8,7 @@ use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11}
 
 const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|gadgets|reload|lock|quit|restart]
        aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME] | autoplay DIR
-       aerode query-volume | query-network";
+       aerode query-volume | query-network | picom-config [CONFIG]";
 
 struct Shell {
     _desktop: Rc<desktop::Desktop>,
@@ -122,6 +122,8 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             // settings changed in Control Panel (desktop icons, folder options, taskbar size...)
             SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s._desktop.rebuild(); s.taskbar.resize(); s.taskbar.refresh() });
             aerode::tray::reload();
+            // Visual Effects switches: picom 12 reloads the regenerated animation rules by itself
+            aerode::picomconf::refresh(None);
         }
         "gadgets" => { build(app); aerode::gadgets::show_gallery(); }
         "quit" => app.quit(),
@@ -175,6 +177,12 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::SUCCESS;
         }
         Some("restart") => { restart_session(); return glib::ExitCode::SUCCESS; }
+        // the session script: which config file picom starts with (picom ≥ 12.3 gets Win7's animations)
+        Some("picom-config") => {
+            let base = args.get(2).map(std::path::PathBuf::from).unwrap_or_else(aerode::picomconf::base_config);
+            println!("{}", aerode::picomconf::config_for_picom(&base).display());
+            return glib::ExitCode::SUCCESS;
+        }
         Some("-h") | Some("--help") => { println!("{USAGE}"); return glib::ExitCode::SUCCESS; }
         _ => {}
     }
@@ -252,21 +260,16 @@ fn restart_session() {
     if util::which("picom") {
         let _ = std::process::Command::new("pkill").args(["-x", "picom"]).status();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let user = aerode::config::conf_dir().join("picom.conf");
-        // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off)
-        if let Ok(old) = std::fs::read_to_string(&user) {
-            if !old.contains("# aerode-picom 2") {
-                match std::fs::read_to_string("/usr/share/aerode/picom.conf") {
-                    Ok(base) if old.contains("vsync = false") => { let _ = std::fs::write(&user, base.replace("vsync = true;", "vsync = false;")); }
-                    Ok(_) => { let _ = std::fs::remove_file(&user); }
-                    Err(_) => {}
-                }
-            }
-        }
-        let user = user.to_string_lossy().into_owned();
-        let conf = [user.as_str(), "/usr/share/aerode/picom.conf"].into_iter().find(|p| std::path::Path::new(p).exists());
+        // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off);
+        // the marker ("# aerode-picom 3") is the same one the session script checks
+        aerode::picomconf::migrate_user_config();
+        let base = aerode::picomconf::base_config();
         if !aerode::config::conf_dir().join("no-compositor").exists() {
-            match conf { Some(c) => detached(&["picom", "--config", c]), None => detached(&["picom"]) }
+            if base.exists() {
+                // picom ≥ 12.3: the generated config with Win7's window animations
+                let conf = aerode::picomconf::config_for_picom(&base).to_string_lossy().into_owned();
+                detached(&["picom", "--config", &conf]);
+            } else { detached(&["picom"]); }
             println!("aerode: compositor restarted");
         }
     }

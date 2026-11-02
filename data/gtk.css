@@ -176,3 +176,43 @@ statusbar, .statusbar { background-image: linear-gradient(to bottom, #f1f5fb, #d
 .cp-link:hover { color: #3399ff; text-decoration: underline; background: none; }
 .cp-heading { color: #1e3287; font-size: 12pt; }
 .cp-sidebar { background-image: linear-gradient(to bottom, #e5f0fb, #c6daf2); padding: 12px; }
+
+/* ---- Windows 7 theme transitions ----
+   From the TRANSITIONDURATIONS table of Win7's aero.msstyles: controls light up in 225 ms and go
+   dark slowly (push and spin buttons 1000 ms, edit, combo and list boxes 635 ms, scroll bars
+   1275 ms), press in 150 ms (check boxes 100 ms); tabs take 750 ms and toolbar buttons 250 ms every
+   way. CSS uses the duration of the state being entered, so each value sits on its target state.
+   uxtheme cross-fades the two state images linearly. Sizes never animate (overlay scroll bars keep
+   GTK's own timing). GTK runs these only while gtk-enable-animations is on: Control Panel >
+   Performance Options > "Animate controls and elements inside windows". */
+button, entry, spinbutton:not(.vertical), check, radio, scrollbar slider, notebook > header tab, scale slider {
+  transition-property: background-color, background-image, border-color, box-shadow, color, -gtk-icon-source;
+  transition-timing-function: linear;
+}
+button { transition-duration: 1000ms; }
+button:hover { transition-duration: 225ms; }
+button:active, button:checked, button:disabled { transition-duration: 150ms; }
+combobox button { transition-duration: 635ms; }
+combobox button:hover { transition-duration: 225ms; }
+combobox button:active, combobox button:checked, combobox button:disabled { transition-duration: 150ms; }
+toolbar button, .toolbar button, toolbar button:hover, .toolbar button:hover, toolbar button:active, .toolbar button:active,
+toolbar button:checked, .toolbar button:checked { transition-duration: 250ms; }
+entry, spinbutton:not(.vertical) { transition-duration: 635ms; }
+entry:hover, spinbutton:not(.vertical):hover { transition-duration: 225ms; }
+entry:focus, entry:disabled, spinbutton:not(.vertical):focus { transition-duration: 150ms; }
+check, radio, check:hover, radio:hover { transition-duration: 225ms; }
+check:active, check:checked { transition-duration: 100ms; }
+radio:active, radio:checked { transition-duration: 150ms; }
+scrollbar slider, scale slider { transition-duration: 1275ms; }
+scrollbar slider:hover, scale slider:hover { transition-duration: 225ms; }
+scrollbar slider:active, scale slider:active { transition-duration: 150ms; }
+notebook > header tab { transition-duration: 750ms; }
+/* menu items track the pointer at once */
+menu menuitem, menubar > menuitem, .menu menuitem, .context-menu menuitem { transition: none; }
+/* the default button of the active window pulses (DEFAULTED <-> DEFAULTED_ANIMATING, 1000 ms each way) */
+@keyframes aerode-default-pulse {
+  from { box-shadow: inset 0 0 0 1px #4cc6ff; }
+  to { box-shadow: inset 0 0 0 1px #4cc6ff, inset 0 0 4px 2px rgba(76, 198, 255, 0.55); }
+}
+button.default:not(:hover):not(:active):not(:disabled) { animation: aerode-default-pulse 1000ms linear infinite alternate; }
+button.default:backdrop { animation: none; }
