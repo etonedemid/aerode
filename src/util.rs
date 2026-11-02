@@ -379,24 +379,46 @@ static DIALOG_SOUNDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// Question). Dialogs without an icon (MessageType::Other, Win7's silent task dialogs) stay
 /// quiet. One emission hook on "map", so no dialog can forget it.
 pub fn message_dialog_sounds() {
+    if DIALOG_SOUNDS.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    emission_hook(gtk::Widget::static_type(), "map", |o| {
+        if let Some(d) = o.downcast_ref::<gtk::MessageDialog>() {
+            let kind = d.message_type();
+            if kind != gtk::MessageType::Other { message_sound(kind); }
+        }
+    });
+}
+
+/// Win7's Menu Pop-up and Menu Command sounds for this process's GTK menus (user32 plays them for
+/// every menu; none of Win7's schemes assign a file, so they play once picked in the Sounds tab).
+pub fn menu_sounds() {
+    static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if ON.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    emission_hook(gtk::Widget::static_type(), "map", |o| {
+        if o.is::<gtk::Menu>() { sound(crate::sounds::Event::MenuPopup); }
+    });
+    emission_hook(gtk::MenuItem::static_type(), "activate", |o| {
+        // an item that opens a submenu is not a command
+        if let Some(i) = o.downcast_ref::<gtk::MenuItem>() { if i.submenu().is_none() { sound(crate::sounds::Event::MenuCommand); } }
+    });
+}
+
+/// Run `f` with the instance every time `signal` of `ty` is emitted anywhere in the process
+/// (g_signal_add_emission_hook; glib-rs 0.18 has no safe binding for it).
+fn emission_hook(ty: gtk::glib::Type, signal: &str, f: fn(&gtk::glib::Object)) {
     use gtk::glib::gobject_ffi;
     use gtk::glib::translate::IntoGlib;
-    if DIALOG_SOUNDS.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
-    unsafe extern "C" fn hook(_hint: *mut gobject_ffi::GSignalInvocationHint, n: u32, params: *const gobject_ffi::GValue, _data: gtk::glib::ffi::gpointer) -> gtk::glib::ffi::gboolean {
+    unsafe extern "C" fn hook(_hint: *mut gobject_ffi::GSignalInvocationHint, n: u32, params: *const gobject_ffi::GValue, data: gtk::glib::ffi::gpointer) -> gtk::glib::ffi::gboolean {
         if n >= 1 {
             let v = unsafe { &*(params as *const gtk::glib::Value) };
-            if let Ok(d) = v.get::<gtk::glib::Object>().map(|o| o.downcast::<gtk::MessageDialog>()) {
-                if let Ok(d) = d {
-                    let kind = d.message_type();
-                    if kind != gtk::MessageType::Other { message_sound(kind); }
-                }
-            }
+            let f: fn(&gtk::glib::Object) = unsafe { std::mem::transmute::<gtk::glib::ffi::gpointer, fn(&gtk::glib::Object)>(data) };
+            if let Ok(o) = v.get::<gtk::glib::Object>() { f(&o); }
         }
         gtk::glib::ffi::GTRUE
     }
+    let Ok(name) = std::ffi::CString::new(signal) else { return };
     unsafe {
-        let id = gobject_ffi::g_signal_lookup(c"map".as_ptr(), gtk::Widget::static_type().into_glib());
-        if id != 0 { gobject_ffi::g_signal_add_emission_hook(id, 0, Some(hook), std::ptr::null_mut(), None); }
+        let id = gobject_ffi::g_signal_lookup(name.as_ptr(), ty.into_glib());
+        if id != 0 { gobject_ffi::g_signal_add_emission_hook(id, 0, Some(hook), f as gtk::glib::ffi::gpointer, None); }
     }
 }
 

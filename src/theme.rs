@@ -27,6 +27,8 @@ pub fn load_css(css: &str) {
 
 /// Apply theme defaults for our own programs (fonts, icons, our widget CSS).
 pub fn init_app() {
+    // Menu Pop-up / Menu Command, as user32 plays them for every menu
+    crate::util::menu_sounds();
     if let Some(s) = gtk::Settings::default() {
         let icons = glib_icons();
         s.set_gtk_icon_theme_name(Some(&icons));
