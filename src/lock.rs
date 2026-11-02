@@ -9,7 +9,8 @@ use crate::{config, glass, util};
 pub fn lock() {
     let g = util::primary_geometry();
     let (w, h) = (g.width(), g.height());
-    let bg = config::data_file("wallpapers/../lockscreen.jpg")
+    // Win7's logon background (extracted from authui/imageres as lockscreen.png)
+    let bg = ["lockscreen.png", "lockscreen.jpg"].iter().find_map(|f| config::data_file(f))
         .and_then(|p| gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(p, w, h, false).ok())
         .unwrap_or_else(|| glass::wallpaper().sharp.clone());
     let surf = cairo::ImageSurface::create(cairo::Format::Rgb24, w, h).unwrap();
