@@ -163,7 +163,12 @@ impl Desktop {
             win.connect_key_press_event(move |_, e| {
                 match e.keyval() {
                     k if k == gdk::keys::constants::F5 => d2.rebuild(),
-                    k if k == gdk::keys::constants::Delete => d2.delete_selected(),
+                    // Shift+Delete deletes permanently, like Explorer
+                    k if k == gdk::keys::constants::Delete || k == gdk::keys::constants::KP_Delete => d2.delete_selected(e.state().contains(gdk::ModifierType::SHIFT_MASK)),
+                    k if (k == gdk::keys::constants::z || k == gdk::keys::constants::Z) && e.state().contains(gdk::ModifierType::CONTROL_MASK) => {
+                        let d3 = Rc::downgrade(&d2);
+                        crate::explorer::ops::undo(None, move || if let Some(d) = d3.upgrade() { d.rebuild() });
+                    }
                     _ => {}
                 }
                 glib::Propagation::Proceed
@@ -334,12 +339,12 @@ impl Desktop {
         self.selected.borrow().iter().filter_map(|w| unsafe { w.data::<PathBuf>("path").map(|p| p.as_ref().clone()) }).filter(|p| p.is_absolute()).collect()
     }
 
-    fn delete_selected(self: &Rc<Self>) {
-        for p in self.selected_paths() {
-            let _ = gio::File::for_path(&p).trash(gio::Cancellable::NONE);
-        }
-        util::sound(crate::sounds::Event::EmptyRecycleBin);
-        self.rebuild();
+    /// Explorer's delete: the Win7 confirmation, the Recycle Bin (Undo with Ctrl+Z), Shift+Delete.
+    fn delete_selected(self: &Rc<Self>, permanent: bool) {
+        let paths = self.selected_paths();
+        if paths.is_empty() { return; }
+        let d = Rc::downgrade(self);
+        crate::explorer::ops::delete(paths, permanent, None, true, move || if let Some(d) = d.upgrade() { d.rebuild() });
     }
 
     fn item_menu(self: &Rc<Self>, it: &Rc<Item>, e: &gdk::EventButton) {
@@ -350,12 +355,8 @@ impl Desktop {
             Some("trash") => {
                 let d = Rc::downgrade(self);
                 add(&m, "Empty Recycle Bin", Box::new(move || {
-                    if confirm("Delete Multiple Items", "Are you sure you want to permanently delete all of the items in the Recycle Bin?") {
-                        util::spawn(&["gio", "trash", "--empty"]);
-                        util::sound(crate::sounds::Event::EmptyRecycleBin);
-                        let d = d.clone();
-                        glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || { if let Some(d) = d.upgrade() { d.rebuild(); } });
-                    }
+                    let d = d.clone();
+                    crate::explorer::ops::empty_trash(None, move || if let Some(d) = d.upgrade() { d.rebuild() });
                 }));
             }
             Some("computer") => {
@@ -367,13 +368,13 @@ impl Desktop {
                     if p.starts_with(desktop_dir()) {
                         m.append(&gtk::SeparatorMenuItem::new());
                         let d = Rc::downgrade(self);
-                        add(&m, "Delete", Box::new(move || if let Some(d) = d.upgrade() { d.delete_selected() }));
+                        add(&m, "Delete", Box::new(move || if let Some(d) = d.upgrade() { d.delete_selected(false) }));
                         let p2 = p.clone();
                         let d = Rc::downgrade(self);
                         add(&m, "Rename", Box::new(move || {
-                            if let Some(n) = prompt("Rename", "New name:", &p2.file_name().unwrap().to_string_lossy()) {
-                                let _ = std::fs::rename(&p2, p2.with_file_name(n));
-                                if let Some(d) = d.upgrade() { d.rebuild(); }
+                            if let Some(n) = prompt("Rename", "New name:", &p2.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()) {
+                                // Explorer's checks: never over an existing file, extension warning, Undo
+                                if crate::explorer::ops::rename(&p2, &n, None).is_some() { if let Some(d) = d.upgrade() { d.rebuild(); } }
                             }
                         }));
                         let p3 = p.clone();
@@ -428,8 +429,7 @@ impl Desktop {
         m.append(&si);
         m.append(&refresh);
         m.append(&gtk::SeparatorMenuItem::new());
-        let clip = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
-        let has_files = clip.wait_is_target_available(&gdk::Atom::intern("x-special/gnome-copied-files")) || clip.wait_is_uris_available();
+        let has_files = crate::explorer::ops::clipboard_has_files();
         let paste = gtk::MenuItem::with_label("Paste");
         paste.set_sensitive(has_files);
         {
@@ -440,7 +440,7 @@ impl Desktop {
                     if files.is_empty() { return; }
                     let kind = if cut { crate::explorer::ops::Kind::Move } else { crate::explorer::ops::Kind::Copy };
                     let d = d.clone();
-                    crate::explorer::ops::transfer(files, desktop_dir(), kind, move || if let Some(d) = d.upgrade() { d.rebuild() });
+                    crate::explorer::ops::transfer(files, desktop_dir(), kind, None, move |_| if let Some(d) = d.upgrade() { d.rebuild() });
                 });
             });
         }
