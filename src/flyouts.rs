@@ -88,8 +88,13 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     let x = (ax + alloc.x() + alloc.width() / 2 - nat.width / 2).clamp(geo.x() + 4, geo.x() + geo.width() - nat.width - 4);
     let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 4;
     w.move_(x, y);
+    // Win7 fades the flyout in (and closes it at once)
+    crate::anim::self_animated(&w);
+    let animate = crate::anim::effect("animate_taskbar");
+    if animate { w.set_opacity(0.0); }
     w.show_all();
     w.present();
+    crate::anim::fade(&w, 1.0, crate::anim::FLYOUT_IN, animate, |_| {});
     // the icon's tooltip would pop up over its own flyout (Win7 suppresses it while open)
     let had_tip = anchor.has_tooltip();
     anchor.set_has_tooltip(false);

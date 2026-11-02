@@ -76,11 +76,18 @@ if command -v aerode-polkit >/dev/null; then aerode-polkit &
 else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent; do
   [ -x "$agent" ] && { "$agent" & break; }; done; fi
 command -v xss-lock >/dev/null && xss-lock -- aerode screensaver &
-# a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping VSync off)
-if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 2" "$CONF/picom.conf"; then
-  if grep -q "vsync = false" "$CONF/picom.conf"; then sed 's/vsync = true;/vsync = false;/' "$SHARE/picom.conf" > "$CONF/picom.conf"; else rm -f "$CONF/picom.conf"; fi
+# a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping
+# VSync and window shadows off); `aerode restart` does the same (src/picomconf.rs)
+if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 3" "$CONF/picom.conf"; then
+  VS=; SH=
+  grep -q "vsync = false" "$CONF/picom.conf" && VS='s/vsync = true;/vsync = false;/'
+  grep -q "^shadow = false;" "$CONF/picom.conf" && SH='0,/^shadow = true;/s//shadow = false;/'
+  if [ -n "$VS$SH" ]; then sed -e "${VS:-s/^\$//}" -e "${SH:-s/^\$//}" "$SHARE/picom.conf" > "$CONF/picom.conf"; else rm -f "$CONF/picom.conf"; fi
 fi
 PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/picom.conf"
+# picom >= 12.3 runs a generated config that includes this one and adds Windows 7's window
+# animations as window rules; older picom (which would ignore them) keeps the plain fades
+RUN_CONF=$(aerode picom-config "$PICOM_CONF" 2>/dev/null) && [ -f "$RUN_CONF" ] && PICOM_CONF="$RUN_CONF"
 command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$PICOM_CONF" -b
 command -v udiskie >/dev/null && udiskie --no-tray &
 [ -z "$KWALLET" ] && command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK

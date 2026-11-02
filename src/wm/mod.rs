@@ -1,4 +1,5 @@
 //! aerode-wm: a small reparenting X11 window manager drawing Windows 7 frames.
+pub mod anim;
 pub mod decor;
 pub mod glass;
 pub mod keys;
@@ -40,6 +41,8 @@ x11rb::atom_manager! {
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
         _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_WM_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS, _AERODE_COLORIZATION, _AERODE_PEEK,
+        // picom window rules of the Win7 animations (crate::picomconf)
+        _AERODE_ANIM, _AERODE_NO_ANIM, _AERODE_MIN_SLOT, _AERODE_ANIM_GEOM, _NET_WM_ICON_GEOMETRY,
     }
 }
 
@@ -88,6 +91,12 @@ pub struct Client {
     pub gravity_static: bool,
     /// input-only children of the frame that carry the resize cursors
     pub zones: Vec<u32>,
+    /// caption-button glow fades in progress
+    pub glow: anim::Glow,
+    /// the frame cross-fading between its inactive (0) and active (1) look after a focus change
+    pub focus_fade: Option<anim::Tween>,
+    /// the next hide is a minimise that picom animates: unmap a moment later (`anim::MIN_UNMAP_DELAY`)
+    pub defer_unmap: bool,
 }
 
 fn is_app(c: &Client) -> bool { matches!(c.kind, Kind::Normal | Kind::Dialog | Kind::Utility) }
@@ -177,8 +186,28 @@ pub struct Wm {
     shake: Shake,
     /// windows the last Aero Shake / Win+Home minimised (shaking again restores them)
     shaken: Vec<u32>,
-    /// Aero Peek in progress: (faded-out top-level windows, their glass outline windows)
-    peeking: Option<(Vec<u32>, Vec<u32>)>,
+    /// Aero Peek in progress: the faded-out top-level windows and their glass outlines (0: none)
+    peeking: Option<Vec<(u32, u32)>>,
+    /// the Alt+Tab switcher started the peek in progress
+    switch_peek: bool,
+    /// timed work: deferred unmaps, property clean-ups, the Alt+Tab peek
+    timers: anim::Timers,
+    /// the Aero Snap preview growing out of the pointer / morphing to another zone:
+    /// (from, to, start of the animation), the rectangle drawn last
+    snap_anim: Option<(Rect, Rect, Instant, Rect)>,
+    /// where the snap preview window is now
+    snap_rect: Option<Rect>,
+    /// the ripple of light at the pointer when a snap zone is hit: (window, centre, start)
+    ripple: Option<(u32, (i32, i32), Instant)>,
+    /// windows faded with _NET_WM_WINDOW_OPACITY (Peek outlines, a cancelled snap preview):
+    /// (window, opacity tween, destroy it at the end)
+    fades: Vec<(u32, anim::Tween, bool)>,
+    /// when the animations last ran (frame pacing)
+    last_tick: Instant,
+    /// config.json modification time of the loaded config (Visual Effects switches)
+    config_mtime: std::cell::Cell<Option<std::time::SystemTime>>,
+    /// the taskbar rectangle last handed to the picom animation rules
+    bar: Option<crate::picomconf::Bar>,
 }
 
 fn frame_events() -> EventMask {
@@ -224,6 +253,8 @@ impl Wm {
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
             glass, glass_dirty: false, shake: Shake::default(), shaken: vec![], peeking: None,
+            switch_peek: false, timers: anim::Timers::default(), snap_anim: None, snap_rect: None, ripple: None, fades: vec![],
+            last_tick: Instant::now(), config_mtime: std::cell::Cell::new(None), bar: None,
         };
         {
             let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
@@ -520,13 +551,16 @@ impl Wm {
             urgent: false, transient_for, protocols, min_size, resizable, desktop,
             hover: None, pressed: None, ignore_unmaps: 0, snapped: None, mapped_once: false,
             wm_hidden: false, ext: [-1; 4], csd, gravity_static, zones: vec![],
+            glow: anim::Glow::default(), focus_fade: None, defer_unmap: false,
         };
         let _ = self.conn.change_window_attributes(w, &ChangeWindowAttributesAux::new()
             .event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY | EventMask::FOCUS_CHANGE));
         if decorated {
             let frame = self.conn.generate_id().unwrap();
             let (fx, fy, fw, fh) = (geom.x - BORDER, geom.y - TOP, geom.w + 2 * BORDER, geom.h + TOP + BORDER);
-            let aux = CreateWindowAux::new().event_mask(frame_events()).background_pixel(0).border_pixel(0).bit_gravity(Gravity::NORTH_WEST);
+            // no background: when the client goes away first, the frame keeps its last picture for
+            // the compositor's close animation instead of being cleared to an empty frame
+            let aux = CreateWindowAux::new().event_mask(frame_events()).border_pixel(0).bit_gravity(Gravity::NORTH_WEST);
             let res = if let Some((vis, cmap)) = self.argb {
                 self.conn.create_window(32, frame, self.root, fx as i16, fy as i16, fw.max(1) as u16, fh.max(1) as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux.colormap(cmap))
             } else {
@@ -559,6 +593,12 @@ impl Wm {
             c.skip_taskbar = true;
         }
         if app { self.grab_click(w); }
+        // picom animates application windows like DWM (open, close, minimise…): frames, and
+        // windows that draw their own title bar unless they are owner-less skip-taskbar helpers
+        // (Start menu, tray flyouts), which animate themselves
+        if c.frame.is_some() || (app && (!c.skip_taskbar || c.transient_for != 0)) {
+            let _ = self.conn.change_property32(PropMode::REPLACE, c.frame.unwrap_or(w), a._AERODE_ANIM, AtomEnum::CARDINAL, &[1]);
+        }
         // the top-level is mapped by sync_visibility below (unless minimized / on another desktop)
         c.wm_hidden = true;
         if c.frame.is_none() {
@@ -580,7 +620,7 @@ impl Wm {
         if fs { self.set_fullscreen(w, true); } else if want_max { self.set_maximized(w, true); }
         self.sync_visibility(w);
         // docks reserve space only once they are actually shown
-        if kind == Kind::Dock { self.update_workarea(); }
+        if kind == Kind::Dock { self.update_workarea(); self.sync_bar(); }
         self.restack();
         self.update_client_list();
         self.layout_zones(w);
@@ -595,8 +635,17 @@ impl Wm {
     fn unmanage(&mut self, w: u32, destroyed: bool) {
         if self.drag.map(|d| d.0 == w).unwrap_or(false) { self.end_drag(); }
         let Some(c) = self.clients.remove(&w) else { return };
+        let top = c.frame.unwrap_or(w);
+        self.timers.cancel(|t| matches!(*t, anim::Timer::Unmap(x) if x == w) || matches!(*t, anim::Timer::DelProp { win, .. } if win == top));
         // the taskbar went away in the middle of a peek: never leave windows invisible
         if c.kind == Kind::Dock { self.peek_end(); }
+        if c.frame.is_none() && !destroyed {
+            // a window that draws its own title bar keeps our marks on itself: it may be mapped
+            // again as something else
+            for atom in [self.atoms._AERODE_ANIM, self.atoms._AERODE_MIN_SLOT, self.atoms._AERODE_ANIM_GEOM] {
+                let _ = self.conn.delete_property(w, atom);
+            }
+        }
         if let Some(f) = c.frame {
             self.frames.remove(&f);
             if !destroyed {
@@ -607,7 +656,7 @@ impl Wm {
             let _ = self.conn.destroy_window(f);
         }
         self.stack.retain(|x| *x != w);
-        if c.kind == Kind::Dock { self.update_workarea(); }
+        if c.kind == Kind::Dock { self.update_workarea(); self.sync_bar(); }
         if self.prev_active == w { self.prev_active = 0; }
         if self.active == w {
             self.active = 0;
@@ -810,9 +859,10 @@ impl Wm {
         let Some(c) = self.clients.get(&w) else { return };
         if !is_app(c) || (on && !c.resizable) { return; }
         let wa = self.workarea_for(self.monitor_of(&self.frame_rect(c)));
-        if on { self.maximize_in(w, wa); return; }
-        let c = self.clients.get_mut(&w).unwrap();
+        if on { self.anim_geom(w); self.maximize_in(w, wa); return; }
         if !(c.maximized || c.snapped.is_some()) { return; }
+        self.anim_geom(w);
+        let c = self.clients.get_mut(&w).unwrap();
         c.maximized = false;
         c.snapped = None;
         let r = c.restore.take().unwrap_or(Rect { x: wa.x + 60, y: wa.y + 60, w: wa.w * 2 / 3, h: wa.h * 2 / 3 });
@@ -849,6 +899,7 @@ impl Wm {
         let Some(c) = self.clients.get(&w) else { return };
         if !is_app(c) { return; }
         let wa = self.workarea_for(self.monitor_of(&self.frame_rect(c)));
+        self.anim_geom(w);
         self.snap_in(w, side, wa);
     }
 
@@ -899,13 +950,99 @@ impl Wm {
         let c = self.clients.get_mut(&w).unwrap();
         if want && c.wm_hidden {
             c.wm_hidden = false;
+            c.defer_unmap = false;
+            // a minimise taken back before its deferred unmap: the window never went away
+            if self.timers.cancel(|t| *t == anim::Timer::Unmap(w)) { return; }
             let _ = self.conn.map_window(top);
         } else if !want && !c.wm_hidden {
             c.wm_hidden = true;
+            if std::mem::take(&mut c.defer_unmap) {
+                // picom must see _AERODE_MIN_SLOT on a mapped window, or it can't pick the
+                // minimise animation: unmap a frame later (unmap_now)
+                self.timers.set(anim::MIN_UNMAP_DELAY, anim::Timer::Unmap(w));
+                return;
+            }
             // only frameless windows report our unmap as an UnmapNotify we must ignore
             if !framed { c.ignore_unmaps += 1; }
             let _ = self.conn.unmap_window(top);
         }
+    }
+
+    /// The deferred unmap of a minimised window (sync_visibility).
+    fn unmap_now(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        if !c.wm_hidden || self.should_show(c) { return; }
+        let (top, framed) = (c.frame.unwrap_or(w), c.frame.is_some());
+        let c = self.clients.get_mut(&w).unwrap();
+        if !framed { c.ignore_unmaps += 1; }
+        let _ = self.conn.unmap_window(top);
+    }
+
+    /// Is a Visual Effects switch (Control Panel > System > Performance Options) on? Re-reads the
+    /// config when Control Panel saved it.
+    fn effect(&self, key: &str) -> bool {
+        let m = std::fs::metadata(crate::config::conf_dir().join("config.json")).and_then(|m| m.modified()).ok();
+        if m != self.config_mtime.get() { self.config_mtime.set(m); crate::config::reload(); }
+        crate::config::get().hw.effect(key)
+    }
+
+    /// picom animates windows (open, close, minimise, maximise): composited, with "Animate windows
+    /// when minimizing and maximizing" on.
+    fn window_anims(&self) -> bool { self.composited() && self.effect("animate_minmax") }
+
+    /// The taskbar: the largest dock on screen.
+    fn taskbar_rect(&self) -> Option<crate::picomconf::Bar> {
+        self.clients.values().filter(|c| c.kind == Kind::Dock && !c.wm_hidden && c.geom.w > 0 && c.geom.h > 0)
+            .max_by_key(|c| c.geom.w as i64 * c.geom.h as i64)
+            .map(|c| crate::picomconf::Bar { x: c.geom.x, y: c.geom.y, w: c.geom.w, h: c.geom.h })
+    }
+
+    /// The taskbar moved, or the screens changed: the picom rules that aim the minimise animation at
+    /// the taskbar buttons are written for its rectangle.
+    fn sync_bar(&mut self) {
+        let bar = self.taskbar_rect();
+        if bar.is_none() || bar == self.bar { return; }
+        self.bar = bar;
+        crate::picomconf::refresh(bar);
+    }
+
+    /// Tell picom where the window's taskbar button is (`_AERODE_MIN_SLOT`, see crate::picomconf)
+    /// for the minimise/restore animation: from _NET_WM_ICON_GEOMETRY, which the taskbar sets.
+    fn set_min_slot(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let top = c.frame.unwrap_or(w);
+        let g = self.prop32(w, self.atoms._NET_WM_ICON_GEOMETRY, AtomEnum::CARDINAL);
+        let bar = self.bar.or_else(|| self.taskbar_rect());
+        let slot = match (bar, g.as_slice()) {
+            (Some(b), [x, y, gw, gh, ..]) if *gw > 0 && *gh > 0 => {
+                let (cx, cy) = (*x as i32 + *gw as i32 / 2, *y as i32 + *gh as i32 / 2);
+                // a button on the taskbar the rules were written for; else the generic target
+                let on_bar = cx >= b.x && cx < b.x + b.w && cy >= b.y && cy < b.y + b.h;
+                if on_bar { b.slot_of(cx, cy) } else { 0 }
+            }
+            _ => 0,
+        };
+        let atom = self.atoms._AERODE_MIN_SLOT;
+        self.timers.cancel(|t| *t == anim::Timer::DelProp { win: top, atom });
+        let _ = self.conn.change_property32(PropMode::REPLACE, top, atom, AtomEnum::CARDINAL, &[slot]);
+    }
+
+    /// The next geometry change of `w` is a maximise, restore or snap: picom morphs the window into
+    /// its new rectangle (`_AERODE_ANIM_GEOM`, removed again after `anim::PROP_LINGER`).
+    fn anim_geom(&mut self, w: u32) {
+        if !self.window_anims() { return; }
+        let Some(c) = self.clients.get(&w) else { return };
+        if c.fullscreen || c.wm_hidden { return; }
+        let top = c.frame.unwrap_or(w);
+        let _ = self.conn.change_property32(PropMode::REPLACE, top, self.atoms._AERODE_ANIM_GEOM, AtomEnum::CARDINAL, &[1]);
+        self.timers.set(anim::PROP_LINGER, anim::Timer::DelProp { win: top, atom: self.atoms._AERODE_ANIM_GEOM });
+    }
+
+    /// A drag starts: its moves and resizes must not morph.
+    fn end_anim_geom(&mut self, w: u32) {
+        let Some(top) = self.clients.get(&w).map(|c| c.frame.unwrap_or(w)) else { return };
+        let atom = self.atoms._AERODE_ANIM_GEOM;
+        if self.timers.cancel(|t| *t == anim::Timer::DelProp { win: top, atom }) { let _ = self.conn.delete_property(top, atom); }
     }
 
     fn sync_all(&mut self) {
@@ -918,7 +1055,7 @@ impl Wm {
         self.active = 0;
         let _ = self.conn.set_input_focus(InputFocus::POINTER_ROOT, self.root, CURRENT_TIME);
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[0]);
-        if old != 0 { self.redraw(old); self.update_net_state(old); }
+        if old != 0 { self.focus_fade(old, false); self.redraw(old); self.update_net_state(old); }
     }
 
     /// Focus the topmost visible app window other than `except`, or nothing.
@@ -931,16 +1068,35 @@ impl Wm {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if c.minimized { return; }
         c.minimized = true;
+        let animate = !c.wm_hidden && self.window_anims();
+        if animate {
+            // picom shrinks it into its taskbar button
+            self.set_min_slot(w);
+            if let Some(c) = self.clients.get_mut(&w) { c.defer_unmap = true; }
+        }
         self.sync_visibility(w);
         self.set_wm_state(w, 3);
         self.update_net_state(w);
         if self.active == w { self.focus_fallback(w); }
+        if animate {
+            // the window still shows while it shrinks: above the one that got the focus (DWM draws it on top)
+            if let Some(top) = self.clients.get(&w).map(|c| c.frame.unwrap_or(w)) {
+                let _ = self.conn.configure_window(top, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
+            }
+        }
     }
 
     pub fn unminimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         if !c.minimized { return; }
         c.minimized = false;
+        if self.window_anims() {
+            // picom grows it out of its taskbar button (the button may have moved meanwhile)
+            self.set_min_slot(w);
+            if let Some(top) = self.clients.get(&w).map(|c| c.frame.unwrap_or(w)) {
+                self.timers.set(anim::PROP_LINGER, anim::Timer::DelProp { win: top, atom: self.atoms._AERODE_MIN_SLOT });
+            }
+        }
         self.sync_visibility(w);
         self.set_wm_state(w, 1);
         self.update_net_state(w);
@@ -979,6 +1135,7 @@ impl Wm {
         let _ = self.conn.change_property32(PropMode::REPLACE, self.root, self.atoms._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[w]);
         if let Some(c) = self.clients.get_mut(&w) { c.urgent = false; }
         self.raise(w);
+        if old != w { self.focus_fade(old, false); self.focus_fade(w, true); }
         if old != w && old != 0 { self.redraw(old); self.update_net_state(old); }
         self.redraw(w);
         self.update_net_state(w);
@@ -1076,7 +1233,35 @@ impl Wm {
         }
     }
 
-    pub fn redraw(&mut self, w: u32) {
+    pub fn redraw(&mut self, w: u32) { self.redraw_area(w, None) }
+
+    /// Repaint the caption buttons only (a glow fade).
+    fn redraw_buttons(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let fr = self.frame_rect(c);
+        let rects = self.decor.button_rects(fr.w, c.maximized, is_small(c), &self.buttons_for(c));
+        let area = rects.iter().map(|(_, r)| Decor::button_paint_rect(r)).reduce(|a, b| {
+            let (x0, y0) = (a[0].min(b[0]), a[1].min(b[1]));
+            [x0, y0, (a[0] + a[2]).max(b[0] + b[2]) - x0, (a[1] + a[3]).max(b[1] + b[3]) - y0]
+        });
+        if let Some(a) = area { self.redraw_area(w, Some(a)); }
+    }
+
+    /// Point the caption-button hover at `hb` (None: off the buttons); the glow fades unless
+    /// "Animate controls and elements inside windows" is off.
+    fn set_hover(&mut self, w: u32, hb: Option<Btn>) {
+        let fade = self.effect("animate_controls");
+        let Some(c) = self.clients.get_mut(&w) else { return };
+        let old = c.hover;
+        if old == hb { return; }
+        c.hover = hb;
+        // a pressed button lights up and goes dark at once
+        if fade && c.pressed.is_none() { c.glow.hover(old, hb, Instant::now()); } else { c.glow = anim::Glow::default(); }
+        self.redraw_buttons(w);
+    }
+
+    /// Repaint a frame, or only `area` of it ([x, y, w, h] in frame coordinates).
+    fn redraw_area(&mut self, w: u32, area: Option<[i32; 4]>) {
         let Some(c) = self.clients.get(&w) else { return };
         let Some(frame) = c.frame else { return };
         if c.minimized || c.wm_hidden { return; }
@@ -1090,11 +1275,17 @@ impl Wm {
         if fw <= 0 || fh <= 0 { return; }
         let composited = self.composited();
         let btns = self.buttons_for(c);
+        let now = Instant::now();
+        let glow = c.glow.levels(now);
         let (active, maximized) = (self.active == w, c.maximized);
-        let glass = |cr: &cairo::Context| self.glass.fill(cr, fr.x as f64, fr.y as f64, active, maximized, composited);
-        let params = Params {
+        // after a focus change the frame cross-fades between its inactive and active look
+        let focus_level = c.focus_fade.filter(|t| !t.done(now)).map(|t| t.at(now)).filter(|l| *l > 0.0 && *l < 1.0);
+        let glass_on = |cr: &cairo::Context| self.glass.fill(cr, fr.x as f64, fr.y as f64, true, maximized, composited);
+        let glass_off = |cr: &cairo::Context| self.glass.fill(cr, fr.x as f64, fr.y as f64, false, maximized, composited);
+        let screen_size = self.screen_size();
+        let params = |active: bool| Params {
             w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active, maximized, small: is_small(c),
-            buttons: &btns, composited, glass: &glass, screen_pos: (fr.x, fr.y), screen_size: self.screen_size(),
+            buttons: &btns, glow: &glow, composited, glass: if active { &glass_on } else { &glass_off }, screen_pos: (fr.x, fr.y), screen_size,
         };
         let depth = if self.argb.is_some() { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
         let (b, t) = (self.border_of(c), self.top_of(c));
@@ -1104,6 +1295,14 @@ impl Wm {
         // a maximised 4K window no longer allocates/paints a full-screen surface per redraw
         let strips = [(0, 0, fw, t), (0, fh - b, fw, b), (0, t, b, fh - t - b), (fw - b, t, b, fh - t - b)];
         for (x, y, sw, sh) in strips {
+            // only the part of the strip inside `area`
+            let (x, y, sw, sh) = match area {
+                None => (x, y, sw, sh),
+                Some([ax, ay, aw, ah]) => {
+                    let (x0, y0) = (x.max(ax), y.max(ay));
+                    (x0, y0, (x + sw).min(ax + aw) - x0, (y + sh).min(ay + ah) - y0)
+                }
+            };
             if sw <= 0 || sh <= 0 { continue; }
             let Ok(mut surf) = cairo::ImageSurface::create(cairo::Format::ARgb32, sw, sh) else { continue };
             {
@@ -1111,7 +1310,21 @@ impl Wm {
                 cr.translate(-x as f64, -y as f64);
                 cr.rectangle(x as f64, y as f64, sw as f64, sh as f64);
                 cr.clip();
-                self.decor.render(&cr, &params);
+                match focus_level {
+                    // (1 - l) · inactive + l · active
+                    Some(l) => {
+                        cr.push_group();
+                        self.decor.render(&cr, &params(false));
+                        cr.pop_group_to_source().ok();
+                        cr.paint_with_alpha(1.0 - l).ok();
+                        cr.push_group();
+                        self.decor.render(&cr, &params(true));
+                        cr.pop_group_to_source().ok();
+                        cr.set_operator(cairo::Operator::Add);
+                        cr.paint_with_alpha(l).ok();
+                    }
+                    None => self.decor.render(&cr, &params(active)),
+                }
             }
             surf.flush();
             let stride = surf.stride() as usize;
@@ -1128,7 +1341,22 @@ impl Wm {
             }
         }
         let _ = self.conn.free_gc(gc);
-        self.shape_frame(frame, fw, fh, if c.maximized || is_small(c) { 0 } else { decor::RADIUS as i32 });
+        if area.is_none() {
+            self.shape_frame(frame, fw, fh, if c.maximized || is_small(c) { 0 } else { decor::RADIUS as i32 });
+            // painted on screen at least once: focus changes fade from now on
+            if let Some(c) = self.clients.get_mut(&w) { c.mapped_once = true; }
+        }
+    }
+
+    /// The frame of `w` turns active (`on`) or inactive: DWM cross-fades the two looks
+    /// (`anim::FOCUS_FADE`) unless "Animate controls and elements inside windows" is off.
+    fn focus_fade(&mut self, w: u32, on: bool) {
+        let fade = self.effect("animate_controls");
+        let Some(c) = self.clients.get_mut(&w) else { return };
+        if c.frame.is_none() || !c.mapped_once || c.wm_hidden || !fade { c.focus_fade = None; return; }
+        let to = if on { 1.0 } else { 0.0 };
+        let cur = c.focus_fade.map(|t| t.at(Instant::now())).unwrap_or(1.0 - to);
+        c.focus_fade = Some(anim::level_tween(cur, to, anim::FOCUS_FADE));
     }
 
     /// Place the resize zones along the frame edges (hidden when the window can't be resized).
@@ -1201,12 +1429,33 @@ impl Wm {
         let mut panics: Vec<Instant> = vec![];
         loop {
             self.conn.flush()?;
+            // animation frames and timers (anim.rs) run between events
+            if self.next_deadline().map(|d| d <= Instant::now()).unwrap_or(false) {
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick())).is_err() {
+                    // never get stuck redrawing a broken animation
+                    self.snap_anim = None;
+                    self.fades.clear();
+                    self.ripple = None;
+                    for c in self.clients.values_mut() { c.glow = anim::Glow::default(); c.focus_fade = None; }
+                }
+                self.conn.flush()?;
+            }
             let ev = match pending.pop_front() {
                 Some(e) => e,
                 None => match self.conn.poll_for_event()? {
                     Some(e) => e,
                     None if self.glass_dirty => { self.apply_colorization(); continue; }
-                    None => self.conn.wait_for_event()?,
+                    None => match self.next_deadline() {
+                        // sleep until an event arrives or the next frame/timer is due
+                        Some(d) => {
+                            use std::os::unix::io::AsRawFd;
+                            let ms = d.saturating_duration_since(Instant::now()).as_millis().min(1000) as i32;
+                            let mut fd = libc::pollfd { fd: self.conn.stream().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                            unsafe { libc::poll(&mut fd, 1, ms) };
+                            continue;
+                        }
+                        None => self.conn.wait_for_event()?,
+                    },
                 },
             };
             // Motion compression: high-rate mice/high-refresh screens produce far more motion
@@ -1270,8 +1519,7 @@ impl Wm {
             Event::LeaveNotify(e) => {
                 if let Some(w) = self.frames.get(&e.event).copied() {
                     if self.clients.get(&w).map(|c| c.hover.is_some()).unwrap_or(false) && self.drag.is_none() {
-                        self.clients.get_mut(&w).unwrap().hover = None;
-                        self.redraw(w);
+                        self.set_hover(w, None);
                     }
                 }
             }
@@ -1283,7 +1531,7 @@ impl Wm {
                 let ids: Vec<u32> = self.clients.keys().copied().collect();
                 for w in ids { self.redraw(w); }
             }
-            Event::RandrScreenChangeNotify(_) => { self.update_monitors(); self.load_wallpaper(); }
+            Event::RandrScreenChangeNotify(_) => { self.update_monitors(); self.load_wallpaper(); self.sync_bar(); }
             _ => {}
         }
         Ok(())
@@ -1309,6 +1557,7 @@ impl Wm {
             if m.contains(ConfigWindow::STACK_MODE) && e.stack_mode == StackMode::ABOVE && c_kind_focusable(&self.clients[&e.window]) {
                 self.raise(e.window);
             }
+            if self.clients.get(&e.window).map(|c| c.kind == Kind::Dock).unwrap_or(false) { self.sync_bar(); }
         } else {
             let aux = ConfigureWindowAux::from_configure_request(&e);
             let _ = self.conn.configure_window(e.window, &aux);
@@ -1593,13 +1842,12 @@ impl Wm {
                 }
             }
             Drag::Move { .. } => {
-                if let Some((win, side)) = self.snap_preview.take() {
-                    let _ = self.conn.destroy_window(win);
-                    let wa = self.snap_wa.take();
+                let wa = self.snap_wa.take();
+                if let Some(side) = self.drop_snap_preview() {
                     if self.clients.contains_key(&w) {
                         match (side, wa) {
-                            (0, Some(wa)) => self.maximize_in(w, wa),
-                            (s, Some(wa)) => self.snap_in(w, s, wa),
+                            (0, Some(wa)) => { self.anim_geom(w); self.maximize_in(w, wa) }
+                            (s, Some(wa)) => { self.anim_geom(w); self.snap_in(w, s, wa) }
                             (0, None) => self.set_maximized(w, true),
                             (s, None) => self.snap(w, s),
                         }
@@ -1609,10 +1857,9 @@ impl Wm {
             Drag::Resize { start, .. } => {
                 // the top/bottom border dragged to the screen edge: vertical maximise; restoring
                 // returns to the size from before the drag
-                if let Some((win, 2)) = self.snap_preview {
-                    self.snap_preview = None;
+                if let Some((_, 2)) = self.snap_preview {
+                    self.drop_snap_preview();
                     self.snap_wa = None;
-                    let _ = self.conn.destroy_window(win);
                     if let Some(c) = self.clients.get_mut(&w) { c.snapped = None; c.maximized = false; }
                     self.snap(w, 2);
                     if let Some(c) = self.clients.get_mut(&w) { if c.snapped == Some(2) { c.restore = Some(start); } }
@@ -1639,6 +1886,8 @@ impl Wm {
             Some((w, Drag::Move { cx, cy, ox, oy, from_max })) => {
                 let Some(c) = self.clients.get(&w) else { return };
                 if (rx - cx).abs() < 4 && (ry - cy).abs() < 4 && c.geom.x == ox { return; }
+                self.end_anim_geom(w);
+                let Some(c) = self.clients.get(&w) else { return };
                 if from_max {
                     // dragging a maximised/snapped window restores it under the pointer
                     let r = c.restore.unwrap_or(Rect { w: c.geom.w * 2 / 3, h: c.geom.h * 2 / 3, ..c.geom });
@@ -1662,11 +1911,15 @@ impl Wm {
                 let m = self.monitors.get(self.monitors.iter().position(|m| m.contains(rx, ry)).unwrap_or(0)).copied().unwrap_or_default();
                 let side = if self.kbd_drag.is_some() { None } else if rx <= m.x + 1 { Some(-1) } else if rx >= m.x + m.w - 2 { Some(1) } else if ry <= m.y + 1 { Some(0) } else { None };
                 if side != self.snap_preview.map(|s| s.1) {
-                    self.hide_snap_preview();
-                    if let Some(s) = side { if self.clients[&w].resizable && is_app(&self.clients[&w]) { self.show_snap_preview(w, s); } }
+                    match side {
+                        // a sheet already showing morphs to the new zone
+                        Some(s) if self.clients[&w].resizable && is_app(&self.clients[&w]) => self.show_snap_preview(w, s),
+                        _ => self.hide_snap_preview(),
+                    }
                 }
             }
             Some((w, Drag::Resize { edges, start, px, py })) => {
+                self.end_anim_geom(w);
                 let (dx, dy) = (rx - px, ry - py);
                 let mut g = start;
                 if edges & 1 != 0 { g.x = start.x + dx; g.w = start.w - dx; }
@@ -1693,8 +1946,7 @@ impl Wm {
                 let c = &self.clients[&w];
                 let hit = self.hit(c, e.event_x as i32, e.event_y as i32);
                 let hb = if let Hit::Button(b) = hit { Some(b) } else { None };
-                if hb != c.hover { self.clients.get_mut(&w).unwrap().hover = hb; self.redraw(w); }
-                let _ = hit;
+                if hb != c.hover { self.set_hover(w, hb); }
             }
         }
     }
@@ -1740,6 +1992,7 @@ impl Wm {
         };
         let (maxed, snapped, full, geom) = (c.maximized, c.snapped, c.fullscreen, c.geom);
         if let Some(r) = c.restore { self.clients.get_mut(&w).unwrap().restore = Some(shift(r)); }
+        self.anim_geom(w);
         if full {
             let m = self.monitors[to];
             self.configure(w, m);
@@ -1757,64 +2010,98 @@ impl Wm {
     }
 
     /// Aero Peek: with a compositor, every window but `target` (0: all of them, peeking at the
-    /// desktop) fades out and leaves a glass outline where it was, until `peek(_, false)`.
+    /// desktop) fades out and leaves a glass outline where it was, until `peek(_, false)`. picom fades
+    /// the windows (`_NET_WM_WINDOW_OPACITY`, see crate::picomconf), the outlines fade here alongside.
     fn peek(&mut self, target: u32, on: bool) {
-        self.peek_end();
-        if !on || !self.composited() { return; }
-        let Some((vis, cmap)) = self.argb else { return };
-        let mut tops = vec![];
-        let mut outlines = vec![];
-        let order = self.stack.clone();
-        for w in order {
-            let Some(c) = self.clients.get(&w) else { continue };
-            if w == target || !is_app(c) || c.minimized || c.wm_hidden || c.fullscreen { continue; }
-            let top = c.frame.unwrap_or(w);
-            let r = if c.frame.is_some() { self.frame_rect(c) } else {
-                let [l, rr, t, b] = c.csd;
-                Rect { x: c.geom.x + l, y: c.geom.y + t, w: c.geom.w - l - rr, h: c.geom.h - t - b }
-            };
-            let round = c.frame.is_some() && !c.maximized && !is_small(c);
-            let _ = self.conn.change_property32(PropMode::REPLACE, top, self.atoms._NET_WM_WINDOW_OPACITY, AtomEnum::CARDINAL, &[0]);
-            tops.push(top);
-            if r.w < 4 || r.h < 4 { continue; }
-            // the outline: Win7 leaves a faint sheet with the frame's dark and light rims
-            let win = self.conn.generate_id().unwrap();
-            let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).colormap(cmap);
-            if self.conn.create_window(32, win, self.root, r.x as i16, r.y as i16, r.w as u16, r.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { continue; }
-            // no compositor shadow (picom's rules leave DND windows alone), clicks go through
-            let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
-            let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
-            let _ = self.conn.map_window(win);
-            if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r.w, r.h) {
-                {
-                    let cr = cairo::Context::new(&s).unwrap();
-                    let rad = if round { decor::RADIUS } else { 0.0 };
-                    let (w, h) = (r.w as f64, r.h as f64);
-                    crate::glass::rounded(&cr, 0.5, 0.5, w - 1.0, h - 1.0, rad);
-                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.06);
-                    cr.fill_preserve().ok();
-                    cr.set_line_width(1.0);
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.55);
-                    cr.stroke().ok();
-                    crate::glass::rounded(&cr, 1.5, 1.5, w - 3.0, h - 3.0, (rad - 1.0).max(0.0));
-                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.6);
-                    cr.stroke().ok();
-                }
-                self.put_surface(win, 32, &mut s);
+        let old = self.peeking.take().unwrap_or_default();
+        self.switch_peek = false;
+        let argb = self.argb.filter(|_| on && self.composited());
+        let mut keep: Vec<(u32, u32)> = vec![];
+        if let Some((vis, cmap)) = argb {
+            let order = self.stack.clone();
+            for w in order {
+                let Some(c) = self.clients.get(&w) else { continue };
+                if w == target || !is_app(c) || c.minimized || c.wm_hidden || c.fullscreen { continue; }
+                let top = c.frame.unwrap_or(w);
+                // still faded from the peek before (the pointer moved to another thumbnail): stays as it is
+                if let Some(o) = old.iter().find(|o| o.0 == top) { keep.push(*o); continue; }
+                let r = if c.frame.is_some() { self.frame_rect(c) } else {
+                    let [l, rr, t, b] = c.csd;
+                    Rect { x: c.geom.x + l, y: c.geom.y + t, w: c.geom.w - l - rr, h: c.geom.h - t - b }
+                };
+                let round = c.frame.is_some() && !c.maximized && !is_small(c);
+                let _ = self.conn.change_property32(PropMode::REPLACE, top, self.atoms._NET_WM_WINDOW_OPACITY, AtomEnum::CARDINAL, &[0]);
+                let outline = if r.w < 4 || r.h < 4 { 0 } else { self.peek_outline(r, round, vis, cmap) };
+                keep.push((top, outline));
             }
-            outlines.push(win);
         }
-        // the docks (taskbar) stay above the outlines
+        // the windows that come back, and their outlines
+        for (top, outline) in old {
+            if keep.iter().any(|k| k.0 == top) { continue; }
+            let _ = self.conn.delete_property(top, self.atoms._NET_WM_WINDOW_OPACITY);
+            if outline != 0 { self.fade_window(outline, 0.0, true); }
+        }
+        if keep.is_empty() { self.restack(); return; }
+        // the docks (taskbar) and Alt+Tab stay above the outlines
         let docks: Vec<u32> = self.clients.values().filter(|c| c.kind == Kind::Dock).map(|c| c.frame.unwrap_or(c.win)).collect();
         for d in docks { let _ = self.conn.configure_window(d, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)); }
-        self.peeking = Some((tops, outlines));
+        if let Some(s) = &self.switcher { let _ = self.conn.configure_window(s.win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)); }
+        self.peeking = Some(keep);
     }
 
-    fn peek_end(&mut self) {
-        let Some((tops, outlines)) = self.peeking.take() else { return };
-        for t in tops { let _ = self.conn.delete_property(t, self.atoms._NET_WM_WINDOW_OPACITY); }
-        for o in outlines { let _ = self.conn.destroy_window(o); }
-        self.restack();
+    /// Win7 leaves a faint sheet with the frame's dark and light rims where a peeked-away window was.
+    fn peek_outline(&mut self, r: Rect, round: bool, vis: u32, cmap: u32) -> u32 {
+        let win = self.conn.generate_id().unwrap();
+        let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).colormap(cmap);
+        if self.conn.create_window(32, win, self.root, r.x as i16, r.y as i16, r.w as u16, r.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return 0; }
+        // no compositor shadow (picom's rules leave DND windows alone), clicks go through
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_NO_ANIM, AtomEnum::CARDINAL, &[1]);
+        let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
+        // fades in while picom fades the window out
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_OPACITY, AtomEnum::CARDINAL, &[0]);
+        let _ = self.conn.map_window(win);
+        if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r.w, r.h) {
+            {
+                let cr = cairo::Context::new(&s).unwrap();
+                let rad = if round { decor::RADIUS } else { 0.0 };
+                let (w, h) = (r.w as f64, r.h as f64);
+                crate::glass::rounded(&cr, 0.5, 0.5, w - 1.0, h - 1.0, rad);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.06);
+                cr.fill_preserve().ok();
+                cr.set_line_width(1.0);
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.55);
+                cr.stroke().ok();
+                crate::glass::rounded(&cr, 1.5, 1.5, w - 3.0, h - 3.0, (rad - 1.0).max(0.0));
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+                cr.stroke().ok();
+            }
+            self.put_surface(win, 32, &mut s);
+        }
+        self.fade_window(win, 1.0, false);
+        win
+    }
+
+    fn peek_end(&mut self) { self.peek(0, false); }
+
+    /// Fade one of our own windows (`_AERODE_NO_ANIM`) to `to` over `anim::PEEK_FADE`, then destroy it
+    /// if `destroy`; at once without a compositor.
+    fn fade_window(&mut self, win: u32, to: f64, destroy: bool) {
+        let now = Instant::now();
+        let cur = self.fades.iter().find(|f| f.0 == win).map(|f| f.1.at(now)).unwrap_or(if to > 0.5 { 0.0 } else { 1.0 });
+        self.fades.retain(|f| f.0 != win);
+        if !self.composited() {
+            if destroy { let _ = self.conn.destroy_window(win); } else { self.set_opacity(win, to); }
+            return;
+        }
+        let ease = if to > cur { anim::Ease::Out } else { anim::Ease::InOut };
+        let t = anim::Tween { ease, ..anim::level_tween(cur, to, anim::PEEK_FADE) };
+        self.fades.push((win, t, destroy));
+    }
+
+    fn set_opacity(&self, win: u32, o: f64) {
+        let v = (o.clamp(0.0, 1.0) * u32::MAX as f64) as u32;
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_OPACITY, AtomEnum::CARDINAL, &[v]);
     }
 
     /// Upload an ARGB/RGB surface into a window of the given depth (in strips below the request limit).
@@ -1822,79 +2109,236 @@ impl Wm {
         s.flush();
         let (w, h, stride) = (s.width(), s.height(), s.stride() as usize);
         let Ok(data) = s.data().map(|d| d.to_vec()) else { return };
-        let gc = self.conn.generate_id().unwrap();
-        let _ = self.conn.create_gc(gc, win, &CreateGCAux::new());
         let depth = if depth == 32 { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
+        // upload into a pixmap and copy it over in one request: the compositor never shows a
+        // half-uploaded picture (an animating snap preview would tear)
+        let pix = self.conn.generate_id().unwrap();
+        let target = if self.conn.create_pixmap(depth, pix, win, w as u16, h as u16).is_ok() { pix } else { win };
+        let gc = self.conn.generate_id().unwrap();
+        let _ = self.conn.create_gc(gc, target, &CreateGCAux::new().graphics_exposures(0));
         let rows = (200_000 / stride).max(1);
         for y in (0..h as usize).step_by(rows) {
             let n = rows.min(h as usize - y);
-            let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, win, gc, w as u16, n as u16, 0, y as i16, 0, depth, &data[y * stride..(y + n) * stride]);
+            let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, target, gc, w as u16, n as u16, 0, y as i16, 0, depth, &data[y * stride..(y + n) * stride]);
+        }
+        if target == pix {
+            let _ = self.conn.copy_area(pix, win, gc, 0, 0, 0, 0, w as u16, h as u16);
+            let _ = self.conn.free_pixmap(pix);
         }
         let _ = self.conn.free_gc(gc);
     }
 
+    /// The Aero Snap preview for `side` (0 maximise, -1/1 left/right half, 2 vertical maximise): a
+    /// glass sheet that grows out of the pointer ("a scale animation that originates from the
+    /// cursor", E7 blog), or morphs from the zone shown so far, with a ripple of light at the pointer.
     fn show_snap_preview(&mut self, w: u32, side: i8) {
         let Some(c) = self.clients.get(&w) else { return };
-        let wa = self.workarea_for(self.monitor_of(&Rect { x: self.pointer().0, y: self.pointer().1, w: 1, h: 1 }));
-        let _ = c;
+        let (px, py) = self.pointer();
+        let wa = self.workarea_for(self.monitor_of(&Rect { x: px, y: py, w: 1, h: 1 }));
         let r = match side {
             -1 => Rect { w: wa.w / 2, ..wa },
             1 => Rect { x: wa.x + wa.w - wa.w / 2, w: wa.w / 2, ..wa },
             2 => { let fr = self.frame_rect(c); Rect { x: fr.x, w: fr.w, ..wa } }
             _ => wa,
         };
+        let frame = c.frame;
         self.snap_wa = Some(wa);
-        let win = self.conn.generate_id().unwrap();
+        let to = Rect { x: r.x + 8, y: r.y + 8, w: r.w - 16, h: r.h - 16 };
         let composited = self.composited();
+        let animate = composited && self.effect("animate_minmax");
+        // the drag moved on to another zone: the sheet morphs over
+        if let Some((win, _)) = self.snap_preview {
+            self.snap_preview = Some((win, side));
+            if animate {
+                let from = self.snap_anim.map(|a| a.3).unwrap_or(self.snap_rect.unwrap_or(to));
+                self.snap_anim = Some((from, to, Instant::now(), from));
+            } else {
+                self.paint_snap_preview(win, to);
+            }
+            self.ripple_at(px, py);
+            return;
+        }
+        let win = self.conn.generate_id().unwrap();
         let (depth, vis, cmap) = match (composited, self.argb) { (true, Some((v, c))) => (32, v, c), _ => (x11rb::COPY_DEPTH_FROM_PARENT, 0, 0) };
         let mut aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0);
         if cmap != 0 { aux = aux.colormap(cmap); }
-        let r2 = Rect { x: r.x + 8, y: r.y + 8, w: r.w - 16, h: r.h - 16 };
-        if self.conn.create_window(depth, win, self.root, r2.x as i16, r2.y as i16, r2.w as u16, r2.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return; }
+        // the first frame: a 40 px sheet under the pointer (AeroThemePlasma), else the zone itself
+        let from = if animate { Rect { x: px - 20, y: py - 20, w: 40, h: 40 } } else { to };
+        if self.conn.create_window(depth, win, self.root, from.x as i16, from.y as i16, from.w as u16, from.h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return; }
         let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_NO_ANIM, AtomEnum::CARDINAL, &[1]);
         // like Win7, the preview casts no shadow (picom leaves DND-type windows without one)
         let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
         let _ = self.conn.map_window(win);
-        // paint: glass rectangle with white edge (Win7 "peek" outline)
-        if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r2.w, r2.h) {
+        self.snap_rect = None;
+        self.paint_snap_preview(win, from);
+        // keep the dragged window above the preview
+        if let Some(f) = frame {
+            let _ = self.conn.configure_window(f, &ConfigureWindowAux::new().sibling(win).stack_mode(StackMode::ABOVE));
+        }
+        self.snap_preview = Some((win, side));
+        self.snap_anim = animate.then(|| (from, to, Instant::now(), from));
+        if animate { self.ripple_at(px, py); }
+    }
+
+    /// Size the snap preview window to `r` and paint it: glass with a white rim (the Peek sheet).
+    fn paint_snap_preview(&mut self, win: u32, r: Rect) {
+        if self.snap_rect != Some(r) {
+            let _ = self.conn.configure_window(win, &ConfigureWindowAux::new().x(r.x).y(r.y).width(r.w.max(1) as u32).height(r.h.max(1) as u32));
+        }
+        self.snap_rect = Some(r);
+        let composited = self.composited();
+        let depth = if composited && self.argb.is_some() { 32 } else { 0 };
+        if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r.w.max(1), r.h.max(1)) {
             {
                 let cr = cairo::Context::new(&s).unwrap();
-                crate::glass::rounded(&cr, 0.5, 0.5, r2.w as f64 - 1.0, r2.h as f64 - 1.0, 6.0);
+                let rad = 6.0f64.min(r.w as f64 / 2.0).min(r.h as f64 / 2.0);
+                crate::glass::rounded(&cr, 0.5, 0.5, r.w as f64 - 1.0, r.h as f64 - 1.0, rad);
                 cr.save().ok();
                 cr.clip_preserve();
-                self.glass.fill(&cr, r2.x as f64, r2.y as f64, true, false, composited);
+                self.glass.fill(&cr, r.x as f64, r.y as f64, true, false, composited);
                 cr.restore().ok();
                 cr.set_source_rgba(1.0, 1.0, 1.0, 0.8);
                 cr.set_line_width(2.0);
                 cr.stroke().ok();
             }
-            s.flush();
-            let stride = s.stride() as usize;
-            let data = s.data().unwrap().to_vec();
-            let gc = self.conn.generate_id().unwrap();
-            let _ = self.conn.create_gc(gc, win, &CreateGCAux::new());
-            let depth = if depth == 32 { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
-            let rows = (200_000 / stride).max(1);
-            for y in (0..r2.h as usize).step_by(rows) {
-                let n = rows.min(r2.h as usize - y);
-                let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, win, gc, r2.w as u16, n as u16, 0, y as i16, 0, depth, &data[y * stride..(y + n) * stride]);
-            }
-            let _ = self.conn.free_gc(gc);
+            self.put_surface(win, depth, &mut s);
         }
-        // keep the dragged window above the preview
-        if let Some(f) = self.clients.get(&w).and_then(|c| c.frame) {
-            let _ = self.conn.configure_window(f, &ConfigureWindowAux::new().sibling(win).stack_mode(StackMode::ABOVE));
-        }
-        self.snap_preview = Some((win, side));
     }
 
+    /// The light that marks a snap zone being hit: a ring of light spreading from the pointer.
+    fn ripple_at(&mut self, x: i32, y: i32) {
+        if let Some((old, _, _)) = self.ripple.take() { let _ = self.conn.destroy_window(old); }
+        let Some((vis, cmap)) = self.argb.filter(|_| self.composited() && self.effect("animate_minmax")) else { return };
+        let win = self.conn.generate_id().unwrap();
+        let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0).border_pixel(0).colormap(cmap);
+        let half = RIPPLE_SIZE / 2;
+        if self.conn.create_window(32, win, self.root, (x - half) as i16, (y - half) as i16, RIPPLE_SIZE as u16, RIPPLE_SIZE as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).is_err() { return; }
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[self.atoms._NET_WM_WINDOW_TYPE_DND]);
+        let _ = self.conn.change_property32(PropMode::REPLACE, win, self.atoms._AERODE_NO_ANIM, AtomEnum::CARDINAL, &[1]);
+        let _ = self.conn.shape_rectangles(x11rb::protocol::shape::SO::SET, x11rb::protocol::shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
+        self.ripple = Some((win, (x, y), Instant::now()));
+        self.paint_ripple(win, 0.0);
+        let _ = self.conn.map_window(win);
+    }
+
+    fn paint_ripple(&self, win: u32, t: f64) {
+        let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, RIPPLE_SIZE, RIPPLE_SIZE) else { return };
+        {
+            let cr = cairo::Context::new(&s).unwrap();
+            let c = RIPPLE_SIZE as f64 / 2.0;
+            let e = anim::Ease::Out.apply(t);
+            let fade = 1.0 - t.clamp(0.0, 1.0);
+            // the glow at the pointer
+            let g = cairo::RadialGradient::new(c, c, 0.0, c, c, 10.0 + 22.0 * e);
+            g.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.75 * fade);
+            g.add_color_stop_rgba(1.0, 0.75, 0.88, 1.0, 0.0);
+            cr.set_source(&g).ok();
+            cr.paint().ok();
+            // the ring spreading out
+            let r = 8.0 + (c - 10.0) * e;
+            let ring = cairo::RadialGradient::new(c, c, (r - 7.0).max(0.0), c, c, r + 2.0);
+            ring.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.0);
+            ring.add_color_stop_rgba(0.75, 0.85, 0.94, 1.0, 0.7 * fade);
+            ring.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.0);
+            cr.set_source(&ring).ok();
+            cr.arc(c, c, r + 2.0, 0.0, std::f64::consts::TAU);
+            cr.fill().ok();
+        }
+        self.put_surface(win, 32, &mut s);
+    }
+
+    /// The pointer left the snap zone: the sheet fades away.
     fn hide_snap_preview(&mut self) {
         self.snap_wa = None;
-        if let Some((win, _)) = self.snap_preview.take() { let _ = self.conn.destroy_window(win); }
+        self.snap_anim = None;
+        self.snap_rect = None;
+        if let Some((win, _)) = self.snap_preview.take() {
+            if self.composited() && self.effect("animate_minmax") { self.fade_window(win, 0.0, true); } else { let _ = self.conn.destroy_window(win); }
+        }
+    }
+
+    /// The snap preview goes away because the window snaps into it.
+    fn drop_snap_preview(&mut self) -> Option<i8> {
+        self.snap_anim = None;
+        self.snap_rect = None;
+        let (win, side) = self.snap_preview.take()?;
+        let _ = self.conn.destroy_window(win);
+        Some(side)
+    }
+
+    // ---------------------------------------------------------- animation frames and timers
+    /// When the event loop has to wake up for the next animation frame or timer.
+    fn next_deadline(&self) -> Option<Instant> {
+        let animating = self.snap_anim.is_some() || self.ripple.is_some() || !self.fades.is_empty()
+            || self.clients.values().any(|c| !c.glow.0.is_empty() || c.focus_fade.is_some());
+        let frame = animating.then(|| self.last_tick + anim::FRAME);
+        match (self.timers.next(), frame) { (Some(a), Some(b)) => Some(a.min(b)), (a, b) => a.or(b) }
+    }
+
+    /// One frame of the animations drawn here, and the timers that are due.
+    fn tick(&mut self) {
+        let now = Instant::now();
+        self.last_tick = now;
+        for t in self.timers.take_due(now) {
+            match t {
+                anim::Timer::Unmap(w) => self.unmap_now(w),
+                anim::Timer::DelProp { win, atom } => { let _ = self.conn.delete_property(win, atom); }
+                anim::Timer::SwitchPeek => {
+                    if let Some(sel) = self.switcher.as_ref().and_then(|s| s.selected()) {
+                        self.peek(sel, true);
+                        self.switch_peek = true;
+                    }
+                }
+            }
+        }
+        // frames fading between active and inactive (whole frame), caption-button glows
+        let fading: Vec<u32> = self.clients.iter().filter(|(_, c)| c.focus_fade.is_some()).map(|(w, _)| *w).collect();
+        for &w in &fading {
+            self.redraw(w);
+            if let Some(c) = self.clients.get_mut(&w) { if c.focus_fade.map(|t| t.done(now)).unwrap_or(true) { c.focus_fade = None; } }
+        }
+        let glowing: Vec<u32> = self.clients.iter().filter(|(w, c)| !c.glow.0.is_empty() && !fading.contains(w)).map(|(w, _)| *w).collect();
+        for w in glowing { self.redraw_buttons(w); }
+        for c in self.clients.values_mut() { c.glow.prune(now); }
+        // the snap preview growing / morphing
+        if let (Some((from, to, t0, _)), Some((win, _))) = (self.snap_anim, self.snap_preview) {
+            let t = now.saturating_duration_since(t0).as_secs_f64() / anim::SNAP_GROW.as_secs_f64();
+            let r = anim::lerp_rect(from, to, anim::Ease::Out.apply(t));
+            self.paint_snap_preview(win, r);
+            self.snap_anim = (t < 1.0).then_some((from, to, t0, r));
+        } else { self.snap_anim = None; }
+        if let Some((win, _, t0)) = self.ripple {
+            let t = now.saturating_duration_since(t0).as_secs_f64() / anim::RIPPLE.as_secs_f64();
+            if t >= 1.0 { let _ = self.conn.destroy_window(win); self.ripple = None; } else { self.paint_ripple(win, t); }
+        }
+        // opacity fades of our own windows
+        let fades = std::mem::take(&mut self.fades);
+        for (win, tw, destroy) in fades {
+            if tw.done(now) {
+                if destroy { let _ = self.conn.destroy_window(win); } else { self.set_opacity(win, tw.to); }
+            } else {
+                self.set_opacity(win, tw.at(now));
+                self.fades.push((win, tw, destroy));
+            }
+        }
     }
 
     fn switcher_cancel(&mut self) {
+        self.timers.cancel(|t| *t == anim::Timer::SwitchPeek);
+        if std::mem::take(&mut self.switch_peek) { self.peek_end(); }
         if let Some(s) = self.switcher.take() { s.destroy(&self.conn); }
+    }
+
+    /// Alt+Tab moved to another item: Win7 peeks at it once the selection rests there, and a peek
+    /// already showing follows the selection.
+    fn switcher_moved(&mut self) {
+        let peek = self.composited() && self.effect("aero_peek") && crate::config::get().taskbar.aero_peek;
+        if !peek { return; }
+        match self.switcher.as_ref().and_then(|s| s.selected()) {
+            Some(sel) if self.switch_peek => { self.peek(sel, true); self.switch_peek = true; }
+            _ => self.timers.set(anim::SWITCH_PEEK, anim::Timer::SwitchPeek),
+        }
     }
 
     // ---------------------------------------------------------- keys
@@ -1939,6 +2383,7 @@ impl Wm {
                 }
                 let fwd = matches!(action, SwitchNext);
                 if let Some(mut s) = self.switcher.take() { s.step(fwd); s.draw(self); self.switcher = Some(s); }
+                self.switcher_moved();
                 // a very quick Alt+Tab tap can release Alt before our grab took effect
                 let mods = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| u16::from(r.mask)).unwrap_or(0xffff);
                 if mods & (u16::from(KeyButMask::MOD1) | u16::from(KeyButMask::MOD4)) == 0 { self.switch_commit(e.time); }
@@ -1962,6 +2407,10 @@ impl Wm {
     pub fn restart(&mut self) {
         self.end_drag();
         self.switcher_cancel();
+        // minimised windows still waiting for their deferred unmap
+        for t in self.timers.take_due(Instant::now() + std::time::Duration::from_secs(3600)) {
+            if let anim::Timer::Unmap(w) = t { self.unmap_now(w); }
+        }
         let ids: Vec<u32> = self.stack.clone();
         for w in ids {
             let Some(c) = self.clients.get(&w) else { continue };
@@ -1994,6 +2443,8 @@ impl Wm {
 
     fn switch_commit(&mut self, time: u32) {
         let _ = self.conn.ungrab_keyboard(time);
+        self.timers.cancel(|t| *t == anim::Timer::SwitchPeek);
+        if std::mem::take(&mut self.switch_peek) { self.peek_end(); }
         if let Some(s) = self.switcher.take() {
             let target = s.selected();
             s.destroy(&self.conn);
@@ -2034,6 +2485,9 @@ fn spawn_compositor_watch(check_win: u32) {
         }
     });
 }
+
+/// Size of the snap-zone ripple window.
+const RIPPLE_SIZE: i32 = 112;
 
 fn c_kind_focusable(c: &Client) -> bool { !matches!(c.kind, Kind::Dock | Kind::Desktop) }
 

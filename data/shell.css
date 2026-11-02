@@ -163,3 +163,10 @@ button.overflow-icon:active { background-image: linear-gradient(to bottom, #e5ee
 .notify-icons button.link label { color: #0066cc; }
 .notify-icons button.link:hover label { color: #3399ff; text-decoration: underline; }
 .notify-icons button.link:disabled label { color: #8c8c8c; text-decoration: none; }
+
+/* Win7 theme transitions on the shell's own controls (aero.msstyles Toolbar: 250 ms every way;
+   see data/gtk.css). Only while gtk-enable-animations is on. */
+button.overflow-icon {
+  transition-property: background-color, background-image, border-color, box-shadow;
+  transition-duration: 250ms; transition-timing-function: linear;
+}

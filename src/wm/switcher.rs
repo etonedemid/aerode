@@ -36,6 +36,8 @@ impl Switcher {
         if cmap != 0 { aux = aux.colormap(cmap); }
         wm.conn.create_window(depth, win, wm.root, pos.0 as i16, pos.1 as i16, w as u16, h as u16, 0, WindowClass::INPUT_OUTPUT, vis, &aux).ok()?;
         let _ = wm.conn.change_property32(PropMode::REPLACE, win, wm.atoms._AERODE_GLASS, AtomEnum::CARDINAL, &[1]);
+        // Win7's Alt+Tab appears and moves its selection without an animation
+        let _ = wm.conn.change_property32(PropMode::REPLACE, win, wm.atoms._AERODE_NO_ANIM, AtomEnum::CARDINAL, &[1]);
         wm.conn.map_window(win).ok()?;
         let _ = wm.conn.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
         Some(Switcher { win, wins, sel: 0, w, h, pos, _held: held })

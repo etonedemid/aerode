@@ -815,6 +815,8 @@ impl Daemon {
         win.set_app_paintable(true);
         win.set_resizable(false);
         glass::enable_rgba(&win);
+        // the balloon fades in and out itself (crate::anim), not the compositor
+        crate::anim::self_animated(&win);
         win.style_context().add_class("aerode");
         win.style_context().add_class("balloon");
         win.add_events(gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::BUTTON_RELEASE_MASK
@@ -1105,7 +1107,8 @@ impl Daemon {
             }
             d.anchor.set(d.anchor_of(&target));
             d.relayout();
-            d.win.show();
+            // balloons are tooltips: "Fade or slide ToolTips into view"
+            crate::anim::show_faded(&d.win, crate::anim::BALLOON_IN, crate::anim::effect("tooltip_fade"));
             d.busy.set(false);
             if let Some(s) = d.cur.borrow().as_ref() { play_sound(&s.note); }
             d.arm_timer();
@@ -1332,7 +1335,7 @@ impl Daemon {
     fn finish(self: &Rc<Self>, reason: Reason) {
         let Some(s) = self.cur.borrow_mut().take() else { return };
         if let Some(t) = s.timer { t.remove(); }
-        self.win.hide();
+        crate::anim::fade(&self.win, 0.0, crate::anim::BALLOON_OUT, crate::anim::effect("tooltip_fade"), |w| w.hide());
         self.pressed.set(false);
         self.close_state.set(0);
         if let Some(t) = s.temp { self.tray.remove(&t); }
