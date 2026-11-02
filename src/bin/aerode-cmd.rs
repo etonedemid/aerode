@@ -9,7 +9,8 @@ fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode-cmd".into());
     if args.get(1).map(|a| a == "--shell").unwrap_or(false) {
-        let cfg = aerode::console::host::load_config();
+        // the console window's settings (history size, insert mode, popup colours) by its title
+        let cfg = aerode::console::host::load_for(&std::env::var("AERODE_CONSOLE_KEY").unwrap_or_default());
         let mut sh = aerode::cmdshell::Shell::new(&cfg);
         let rest = &args[2..];
         let flag = rest.first().map(|a| a.to_lowercase());
@@ -18,9 +19,8 @@ fn main() -> glib::ExitCode {
             Some("/c") => { sh.run_line(&cmdline); std::process::exit(sh.exit.unwrap_or(sh.errorlevel)); }
             Some("/k") => { sh.run_line(&cmdline); }
             _ => {
-                // the start-up banner, then an empty line, like cmd.exe
-                print!("{}\r\n", aerode::cmdshell::banner().replace('\n', "\r\n").trim_end_matches("\r\n"));
-                print!("\r\n\r\n");
+                // the start-up banner, then one empty line before the prompt, like cmd.exe
+                print!("{}\r\n\r\n", aerode::cmdshell::banner().trim_end().replace('\n', "\r\n"));
             }
         }
         std::process::exit(sh.repl());

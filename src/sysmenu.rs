@@ -67,8 +67,68 @@ pub fn show(wm: Rc<Wm>, w: u32, x: i32, y: i32) {
         l.set_markup_with_mnemonic("<b>_Close</b>");
         l.set_accel(*gdk::keys::constants::F4, gdk::ModifierType::MOD1_MASK);
     }
+    client_items(&wm, w, &m);
     m.show_all();
     popup(m, x, y, 0);
+}
+
+/// Items a client adds below Close, like Win7's console adds Edit ▸, Defaults and Properties to its window
+/// menu. `_AERODE_SYSMENU_ITEMS` (UTF-8) holds one item per line: `id<TAB>Label[<TAB>shortcut text]`, where
+/// `Sub/Label` puts the item in submenu Sub and a leading `!` on the id greys it. Choosing an item writes
+/// its id to `_AERODE_SYSMENU_CMD` on the window, which the client watches.
+fn client_items(wm: &Rc<Wm>, w: u32, m: &gtk::Menu) {
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
+    use x11rb::wrapper::ConnectionExt as _;
+    let atom = |n: &[u8]| wm.conn.intern_atom(false, n).ok().and_then(|c| c.reply().ok()).map(|r| r.atom);
+    let (Some(items), Some(cmd), Some(utf8)) = (atom(b"_AERODE_SYSMENU_ITEMS"), atom(b"_AERODE_SYSMENU_CMD"), atom(b"UTF8_STRING")) else { return };
+    let text = wm.conn.get_property(false, w, items, AtomEnum::ANY, 0, 16384).ok().and_then(|c| c.reply().ok())
+        .map(|r| String::from_utf8_lossy(&r.value).into_owned()).unwrap_or_default();
+    if text.trim().is_empty() { return; }
+    m.append(&gtk::SeparatorMenuItem::new());
+    let mut subs: Vec<(String, gtk::Menu)> = vec![];
+    for line in text.lines() {
+        let mut f = line.split('\t');
+        let (Some(id), Some(label)) = (f.next(), f.next()) else { continue };
+        let shortcut = f.next().unwrap_or("");
+        let (id, sensitive) = match id.strip_prefix('!') { Some(i) => (i.to_string(), false), None => (id.to_string(), true) };
+        let (parent, label) = match label.split_once('/') {
+            Some((sub, l)) => {
+                let menu = match subs.iter().find(|(n, _)| n == sub) {
+                    Some((_, sm)) => sm.clone(),
+                    None => {
+                        let sm = gtk::Menu::new();
+                        let it = gtk::MenuItem::with_mnemonic(sub);
+                        it.set_submenu(Some(&sm));
+                        m.append(&it);
+                        subs.push((sub.to_string(), sm.clone()));
+                        sm
+                    }
+                };
+                (menu, l)
+            }
+            None => (m.clone(), label),
+        };
+        let it = gtk::MenuItem::new();
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        let l = gtk::Label::with_mnemonic(label);
+        l.set_xalign(0.0);
+        l.set_mnemonic_widget(Some(&it));
+        row.pack_start(&l, true, true, 0);
+        if !shortcut.is_empty() {
+            let s = gtk::Label::new(Some(shortcut));
+            s.style_context().add_class("accelerator");
+            row.pack_end(&s, false, false, 0);
+        }
+        it.add(&row);
+        it.set_sensitive(sensitive);
+        let wm = wm.clone();
+        it.connect_activate(move |_| {
+            let _ = wm.conn.change_property8(PropMode::REPLACE, w, cmd, utf8, id.as_bytes());
+            // a round trip so the property lands before the menu goes away
+            let _ = wm.conn.get_input_focus().ok().and_then(|c| c.reply().ok());
+        });
+        parent.append(&it);
+    }
 }
 
 /// GTK gives up on a popup whose grab fails; the WM may still hold the button/key that opened it.

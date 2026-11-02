@@ -1,5 +1,6 @@
 //! The Windows Command Processor (cmd.exe) for Aerode.
 //! Paths are shown Windows-style: C:\ = /, C:\Users\<name> = /home/<name>.
+pub mod help;
 pub mod line;
 
 use std::collections::{BTreeMap, HashMap};
@@ -185,6 +186,10 @@ pub struct Shell {
     tty: Option<line::Tty>,
     pub exit: Option<i32>,
     batch: Option<Batch>,
+    /// the console title (TITLE); while a program runs Windows shows "title - command"
+    title: String,
+    /// CLS leaves the prompt on the top line: no empty line after it
+    no_blank: bool,
 }
 
 struct Batch { lines: Vec<String>, pc: usize, args: Vec<String>, path: PathBuf, exit_b: bool }
@@ -199,6 +204,7 @@ const BUILTINS: &[(&str, &str)] = &[
     ("CALL", "Runs one batch file from another."),
     ("CD", "Shows or changes the current directory."),
     ("CHDIR", "Same as CD."),
+    ("CLIP", "Copies the output of a command to the clipboard."),
     ("CLS", "Clears the screen."),
     ("COLOR", "Sets the console text and background colours (COLOR bf)."),
     ("COPY", "Copies one or more files."),
@@ -206,16 +212,19 @@ const BUILTINS: &[(&str, &str)] = &[
     ("DEL", "Deletes one or more files."),
     ("DIR", "Lists the files and subfolders in a folder."),
     ("ECHO", "Prints a message, or turns command echoing on or off."),
+    ("ENDLOCAL", "Ends local environment changes in a batch file."),
     ("ERASE", "Same as DEL."),
     ("EXIT", "Closes the command processor or ends a batch file."),
     ("FIND", "Searches files or input for a text string."),
     ("FOR", "Runs a command for each item in a set."),
     ("GOTO", "Jumps to a labelled line in a batch file."),
     ("HELP", "Lists the available commands."),
+    ("HOSTNAME", "Shows the name of this computer."),
     ("IF", "Runs a command only when a condition holds."),
     ("IPCONFIG", "Shows the network configuration."),
     ("MD", "Creates a folder."),
     ("MKDIR", "Same as MD."),
+    ("MKLINK", "Creates a symbolic or hard link."),
     ("MORE", "Shows output one screen at a time."),
     ("MOVE", "Moves or renames files and folders."),
     ("PATH", "Shows or sets the search path for programs."),
@@ -231,10 +240,10 @@ const BUILTINS: &[(&str, &str)] = &[
     ("RMDIR", "Same as RD."),
     ("SET", "Shows, sets or removes environment variables."),
     ("SETLOCAL", "Starts keeping environment changes local to a batch file."),
-    ("ENDLOCAL", "Ends local environment changes."),
     ("SHIFT", "Shifts batch file parameters."),
     ("SORT", "Sorts input lines."),
     ("START", "Opens a program, document or folder in a new window."),
+    ("SYSTEMINFO", "Shows information about this computer and its operating system."),
     ("TASKKILL", "Ends processes by PID or image name."),
     ("TASKLIST", "Lists running processes."),
     ("TIME", "Shows the time."),
@@ -268,7 +277,7 @@ impl Shell {
         Shell {
             cwd: home, vars, errorlevel: 0, echo: true, prompt: "$P$G".into(), dirstack: vec![], locals: vec![],
             editor: line::Editor { history: vec![], max_history: cfg.history_size as usize, discard_dups: cfg.discard_duplicates, insert: cfg.insert_mode, popup_fg: cfg.popup_fg, popup_bg: cfg.popup_bg },
-            tty: None, exit: None, batch: None,
+            tty: None, exit: None, batch: None, title: "C:\\Windows\\system32\\cmd.exe".into(), no_blank: false,
         }
     }
 
@@ -439,9 +448,9 @@ impl Shell {
     fn dispatch(&mut self, cmd: &str, args: &[String], raw: &str, input: Option<Vec<u8>>, o: Out, interactive: bool, s: &Simple) {
         let up = unquote(cmd).to_uppercase();
         // "echo." / "cd.." / "cd\" forms
-        if up.starts_with("ECHO") && up.len() > 4 && ".:(/".contains(&up[4..5]) { let rest = &raw.trim_start()[5..]; wl!(o, "{rest}"); self.errorlevel = 0; return; }
+        if up.starts_with("ECHO") && up.as_bytes().get(4).is_some_and(|b| b".:(/".contains(b)) { let rest = raw.trim_start().get(5..).unwrap_or(""); wl!(o, "{rest}"); self.errorlevel = 0; return; }
         if (up.starts_with("CD") || up.starts_with("CHDIR")) && (up.ends_with("..") || up.ends_with('\\')) && !up.contains(' ') {
-            let target = &cmd[if up.starts_with("CHDIR") { 5 } else { 2 }..];
+            let target = cmd.get(if up.starts_with("CHDIR") { 5 } else { 2 }..).unwrap_or("");
             self.cd(target, o);
             return;
         }
@@ -454,7 +463,7 @@ impl Shell {
         self.errorlevel = 0;
         match up.as_str() {
             "REM" | "::" => {}
-            "CLS" => { w!(o, "\x1b[3J\x1b[2J\x1b[H"); }
+            "CLS" => { w!(o, "\x1b[3J\x1b[2J\x1b[H"); self.no_blank = interactive; }
             "ECHO" => {
                 let r = rest_raw.trim_end();
                 match r.to_uppercase().as_str() {
@@ -514,31 +523,19 @@ impl Shell {
                     for t in targets { if t.is_file() && std::fs::remove_file(&t).is_err() { wl!(o, "{}", to_win(&t)); wl!(o, "Access is denied."); } }
                 }
             }
-            "COPY" | "MOVE" => {
-                let files: Vec<&String> = args.iter().filter(|x| !x.starts_with('/')).collect();
-                if files.is_empty() { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; }
-                let (srcs, dst) = if files.len() == 1 { (vec![files[0]], self.cwd.clone()) } else { (files[..files.len() - 1].to_vec(), to_linux(&self.cwd, files[files.len() - 1])) };
-                let mut n = 0;
-                for s in srcs {
-                    let list = glob(&self.cwd, s);
-                    if list.iter().all(|p| !p.exists()) { wl!(o, "The system cannot find the file specified."); self.errorlevel = 1; continue; }
-                    for src in list {
-                        let target = if dst.is_dir() { dst.join(src.file_name().unwrap()) } else { dst.clone() };
-                        if target.exists() && !has("/y") && src != target && !self.confirm(&format!("Overwrite {}? (Yes/No/All): ", to_win(&target)), o) { continue; }
-                        let ok = if up == "MOVE" { std::fs::rename(&src, &target).is_ok() || (std::fs::copy(&src, &target).is_ok() && std::fs::remove_file(&src).is_ok()) }
-                            else if src.is_dir() { false } else { std::fs::copy(&src, &target).is_ok() };
-                        if ok { n += 1; if args.len() > 2 || s.contains('*') { wl!(o, "{}", to_win(&src)); } } else { wl!(o, "Access is denied."); self.errorlevel = 1; }
-                    }
-                }
-                if up == "COPY" { wl!(o, "        {n} file(s) copied."); } else { wl!(o, "        {n} file(s) moved."); }
-            }
+            "COPY" | "MOVE" => self.copy_move(up == "MOVE", args, o),
             "REN" | "RENAME" => {
                 if args.len() != 2 { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; }
-                let src = to_linux(&self.cwd, &args[0]);
-                if !src.exists() { wl!(o, "The system cannot find the file specified."); self.errorlevel = 1; return; }
-                let dst = src.with_file_name(unquote(&args[1]));
-                if dst.exists() { wl!(o, "A duplicate file name exists, or the file\r\ncannot be found."); self.errorlevel = 1; return; }
-                if std::fs::rename(&src, &dst).is_err() { wl!(o, "Access is denied."); self.errorlevel = 1; }
+                // REN *.txt *.bak: every match, its name mapped through the new pattern
+                let srcs: Vec<PathBuf> = glob(&self.cwd, &args[0]).into_iter().filter(|p| std::fs::symlink_metadata(p).is_ok()).collect();
+                if srcs.is_empty() { wl!(o, "The system cannot find the file specified."); self.errorlevel = 1; return; }
+                let pat = unquote(&args[1]);
+                for src in srcs {
+                    let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let dst = src.with_file_name(rename_pattern(&name, &pat));
+                    if dst.exists() && dst != src { wl!(o, "A duplicate file name exists, or the file\r\ncannot be found."); self.errorlevel = 1; continue; }
+                    if std::fs::rename(&src, &dst).is_err() { wl!(o, "Access is denied."); self.errorlevel = 1; }
+                }
             }
             "SET" => self.set(&rest_raw, o),
             "SETLOCAL" => self.locals.push((self.vars.clone(), self.cwd.clone())),
@@ -548,7 +545,7 @@ impl Shell {
                 else { let v = rest_raw.trim_start_matches('=').to_string(); self.vars.insert("PATH".into(), v.clone()); unsafe { std::env::set_var("PATH", v); } }
             }
             "PROMPT" => { self.vars.insert("PROMPT".into(), if rest_raw.is_empty() { "$P$G".into() } else { rest_raw.clone() }); }
-            "TITLE" => { w!(o, "\x1b]2;{}\x07", rest_raw); }
+            "TITLE" => { self.title = strip_redirs(&rest_raw); w!(o, "\x1b]2;{}\x07", self.title); }
             "COLOR" => {
                 let c = a(0).to_uppercase();
                 if c.is_empty() { w!(o, "\x1b]7700;\x07"); }
@@ -620,8 +617,18 @@ impl Shell {
             "HELP" => {
                 if !args.is_empty() { self.help_for(&a(0).to_uppercase(), o); return; }
                 wl!(o, "For more information on a specific command, type HELP command-name");
-                for (n, d) in BUILTINS { wl!(o, "{:<14}{}", n, d); }
+                for (n, d) in BUILTINS {
+                    // descriptions wrap at 79 columns under the description column, as in Win7
+                    let mut line = format!("{n:<15}");
+                    for word in d.split(' ') {
+                        if line.len() + word.len() + 1 > 79 { wl!(o, "{}", line.trim_end()); line = " ".repeat(15); }
+                        line.push_str(word);
+                        line.push(' ');
+                    }
+                    wl!(o, "{}", line.trim_end());
+                }
                 wl!(o);
+                wl!(o, "For more information on tools see the command-line reference in the online help.");
                 wl!(o, "Any other command runs the Linux program of that name (for example fish).");
             }
             "TREE" => {
@@ -655,7 +662,8 @@ impl Shell {
                 let count = has("/c");
                 let needle = args.iter().find(|x| x.starts_with('"')).map(|x| unquote(x)).unwrap_or_default();
                 let files: Vec<&String> = args.iter().filter(|x| !x.starts_with('/') && !x.starts_with('"')).collect();
-                let check = |l: &str| { let hit = if insensitive { l.to_lowercase().contains(&needle.to_lowercase()) } else { l.contains(&needle) }; hit != invert };
+                // an empty string matches no line (so FIND /C /V "" counts all lines, a well-known idiom)
+                let check = |l: &str| { let hit = !needle.is_empty() && if insensitive { l.to_lowercase().contains(&needle.to_lowercase()) } else { l.contains(&needle) }; hit != invert };
                 let mut found = false;
                 if files.is_empty() {
                     let d = input.unwrap_or_default();
@@ -772,7 +780,98 @@ impl Shell {
         }
     }
 
+    /// COPY / MOVE, with Win7's messages: names of wildcard matches, "N file(s) copied.", the
+    /// overwrite question (not inside batch files, as on Windows) and COPY a+b concatenation.
+    fn copy_move(&mut self, mv: bool, args: &[String], o: Out) {
+        let sw = |f: &str| args.iter().any(|x| x.eq_ignore_ascii_case(f));
+        let mut ask = !sw("/y") && (self.batch.is_none() || sw("/-y"));
+        let files: Vec<String> = args.iter().filter(|x| !x.starts_with('/')).cloned().collect();
+        if files.is_empty() { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; }
+        // the name a source is reported with: as typed for COPY (folder part + name), full path for MOVE
+        let shown = |cwd: &Path, typed: &str, p: &Path| -> String {
+            if mv { return to_win(p); }
+            let t = unquote(typed);
+            let dir = if to_linux(cwd, &t).is_dir() { format!("{}\\", t.trim_end_matches(['\\', '/'])) }
+                else { t.rfind(['\\', '/']).map(|i| t[..=i].to_string()).unwrap_or_default() };
+            format!("{dir}{}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+        };
+        let joined = files.join(" ");
+        // COPY a+b [dest], or several files (wildcards, a folder) into one file: the sources one after the
+        // other into dest (into the first source without one)
+        let concat: Option<(Vec<(String, PathBuf)>, Option<String>)> = if mv { None } else if joined.contains('+') {
+            let norm = joined.split('+').map(|x| x.trim()).collect::<Vec<_>>().join("+");
+            let parts: Vec<&str> = norm.split_whitespace().collect();
+            if parts.len() > 2 { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; }
+            let mut srcs = vec![];
+            for part in parts[0].split('+').filter(|x| !x.is_empty()) {
+                for p in glob(&self.cwd, part) { if p.is_file() { srcs.push((part.to_string(), p)); } }
+            }
+            Some((srcs, parts.get(1).map(|s| s.to_string())))
+        } else if files.len() == 2 && !to_linux(&self.cwd, &files[1]).is_dir() && (files[0].contains(['*', '?']) || to_linux(&self.cwd, &files[0]).is_dir()) {
+            let p0 = to_linux(&self.cwd, &files[0]);
+            let mut v: Vec<PathBuf> = if p0.is_dir() { std::fs::read_dir(&p0).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default() } else { glob(&self.cwd, &files[0]) };
+            v.retain(|p| p.is_file());
+            v.sort();
+            Some((v.into_iter().map(|p| (files[0].clone(), p)).collect(), Some(files[1].clone())))
+        } else { None };
+        if let Some((srcs, dst)) = concat {
+            if srcs.is_empty() { wl!(o, "The system cannot find the file specified."); wl!(o, "        0 file(s) copied."); self.errorlevel = 1; return; }
+            let mut dst = dst.map(|d| to_linux(&self.cwd, &d)).unwrap_or_else(|| srcs[0].1.clone());
+            if dst.is_dir() { dst = dst.join(srcs[0].1.file_name().unwrap()); }
+            if dst.exists() && !srcs.iter().any(|s| s.1 == dst) && ask && !self.confirm(&format!("Overwrite {}? (Yes/No/All): ", to_win(&dst)), o) { wl!(o, "        0 file(s) copied."); return; }
+            let mut data = vec![];
+            for (typed, p) in &srcs {
+                wl!(o, "{}", shown(&self.cwd, typed, p));
+                data.extend(std::fs::read(p).unwrap_or_default());
+            }
+            if std::fs::write(&dst, data).is_err() { wl!(o, "Access is denied."); wl!(o, "        0 file(s) copied."); self.errorlevel = 1; return; }
+            wl!(o, "        1 file(s) copied.");
+            return;
+        }
+        if !mv && files.len() > 2 { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; }
+        let (srcs, dst) = if files.len() == 1 { (files.clone(), self.cwd.clone()) } else { (files[..files.len() - 1].to_vec(), to_linux(&self.cwd, &files[files.len() - 1])) };
+        let (mut n, mut nd) = (0, 0);
+        for typed in &srcs {
+            let p0 = to_linux(&self.cwd, typed);
+            // COPY folder: the files in it; MOVE folder: the folder itself
+            let list: Vec<PathBuf> = if p0.is_dir() && !mv {
+                let mut v: Vec<PathBuf> = std::fs::read_dir(&p0).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect()).unwrap_or_default();
+                v.sort();
+                v
+            } else { glob(&self.cwd, typed).into_iter().filter(|p| std::fs::symlink_metadata(p).is_ok()).collect() };
+            if list.is_empty() { wl!(o, "The system cannot find the file specified."); self.errorlevel = 1; continue; }
+            let many = list.len() > 1 || typed.contains(['*', '?']) || (p0.is_dir() && !mv) || srcs.len() > 1;
+            for src in list {
+                let target = if dst.is_dir() { dst.join(src.file_name().unwrap()) } else { dst.clone() };
+                if target == src || target.canonicalize().ok().is_some_and(|t| src.canonicalize().ok() == Some(t)) {
+                    if !mv { wl!(o, "The file cannot be copied onto itself."); self.errorlevel = 1; }
+                    continue;
+                }
+                if many { wl!(o, "{}", shown(&self.cwd, typed, &src)); }
+                if target.exists() && ask {
+                    w!(o, "Overwrite {}? (Yes/No/All): ", to_win(&target));
+                    let _ = o.flush();
+                    let a = self.read_plain_line().unwrap_or_default().trim().to_lowercase();
+                    if a.starts_with('a') { ask = false; } else if !a.starts_with('y') { continue; }
+                }
+                let is_dir = src.is_dir();
+                let ok = if mv { std::fs::rename(&src, &target).is_ok() || (!is_dir && std::fs::copy(&src, &target).is_ok() && std::fs::remove_file(&src).is_ok()) }
+                    else { std::fs::copy(&src, &target).is_ok() };
+                if !ok { wl!(o, "Access is denied."); self.errorlevel = 1; continue; }
+                if is_dir { nd += 1 } else { n += 1 }
+            }
+        }
+        if mv && nd > 0 && n == 0 { wl!(o, "        {nd} dir(s) moved."); }
+        else if mv { wl!(o, "        {n} file(s) moved."); }
+        else { wl!(o, "        {n} file(s) copied."); }
+    }
+
     fn help_for(&self, up: &str, o: Out) {
+        let up = match up { "CHDIR" => "CD", "ERASE" => "DEL", "MKDIR" => "MD", "RMDIR" => "RD", "RENAME" => "REN", u => u };
+        if let Some(text) = help::usage(up) {
+            for l in text.lines() { wl!(o, "{l}"); }
+            return;
+        }
         match BUILTINS.iter().find(|(n, _)| *n == up) {
             Some((n, d)) => { wl!(o, "{d}"); wl!(o); wl!(o, "{n} [options]"); }
             None => { wl!(o, "This command is not supported by the help utility.  Try \"{} --help\".", up.to_lowercase()); }
@@ -807,7 +906,8 @@ impl Shell {
         let mut stack = vec![dir.clone()];
         while let Some(d) = stack.pop() {
             let Ok(rd) = std::fs::read_dir(&d) else { continue };
-            let mut entries: Vec<(String, std::fs::Metadata)> = rd.flatten().filter_map(|e| Some((e.file_name().to_string_lossy().into_owned(), e.metadata().ok()?))).collect();
+            // (metadata follows links so a linked folder lists as a folder; the link itself is marked)
+            let mut entries: Vec<(String, std::fs::Metadata)> = rd.flatten().filter_map(|e| Some((e.file_name().to_string_lossy().into_owned(), std::fs::metadata(e.path()).or_else(|_| e.metadata()).ok()?))).collect();
             entries.retain(|(n, _)| wildcard_match(&pat, n) && (all || !n.starts_with('.')));
             match order.as_deref() {
                 Some(x) if x.contains('s') => entries.sort_by_key(|(_, m)| m.len()),
@@ -836,9 +936,14 @@ impl Shell {
                         w!(o, "{:<16}", s);
                         col += 1;
                         if col % 5 == 0 { wl!(o); }
+                    } else if let Ok(target) = std::fs::read_link(d.join(n)) {
+                        let tw = if target.is_absolute() { to_win(&target) } else { target.to_string_lossy().replace('/', "\\") };
+                        wl!(o, "{}    {:<15}{n} [{tw}]", win_date(t), if m.is_dir() { "<SYMLINKD>" } else { "<SYMLINK>" });
                     } else if m.is_dir() { wl!(o, "{}    <DIR>          {n}", win_date(t)); }
                     else { wl!(o, "{} {:>17} {n}", win_date(t), thousands(m.len())); }
-                    if m.is_dir() { nd += 1; } else { nf += 1; nb += m.len(); }
+                    // a <SYMLINK> to a file counts as a file of 0 bytes, like on Windows
+                    let link = std::fs::symlink_metadata(d.join(n)).map(|l| l.file_type().is_symlink()).unwrap_or(false);
+                    if m.is_dir() { nd += 1; } else { nf += 1; if !link { nb += m.len(); } }
                 }
                 if wide && col % 5 != 0 { wl!(o); }
                 wl!(o, "{:>16} File(s) {:>14} bytes", nf, thousands(nb));
@@ -948,40 +1053,137 @@ impl Shell {
     }
 
     fn for_cmd(&mut self, rest: &str, o: Out) {
-        // FOR [/D|/L|/F ["opts"]] %%x IN (set) DO command
+        // FOR [/D|/L|/R|/F ["opts"]] %%x IN (set) DO command
         let mut s = rest.trim().to_string();
         let mut mode = ' ';
         let mut fopts = String::new();
-        if s.len() > 2 && s.starts_with('/') { mode = s.as_bytes()[1].to_ascii_lowercase() as char; s = s[2..].trim_start().to_string(); if mode == 'f' && s.starts_with('"') { let e = s[1..].find('"').map(|i| i + 2).unwrap_or(1); fopts = s[1..e - 1].to_string(); s = s[e..].trim_start().to_string(); } }
+        if s.len() > 2 && s.starts_with('/') {
+            mode = s.as_bytes()[1].to_ascii_lowercase() as char;
+            s = s[2..].trim_start().to_string();
+            if mode == 'f' && s.starts_with('"') { let e = s[1..].find('"').map(|i| i + 2).unwrap_or(1); fopts = s[1..e - 1].to_string(); s = s[e..].trim_start().to_string(); }
+        }
+        // FOR /R [root]
+        let mut root = self.cwd.clone();
+        if mode == 'r' && !s.starts_with('%') {
+            let e = if s.starts_with('"') { s[1..].find('"').map(|i| i + 2).unwrap_or(s.len()) } else { s.find(' ').unwrap_or(s.len()) };
+            root = to_linux(&self.cwd, &s[..e]);
+            s = s[e..].trim_start().to_string();
+        }
         let var_end = s.find(' ').unwrap_or(s.len());
         let var = s[..var_end].trim_start_matches('%').to_string();
         let lower = s.to_lowercase();
         let (Some(in_i), Some(do_i)) = (lower.find(" in "), lower.find(" do ")) else { wl!(o, "The syntax of the command is incorrect."); self.errorlevel = 1; return; };
-        let set = s[in_i + 4..do_i].trim().trim_start_matches('(').trim_end_matches(')').to_string();
+        let Some(v0) = var.chars().next().filter(|_| var.chars().count() == 1) else { wl!(o, "{var} was unexpected at this time."); self.errorlevel = 255; return; };
+        let set = s[in_i + 4..do_i].trim().trim_start_matches('(').trim_end_matches(')').trim().to_string();
         let body = s[do_i + 4..].to_string();
-        let mut items: Vec<String> = vec![];
+        // each iteration binds one or more variables (FOR /F tokens=1,2 gives %%a and %%b)
+        let mut items: Vec<Vec<(char, String)>> = vec![];
+        let one = |v: String| vec![(v0, v)];
         match mode {
-            'l' => { let n: Vec<i64> = set.split([',', ' ']).filter_map(|x| x.trim().parse().ok()).collect(); if n.len() == 3 && n[1] != 0 { let mut i = n[0]; while (n[1] > 0 && i <= n[2]) || (n[1] < 0 && i >= n[2]) { items.push(i.to_string()); i += n[1]; } } }
+            'l' => { let n: Vec<i64> = set.split([',', ' ']).filter_map(|x| x.trim().parse().ok()).collect(); if n.len() == 3 && n[1] != 0 { let mut i = n[0]; while (n[1] > 0 && i <= n[2]) || (n[1] < 0 && i >= n[2]) { items.push(one(i.to_string())); i += n[1]; } } }
             'f' => {
-                let delims = fopts.split(' ').find_map(|x| x.strip_prefix("delims=")).map(|d| d.to_string()).unwrap_or_else(|| " \t".into());
-                let token: usize = fopts.split(' ').find_map(|x| x.strip_prefix("tokens=")).and_then(|t| t.split(',').next()?.parse().ok()).unwrap_or(1);
-                let text = if set.starts_with('\'') { String::from_utf8_lossy(&self.capture(set.trim_matches('\''))).into_owned() } else if set.starts_with('"') { set.trim_matches('"').to_string() } else { std::fs::read_to_string(to_linux(&self.cwd, &set)).unwrap_or_default() };
-                for l in text.lines() {
-                    if l.trim().is_empty() { continue; }
-                    let parts: Vec<&str> = if delims.is_empty() { vec![l] } else { l.split(|c| delims.contains(c)).filter(|x| !x.is_empty()).collect() };
-                    if let Some(t) = parts.get(token - 1) { items.push(t.to_string()); }
+                let f = ForF::parse(&fopts);
+                let (cmd_q, str_q) = if f.usebackq { ('`', '\'') } else { ('\'', '"') };
+                let text = if set.starts_with(cmd_q) { String::from_utf8_lossy(&self.capture(set.trim_matches(cmd_q))).into_owned() }
+                    else if set.starts_with(str_q) { set.trim_matches(str_q).to_string() }
+                    else { set.split_whitespace().map(|x| std::fs::read_to_string(to_linux(&self.cwd, x)).unwrap_or_default()).collect::<Vec<_>>().join("\n") };
+                for l in text.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.is_empty()).skip(f.skip) {
+                    if f.eol.is_some_and(|e| l.starts_with(e)) { continue; }
+                    let vals = f.split(l);
+                    if vals.iter().all(|v| v.is_empty()) { continue; }
+                    let mut it = vec![];
+                    let mut c = v0;
+                    for v in vals { it.push((c, v)); c = char::from_u32(c as u32 + 1).unwrap_or(c); }
+                    items.push(it);
                 }
             }
-            _ => for w in set.split_whitespace() {
+            'r' => {
+                // FOR /R [path] %%x IN (set): the set in every folder of the tree
+                let set = set.clone();
+                let mut dirs = vec![root.clone()];
+                let mut i = 0;
+                while i < dirs.len() {
+                    let mut subs: Vec<PathBuf> = std::fs::read_dir(&dirs[i]).map(|r| r.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).map(|e| e.path()).collect()).unwrap_or_default();
+                    subs.sort();
+                    dirs.extend(subs);
+                    i += 1;
+                }
+                for d in dirs {
+                    for w in set.split_whitespace() {
+                        if w.contains('*') || w.contains('?') { for p in glob(&d, w) { if p.is_file() { items.push(one(to_win(&p))); } } }
+                        else { items.push(one(to_win(&d.join(w)))); }
+                    }
+                }
+            }
+            _ => for w in split_set(&set) {
                 if w.contains('*') || w.contains('?') {
-                    for p in glob(&self.cwd, w) { if (mode == 'd') == p.is_dir() { items.push(p.file_name().unwrap().to_string_lossy().into_owned()); } }
-                } else { items.push(w.to_string()); }
+                    // the names keep the folder part written in the set, like Windows
+                    let prefix = w.trim_matches('"').rfind(['\\', '/']).map(|i| w.trim_matches('"')[..=i].to_string()).unwrap_or_default();
+                    for p in glob(&self.cwd, &w) { if (mode == 'd') == p.is_dir() { items.push(one(format!("{prefix}{}", p.file_name().unwrap().to_string_lossy()))); } }
+                } else { items.push(one(w)); }
             },
         }
+        let pc = self.batch.as_ref().map(|b| b.pc);
         for it in items {
-            let cmd = body.replace(&format!("%%{var}"), &it).replace(&format!("%{var}"), &it);
+            let cmd = self.subst_for_vars(&body, &it);
             self.run_line(&cmd);
+            // EXIT, EXIT /B or a GOTO in the body ends the loop
+            if self.exit.is_some() || self.batch.as_ref().is_some_and(|b| b.exit_b || Some(b.pc) != pc) { break; }
         }
+    }
+
+    /// Replace %%x / %x and their %%~mods forms (f d p n x s a t z) in a FOR body.
+    fn subst_for_vars(&self, body: &str, vals: &[(char, String)]) -> String {
+        let cs: Vec<char> = body.chars().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < cs.len() {
+            if cs[i] == '%' {
+                let mut j = i + 1;
+                if cs.get(j) == Some(&'%') { j += 1; }
+                if cs.get(j) == Some(&'~') {
+                    // %%~nxf: the longest run of modifier letters, the last letter that is a FOR variable ends it
+                    const MODS: &str = "fdpnxsatz";
+                    let is_var = |c: char| vals.iter().any(|(x, _)| *x == c);
+                    let mut k = j + 1;
+                    while k < cs.len() && MODS.contains(cs[k]) { k += 1; }
+                    let end = if k < cs.len() && is_var(cs[k]) { Some(k) } else { (j + 1..k).rev().find(|m| is_var(cs[*m])) };
+                    if let Some(k) = end {
+                        let v = &vals.iter().find(|(x, _)| *x == cs[k]).unwrap().1;
+                        let mods: String = cs[j + 1..k].iter().collect();
+                        out.push_str(&self.path_mods(v, &mods));
+                        i = k + 1;
+                        continue;
+                    }
+                } else if let Some((_, v)) = cs.get(j).and_then(|c| vals.iter().find(|(x, _)| x == c)) {
+                    out.push_str(v);
+                    i = j + 1;
+                    continue;
+                }
+            }
+            out.push(cs[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// %~ modifiers of a value: none = unquoted, f full path, d drive, p folder, n name, x extension, z size, t time.
+    fn path_mods(&self, v: &str, mods: &str) -> String {
+        let raw = unquote(v);
+        if mods.is_empty() { return raw; }
+        let p = to_linux(&self.cwd, &raw);
+        let w = to_win(&p);
+        let md = std::fs::metadata(&p).ok();
+        let mut r = String::new();
+        if mods.contains('t') { r.push_str(&md.as_ref().and_then(|m| m.modified().ok()).map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%m/%d/%Y %I:%M %p ").to_string()).unwrap_or_default()); }
+        if mods.contains('z') { r.push_str(&md.as_ref().map(|m| format!("{} ", m.len())).unwrap_or_default()); }
+        let only_f = !mods.contains(['d', 'p', 'n', 'x']);
+        if mods.contains('f') && only_f { r.push_str(&w); return r.trim_end().to_string(); }
+        if mods.contains('d') { r.push_str("C:"); }
+        if mods.contains('p') { r.push_str(&to_win(p.parent().unwrap_or(Path::new("/")))[2..]); if !r.ends_with('\\') { r.push('\\'); } }
+        if mods.contains('n') { r.push_str(&p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()); }
+        if mods.contains('x') { r.push_str(&p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default()); }
+        r.trim_end().to_string()
     }
 
     /// Run a command line and capture its output (for FOR /F 'cmd').
@@ -1085,6 +1287,9 @@ impl Shell {
         c.args(args.iter().map(|a| unquote(a))).current_dir(&self.cwd);
         for (k, v) in &self.vars { if k != "PATH" && k != "PROMPT" { c.env(k, v); } }
         if let Some(t) = &self.tty { t.restore(); }
+        // Windows shows "<title> - <command line>" while a program runs
+        let titled = interactive && self.batch.is_none();
+        if titled { print!("\x1b]2;{} - {}\x07", self.title, s.raw); let _ = std::io::stdout().flush(); }
         let piped_out = !interactive || s.out.is_some();
         c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::inherit() });
         c.stdout(if piped_out { Stdio::piped() } else { Stdio::inherit() });
@@ -1111,6 +1316,7 @@ impl Shell {
             Err(e) => { wl!(o, "{}", e); self.errorlevel = 1; }
         }
         unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL); }
+        if titled { print!("\x1b]2;{}\x07", self.title); let _ = std::io::stdout().flush(); }
         if let Some(t) = &self.tty { let _ = t; self.tty = line::Tty::raw(); }
     }
 
@@ -1144,7 +1350,8 @@ impl Shell {
     pub fn repl(&mut self) -> i32 {
         self.tty = line::Tty::raw();
         loop {
-            let p = self.prompt_text();
+            // ECHO OFF hides the prompt in an interactive cmd too
+            let p = if self.echo { self.prompt_text() } else { String::new() };
             print!("{p}");
             let _ = std::io::stdout().flush();
             let plen = p.rsplit('\n').next().unwrap_or(&p).chars().count();
@@ -1155,11 +1362,14 @@ impl Shell {
             self.editor = ed;
             let Some(line) = line else { break };
             if line == "\u{3}" { continue; }
+            // an empty line just shows the prompt again
+            if line.trim().is_empty() { continue; }
             if let Some(t) = &self.tty { t.restore(); }
+            self.no_blank = false;
             self.run_line(&line);
             if self.exit.is_some() { break; }
-            // cmd prints an empty line after every command's output
-            print!("\r\n");
+            // cmd prints an empty line after every command's output (not after CLS)
+            if !self.no_blank { print!("\r\n"); }
             let _ = std::io::stdout().flush();
             self.tty = line::Tty::raw();
         }
@@ -1182,6 +1392,113 @@ impl Write for NlFix<'_> {
 }
 
 fn strip_redirs(s: &str) -> String { parse_simple(&format!("echo {s}")).raw.trim_start_matches("echo ").to_string().split('>').next().unwrap_or("").trim_end().to_string() }
+
+/// REN's new name for `name` from a pattern with wildcards, the way cmd maps it: `*` takes the source
+/// up to the (last) occurrence of the pattern's next character, `?` one character, others replace.
+fn rename_pattern(name: &str, pat: &str) -> String {
+    if !pat.contains(['*', '?']) { return pat.to_string(); }
+    let n: Vec<char> = name.chars().collect();
+    let p: Vec<char> = pat.chars().collect();
+    let (mut i, mut out) = (0usize, String::new());
+    for (k, &pc) in p.iter().enumerate() {
+        match pc {
+            '*' => {
+                let end = match p.get(k + 1) { Some(c) => n[i..].iter().rposition(|x| x == c).map(|j| i + j).unwrap_or(n.len()), None => n.len() };
+                out.extend(&n[i..end]);
+                i = end;
+            }
+            '?' => if i < n.len() && n[i] != '.' { out.push(n[i]); i += 1; },
+            '.' => { out.push('.'); i = n[i..].iter().position(|x| *x == '.').map(|j| i + j + 1).unwrap_or(n.len()); }
+            c => { out.push(c); if i < n.len() && n[i] != '.' { i += 1; } }
+        }
+    }
+    out.trim_end_matches('.').to_string()
+}
+
+/// The words of a FOR set: blanks, commas and semicolons separate them, quotes keep them together.
+fn split_set(set: &str) -> Vec<String> {
+    let mut v = vec![];
+    let mut cur = String::new();
+    let mut q = false;
+    for c in set.chars() {
+        if c == '"' { q = !q; }
+        if !q && (c == ' ' || c == ',' || c == ';' || c == '\t') { if !cur.is_empty() { v.push(std::mem::take(&mut cur)); } continue; }
+        cur.push(c);
+    }
+    if !cur.is_empty() { v.push(cur); }
+    v
+}
+
+/// FOR /F options: "eol=c skip=n delims=xxx tokens=x,y,m-n[*] usebackq".
+#[derive(Debug, PartialEq)]
+struct ForF { eol: Option<char>, skip: usize, delims: String, tokens: Vec<usize>, rest: bool, usebackq: bool }
+
+impl ForF {
+    fn parse(opts: &str) -> ForF {
+        let mut f = ForF { eol: Some(';'), skip: 0, delims: " \t".into(), tokens: vec![1], rest: false, usebackq: false };
+        let mut s = opts;
+        while !s.is_empty() {
+            s = s.trim_start_matches(' ');
+            let l = s.to_lowercase();
+            let word_end = |s: &str| s.find(' ').unwrap_or(s.len());
+            if let Some(r) = l.strip_prefix("delims=") {
+                // delims= runs to the next option or the end, so "delims= " means a blank
+                let off = s.len() - r.len();
+                let end = [" tokens=", " skip=", " eol=", " usebackq"].iter().filter_map(|k| r.find(k)).min().unwrap_or(r.len());
+                f.delims = s[off..off + end].to_string();
+                s = &s[off + end..];
+            } else if let Some(r) = l.strip_prefix("eol=") {
+                let off = s.len() - r.len();
+                f.eol = s[off..].chars().next();
+                s = s.get(off + f.eol.map(|c| c.len_utf8()).unwrap_or(0)..).unwrap_or("");
+            } else if let Some(r) = l.strip_prefix("skip=") {
+                let e = word_end(r);
+                f.skip = r[..e].parse().unwrap_or(0);
+                s = &s[5 + e..];
+            } else if let Some(r) = l.strip_prefix("tokens=") {
+                let e = word_end(r);
+                let spec = &r[..e];
+                f.rest = spec.ends_with('*');
+                let mut t = vec![];
+                for part in spec.trim_end_matches('*').split(',').filter(|x| !x.is_empty()) {
+                    match part.split_once('-') {
+                        Some((a, b)) => if let (Ok(a), Ok(b)) = (a.parse::<usize>(), b.parse::<usize>()) { t.extend(a..=b) },
+                        None => if let Ok(n) = part.parse() { t.push(n) },
+                    }
+                }
+                t.retain(|n| *n > 0);
+                t.sort();
+                t.dedup();
+                f.tokens = t;
+                s = &s[7 + e..];
+            } else if l.starts_with("usebackq") {
+                f.usebackq = true;
+                s = &s[8..];
+            } else {
+                s = &s[word_end(s)..];
+            }
+        }
+        f
+    }
+
+    /// The values for the loop variables from one line: each requested token, then (with *) the rest.
+    fn split(&self, line: &str) -> Vec<String> {
+        if self.delims.is_empty() { return vec![line.to_string()]; }
+        // (start, end) of every token
+        let mut spans = vec![];
+        let mut start = None;
+        for (i, c) in line.char_indices() {
+            if self.delims.contains(c) { if let Some(s) = start.take() { spans.push((s, i)); } } else if start.is_none() { start = Some(i); }
+        }
+        if let Some(s) = start { spans.push((s, line.len())); }
+        let mut v: Vec<String> = self.tokens.iter().map(|n| spans.get(n - 1).map(|(a, b)| line[*a..*b].to_string()).unwrap_or_default()).collect();
+        if self.rest {
+            let after = self.tokens.last().copied().unwrap_or(0);
+            v.push(spans.get(after).map(|(a, _)| line[*a..].to_string()).unwrap_or_default());
+        }
+        v
+    }
+}
 
 fn replace_ci(v: &str, from: &str, to: &str) -> String {
     if from.is_empty() { return v.to_string(); }
@@ -1258,13 +1575,28 @@ fn map_windows_program(n: &str) -> Option<String> {
     }.to_string())
 }
 
+/// VER's line, Win7's "Microsoft Windows [Version 6.1.7601]" for Aerode (override: ~/.config/aerode/cmd-version.txt).
 pub fn version() -> String {
-    std::fs::read_to_string(crate::config::conf_dir().join("cmd-version.txt")).ok().and_then(|s| s.lines().next().map(String::from)).unwrap_or_else(|| "Microsoft Windows [Version 6.1.7601]".into())
+    std::fs::read_to_string(crate::config::conf_dir().join("cmd-version.txt")).ok().and_then(|s| s.lines().next().map(String::from)).unwrap_or_else(|| "Aerode [Version 6.1.7601]".into())
 }
 
-/// Text shown when cmd starts (customise in ~/.config/aerode/cmd-banner.txt).
+fn kernel_release() -> String {
+    let mut u: libc::utsname = unsafe { std::mem::zeroed() };
+    if unsafe { libc::uname(&mut u) } != 0 { return String::new(); }
+    unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }.to_string_lossy().into_owned()
+}
+
+/// Text shown when cmd starts: the version line and, where Windows has its copyright line, what this
+/// is (customise in ~/.config/aerode/cmd-banner.txt).
 pub fn banner() -> String {
-    std::fs::read_to_string(crate::config::conf_dir().join("cmd-banner.txt")).unwrap_or_else(|_| format!("{}\nAerode Command Processor. Type HELP for a list of commands.\n", version()))
+    std::fs::read_to_string(crate::config::conf_dir().join("cmd-banner.txt")).unwrap_or_else(|_| {
+        let k = kernel_release();
+        let on = if k.is_empty() { "Linux".to_string() } else { format!("Linux {k}") };
+        // one line like Win7's copyright line (an 80-column console must not wrap it)
+        let mut l2 = format!("Aerode Command Processor on {on}.");
+        if l2.len() + 21 < 80 { l2.push_str("  Type HELP for help."); }
+        format!("{}\n{l2}\n", version())
+    })
 }
 
 fn serial(p: &Path) -> String {
@@ -1399,5 +1731,24 @@ mod tests {
     #[test] fn ops() { let v = split_ops("echo a & echo b && echo c | find \"c\""); assert_eq!(v.len(), 3); assert_eq!(v[2].1.len(), 2); }
     #[test] fn redirs() { let s = parse_simple("dir /b > out.txt 2>&1"); assert_eq!(s.words, vec!["dir", "/b"]); assert_eq!(s.out, Some(("out.txt".into(), false))); assert!(s.err_to_out); }
     #[test] fn arith() { assert_eq!(eval_arith("2+3*4"), Some(14)); assert_eq!(eval_arith("(1+2)<<2"), Some(12)); }
+    #[test] fn ren_patterns() {
+        assert_eq!(rename_pattern("a.txt", "*.bak"), "a.bak");
+        assert_eq!(rename_pattern("a.b.txt", "*.bak"), "a.b.bak");
+        assert_eq!(rename_pattern("notes.txt", "*.*"), "notes.txt");
+        assert_eq!(rename_pattern("abc.txt", "x*"), "xbc.txt");
+        assert_eq!(rename_pattern("report.doc", "new.doc"), "new.doc");
+        assert_eq!(rename_pattern("ab.txt", "??x.*"), "abx.txt");
+    }
+    #[test] fn for_f() {
+        let f = ForF::parse("tokens=1,2 delims= ");
+        assert_eq!(f.delims, " ");
+        assert_eq!(f.split("one two three"), vec!["one", "two"]);
+        let f = ForF::parse("skip=1 tokens=2-3* delims=,");
+        assert_eq!((f.skip, f.tokens.clone(), f.rest), (1, vec![2, 3], true));
+        assert_eq!(f.split("a,b,,c,d,e"), vec!["b", "c", "d,e"]);
+        assert_eq!(ForF::parse("tokens=* delims=").split("  x y"), vec!["  x y"]);
+        assert_eq!(ForF::parse("tokens=*").split("  x y"), vec!["x y"]);
+        assert_eq!(split_set("a,b \"c d\";e"), vec!["a", "b", "\"c d\"", "e"]);
+    }
     #[test] fn else_split() { let (a, b) = split_else("(echo yes) else (echo no)"); assert_eq!(a, "(echo yes)"); assert_eq!(b.as_deref(), Some("(echo no)")); }
 }
