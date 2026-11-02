@@ -12,6 +12,9 @@ KWALLET=; [ -f "$HOME/.local/share/kwalletd/kdewallet.kwl" ] && KWALLET=1 && exp
 [ -d "$HOME/.local/share/icons/Aerode-cursors" ] && export XCURSOR_THEME=Aerode-cursors
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 mkdir -p "$CONF"
+# names this logon session: a restarted shell (aerode restart, a crash) inherits it and does not
+# replay the logon sound or the Startup programs (src/sounds.rs first_shell_of_session)
+export AERODE_SESSION="$$-$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)-$(date +%s)"
 SHARE=/usr/share/aerode
 # Ease of Access > Make the computer easier to see > High Contrast (GTK's built-in high contrast themes)
 [ -s "$CONF/high-contrast" ] && export GTK_THEME="$(cat "$CONF/high-contrast")"
@@ -50,6 +53,9 @@ ${XCURSOR_SIZE:+Gtk/CursorThemeSize $XCURSOR_SIZE}
 Gtk/FontName "Segoe UI 9"
 Gtk/MenuImages 1
 Gtk/ButtonImages 1
+Net/SoundThemeName "Aerode"
+Net/EnableEventSounds 1
+Net/EnableInputFeedbackSounds 0
 $XFT
 EOT
 command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
@@ -89,7 +95,15 @@ PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/p
 # animations as window rules; older picom (which would ignore them) keeps the plain fades
 RUN_CONF=$(aerode picom-config "$PICOM_CONF" 2>/dev/null) && [ -f "$RUN_CONF" ] && PICOM_CONF="$RUN_CONF"
 command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$PICOM_CONF" -b
-command -v udiskie >/dev/null && udiskie --no-tray &
+# automounting for AutoPlay. Win7 plays Device Connect and opens AutoPlay, with no balloon for the
+# mount: unless the user configured udiskie, keep only its error balloons ("Job failed")
+UDISKIE=; UDCONF="${XDG_CONFIG_HOME:-$HOME/.config}/udiskie"
+if [ ! -e "$UDCONF/config.yml" ] && [ ! -e "$UDCONF/config.json" ]; then
+  printf '%s\n' '{"notifications": {"device_mounted": false, "device_unmounted": false, "device_locked": false,' \
+    '  "device_unlocked": false, "device_added": false, "device_removed": false}}' > "$CONF/udiskie.json"
+  UDISKIE="--config=$CONF/udiskie.json"
+fi
+command -v udiskie >/dev/null && udiskie --no-tray $UDISKIE &
 [ -z "$KWALLET" ] && command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
 
 # the shell (desktop, taskbar, Start): started again if it crashes (a panic in a GTK callback

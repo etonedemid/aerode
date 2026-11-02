@@ -1186,10 +1186,8 @@ pub fn delete(files: Vec<PathBuf>, permanent: bool, parent: Option<&gtk::Window>
     if confirm && !confirm_delete(&files, permanent, parent) { return; }
     let jk = if permanent { JobKind::Delete } else { JobKind::Recycle };
     run_job(jk, parent, move |w| w.delete(files, permanent), move |r| {
-        if !r.trashed.is_empty() {
-            sounds::play(sounds::Event::EmptyRecycleBin);
-            push_undo(UndoOp::Trash(r.trashed));
-        }
+        // no sound: Win7 plays Empty Recycle Bin only when the bin is emptied (SHEmptyRecycleBin)
+        if !r.trashed.is_empty() { push_undo(UndoOp::Trash(r.trashed)); }
         on_done();
     });
 }

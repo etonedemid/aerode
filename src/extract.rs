@@ -672,6 +672,38 @@ fn copy_tree(src: &Path, dst: &Path) {
     }
 }
 
+/// Windows\Media (the "Windows Default" scheme) with its scheme folders (Afternoon, Calligraphy…:
+/// Control Panel > Sound > Sound Scheme), and the startup tune, which is a resource of imageres.dll.
+fn copy_sounds(root: &Path, data: &Path) -> Result<()> {
+    let wav = |p: &Path| p.extension().map(|x| x.eq_ignore_ascii_case("wav")).unwrap_or(false);
+    let dst = data.join("sounds");
+    if let Some(m) = find_ci(root, "Windows/Media") {
+        std::fs::create_dir_all(&dst)?;
+        let mut schemes = 0;
+        for e in std::fs::read_dir(m)?.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                let sub = dst.join(e.file_name());
+                let mut any = false;
+                for f in std::fs::read_dir(&p)?.flatten().filter(|f| wav(&f.path())) {
+                    std::fs::create_dir_all(&sub)?;
+                    std::fs::copy(f.path(), sub.join(f.file_name()))?;
+                    any = true;
+                }
+                if any { schemes += 1; }
+            } else if wav(&p) {
+                std::fs::copy(&p, dst.join(e.file_name()))?;
+            }
+        }
+        println!("· sounds copied ({schemes} sound schemes)");
+    }
+    if let Some(dll) = find_ci(root, "Windows/System32/imageres.dll") {
+        std::fs::create_dir_all(&dst)?;
+        if crate::sounds::extract_startup(&dll, &dst.join(crate::sounds::STARTUP_FILE)) { println!("· startup sound saved"); }
+    }
+    Ok(())
+}
+
 fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
     if let Some(fd) = find_ci(root, "Windows/Fonts") {
         std::fs::create_dir_all(fonts)?;
@@ -689,14 +721,7 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
     if let Some(bg) = find_ci(root, "Windows/System32/oobe/background.bmp").or_else(|| find_ci(root, "Windows/Web/Screen/img100.jpg")) {
         if let Ok(img) = image::open(&bg) { let _ = img.save(data.join("lockscreen.png")); }
     }
-    if let Some(m) = find_ci(root, "Windows/Media") {
-        let dst = data.join("sounds");
-        std::fs::create_dir_all(&dst)?;
-        for e in std::fs::read_dir(m)?.flatten() {
-            if e.path().extension().map(|x| x.eq_ignore_ascii_case("wav")).unwrap_or(false) { std::fs::copy(e.path(), dst.join(e.file_name()))?; }
-        }
-        println!("· sounds copied");
-    }
+    copy_sounds(root, data)?;
     if let Some(t) = find_ci(root, "Windows/Resources/Themes/aero") {
         copy_tree(&t, &data.join("theme"));
         println!("· aero.msstyles copied");
@@ -791,6 +816,10 @@ pub fn run(args: &[String]) -> Result<()> {
             }
         }
         return Ok(());
+    }
+    // developer aid: aerode-extract <extracted dir> --sounds-only <data dir>
+    if let Some(i) = args.iter().position(|a| a == "--sounds-only") {
+        return copy_sounds(&src, &args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("aerode")));
     }
     // developer aid: aerode-extract <extracted dir> --icons-only <out dir>
     if let Some(i) = args.iter().position(|a| a == "--icons-only") {

@@ -309,7 +309,6 @@ fn show(req: Request, cancel_rx: async_channel::Receiver<String>) {
                     pw.set_sensitive(true);
                     yes2.set_sensitive(true);
                     pw.grab_focus();
-                    sounds::play(sounds::Event::CriticalStop);
                     glib::ControlFlow::Break
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,

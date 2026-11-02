@@ -315,20 +315,7 @@ pub fn shellexpand(s: &str) -> String {
 }
 
 pub fn error(title: &str, text: &str) {
-    let d = gtk::MessageDialog::new(
-        None::<&gtk::Window>,
-        gtk::DialogFlags::empty(),
-        gtk::MessageType::Error,
-        gtk::ButtonsType::Ok,
-        title,
-    );
-    if !text.is_empty() {
-        d.set_secondary_text(Some(text));
-    }
-    d.set_keep_above(true);
-    d.connect_response(|d, _| d.close());
-    d.show_all();
-    sound(crate::sounds::Event::CriticalStop);
+    message_box(None, gtk::MessageType::Error, title, text);
 }
 
 /// The name Explorer and the desktop show for a file: Folder Options > "Hide extensions for known
@@ -350,6 +337,31 @@ pub fn special_dir(d: glib::UserDirectory, fallback: &str) -> std::path::PathBuf
 /// Play an event from the Windows 7 sound scheme.
 pub fn sound(ev: crate::sounds::Event) {
     crate::sounds::play(ev);
+}
+
+/// The sound MessageBox plays for its icon (MessageBeep): Error → Critical Stop, Warning →
+/// Exclamation, Information → Asterisk, Question → Question (silent in Windows Default), no icon →
+/// Default Beep. Only for real message boxes: task dialogs (save prompts, "keep these display
+/// settings?") and progress windows make no sound.
+pub fn message_sound(kind: gtk::MessageType) {
+    use crate::sounds::Event;
+    sound(match kind {
+        gtk::MessageType::Error => Event::CriticalStop,
+        gtk::MessageType::Warning => Event::Exclamation,
+        gtk::MessageType::Info => Event::Asterisk,
+        gtk::MessageType::Question => Event::Question,
+        _ => Event::DefaultBeep,
+    });
+}
+
+/// A Win7 message box: icon, text, OK, and the icon's sound. Returns at once (non-modal).
+pub fn message_box(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: &str, text: &str) {
+    let d = gtk::MessageDialog::new(parent, gtk::DialogFlags::empty(), kind, gtk::ButtonsType::Ok, title);
+    if !text.is_empty() { d.set_secondary_text(Some(text)); }
+    if parent.is_none() { d.set_keep_above(true); }
+    d.connect_response(|d, _| d.close());
+    d.show_all();
+    message_sound(kind);
 }
 
 pub fn primary_geometry() -> gdk::Rectangle {

@@ -171,3 +171,21 @@ button.overflow-icon {
   transition-property: background-color, background-image, border-color, box-shadow;
   transition-duration: 250ms; transition-timing-function: linear;
 }
+
+/* ---------- volume: flyout (sndvol DIALOG 201), Volume Mixer (DIALOG 200), trackbar tooltip ---------- */
+/* flat toolbar buttons (device icon, mute): no frame until hot, like a Win7 TBSTYLE_FLAT button */
+button.vol-flat { background: none; background-image: none; border: 1px solid transparent; border-radius: 3px;
+  box-shadow: none; padding: 2px; margin: 0; min-width: 0; min-height: 0; }
+button.vol-flat:hover { background-image: linear-gradient(to bottom, #fdfdfd, #ececec); border-color: #b3b3b3; }
+button.vol-flat:active { background-image: linear-gradient(to bottom, #e6e6e6, #d6d6d6); border-color: #8f8f8f; }
+button.vol-flat:disabled { opacity: 0.5; }
+.vol-flyout { padding: 3px 0 0 0; }
+.flyout-foot.vol-foot { padding: 13px 8px 14px 8px; }
+.vol-foot button.link.vol-mixer label { color: #0066cc; }
+.vol-foot button.link.vol-mixer:hover label { color: #3399ff; text-decoration: underline; }
+/* the value beside a dragged trackbar's thumb (TBS_TOOLTIPS; Win7 tooltip colours) */
+.vol-tip { background-color: #f4f4f7; background-image: linear-gradient(to bottom, #ffffff, #e4e5f0);
+  border: 1px solid #767676; border-radius: 2px; padding: 1px 5px; }
+.vol-tip label { color: #575757; }
+.mixer frame > border { border: 1px solid #d5dfe5; border-radius: 3px; }
+.vol-options label.main-instruction { color: #003399; font-size: 12pt; }

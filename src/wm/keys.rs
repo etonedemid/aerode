@@ -58,9 +58,13 @@ fn bindings() -> Vec<(u16, u32, Action)> {
         (SUPER | SHIFT, 's' as u32, s("aerode-snip --clip")), (0, XK_PRINT, s("aerode-snip --full")),
         (CTRL | SHIFT, XK_ESCAPE, s("aerode-taskmgr")), (CTRL | ALT, XK_DELETE, s("aerode-taskmgr")),
         (CTRL, XK_ESCAPE, s("aerode start")),
-        (0, 0x1008ff13, s("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 2%+ || pactl set-sink-volume @DEFAULT_SINK@ +2%")),
-        (0, 0x1008ff11, s("wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%- || pactl set-sink-volume @DEFAULT_SINK@ -2%")),
-        (0, 0x1008ff12, s("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle || pactl set-sink-mute @DEFAULT_SINK@ toggle")),
+        // volume keys as Win7's SndVolSSO handles APPCOMMAND_VOLUME_UP/DOWN/MUTE and
+        // APPCOMMAND_MICROPHONE_VOLUME_MUTE: +-2 % from the loudest channel (balance kept, a level
+        // above 100 % never lowered by Up), unmuting first; serialised with the shell's own changes
+        (0, 0x1008ff13, s("aerode volume-step up")),
+        (0, 0x1008ff11, s("aerode volume-step down")),
+        (0, 0x1008ff12, s("aerode audio-mute")),
+        (0, 0x1008ffb2, s("aerode mic-mute")),
         (0, 0x1008ff14, s("playerctl play-pause")), (0, 0x1008ff17, s("playerctl next")), (0, 0x1008ff16, s("playerctl previous")),
         (0, 0x1008ff02, s("brightnessctl set 5%+")), (0, 0x1008ff03, s("brightnessctl set 5%-")),
         (0, 0x1008ff1d, s("aerode-calc")), (0, 0x1008ff5d, s("aerode-explorer")),

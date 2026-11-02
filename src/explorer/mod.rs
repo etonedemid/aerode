@@ -750,7 +750,11 @@ impl Explorer {
     }
 
     // ------------------------------------------------------------ navigation
-    pub fn go(self: &Rc<Self>, loc: Loc, record: bool) {
+    pub fn go(self: &Rc<Self>, loc: Loc, record: bool) { self.navigate(loc, record, record) }
+
+    /// `record`: a new history entry; `sound`: Start Navigation, which Win7's browser frame plays
+    /// for every navigation the user starts, Back and Forward included.
+    fn navigate(self: &Rc<Self>, loc: Loc, record: bool, sound: bool) {
         let loc = match loc {
             Loc::Path(p) => {
                 let p = if p.is_absolute() { p } else { std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p) };
@@ -773,8 +777,8 @@ impl Explorer {
         if record {
             let cur = self.loc.borrow().clone();
             if cur != loc { self.back.borrow_mut().push(cur); self.fwd.borrow_mut().clear(); }
-            sounds::play(sounds::Event::StartNavigation);
         }
+        if sound { sounds::play(sounds::Event::StartNavigation); }
         let prev = self.loc.replace(loc.clone());
         if prev != loc { self.thumb_cache.borrow_mut().clear(); }
         if !matches!(loc, Loc::Search(..)) && !self.search.text().is_empty() { self.set_search_text(""); }
@@ -801,14 +805,14 @@ impl Explorer {
         let Some(l) = self.back.borrow_mut().pop() else { return };
         let cur = self.loc.borrow().clone();
         self.fwd.borrow_mut().push(cur);
-        self.go(l, false);
+        self.navigate(l, false, true);
     }
 
     fn go_fwd(self: &Rc<Self>) {
         let Some(l) = self.fwd.borrow_mut().pop() else { return };
         let cur = self.loc.borrow().clone();
         self.back.borrow_mut().push(cur);
-        self.go(l, false);
+        self.navigate(l, false, true);
     }
 
     fn go_up(self: &Rc<Self>) {
