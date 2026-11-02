@@ -499,3 +499,21 @@ mod procs_tests {
         assert!(super::procs_on_display("no-such-program-xyz", None).is_empty());
     }
 }
+
+/// Post a desktop notification (org.freedesktop.Notifications) without blocking: aerode's own
+/// balloons (battery alarms…) go through the same daemon as everyone else's. `suppress_sound`
+/// when the caller already played the Win7 sound for it.
+pub fn notify(app: &str, icon: &str, summary: &str, body: &str, suppress_sound: bool) {
+    use gtk::glib::{ToVariant, Variant};
+    let mut hints: std::collections::HashMap<String, Variant> = std::collections::HashMap::new();
+    if suppress_sound { hints.insert("suppress-sound".into(), true.to_variant()); }
+    let args = Variant::tuple_from_iter([
+        app.to_variant(), 0u32.to_variant(), icon.to_variant(), summary.to_variant(), body.to_variant(),
+        Vec::<String>::new().to_variant(), hints.to_variant(), (-1i32).to_variant(),
+    ]);
+    gio::bus_get(gio::BusType::Session, gio::Cancellable::NONE, move |c| {
+        let Ok(c) = c else { return };
+        c.call(Some("org.freedesktop.Notifications"), "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Notify",
+            Some(&args), None, gio::DBusCallFlags::NONE, 5000, gio::Cancellable::NONE, |_| {});
+    });
+}

@@ -723,7 +723,12 @@ pub fn start_watchers() {
         if let Some(b) = crate::sys::battery() {
             let (w, ev) = battery_alarm(warned, b.status == "Discharging", b.percent as i64);
             warned = w;
-            if let Some(ev) = ev { play_with(ev, Policy::Yield); }
+            if let Some(ev) = ev {
+                play_with(ev, Policy::Yield);
+                // stobject.dll's balloon (strings 421 / 407), then the alarm's sound
+                crate::util::notify("Battery Meter", "battery-caution", "Plug in or find another power source",
+                    &format!("Your battery is low ({}%). If you need to continue using your computer, either plug in your computer, or shut it down and then change the battery.", b.percent), true);
+            }
         }
         let v = scheme_version();
         if v != theme_for {
