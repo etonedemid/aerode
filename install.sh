@@ -37,7 +37,18 @@ for f in data/applications/*.desktop; do [ -f "$f" ] && sudo install -Dm644 "$f"
 if [ -n "$1" ]; then
   echo ":: extracting Windows 7 artwork from $1 (stays in your home directory)"
   aerode-extract "$1"
+elif [ -d "$HOME/.local/share/aerode/sysfiles" ] || [ -f "$HOME/.local/share/aerode/source" ]; then
+  # updates: rebuild the icon theme with the current mappings from the files kept at the last extraction
+  echo ":: updating the Windows 7 icon theme"
+  aerode-extract --icons || echo "   (run ./install.sh /path/to/windows7.iso to refresh the icons)"
 else
-  echo ":: no ISO given – run 'aerode-extract /path/to/windows7.iso' later for the real Win7 look"
+  # first extraction: look for a Windows 7 ISO in the usual places
+  ISO=$(find "$HOME" -maxdepth 3 -type f \( -iname '*win*7*.iso' -o -iname '*7*win*.iso' \) -size +1G 2>/dev/null | head -n1)
+  if [ -n "$ISO" ]; then
+    echo ":: extracting Windows 7 artwork from $ISO (stays in your home directory)"
+    aerode-extract "$ISO"
+  else
+    echo ":: no ISO given – run './install.sh /path/to/windows7.iso' (or aerode-extract) for the real Win7 look"
+  fi
 fi
 echo ":: done. Log out and pick the 'Aerode' session in your login manager."
