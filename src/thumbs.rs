@@ -72,6 +72,17 @@ struct X {
     root: u32,
     check_atom: u32,
     peek_atom: u32,
+    /// XRender picture formats (rgb24, argb32): thumbnails are scaled on the server
+    formats: Option<(u32, u32)>,
+}
+
+/// The standard RGB24 and ARGB32 picture formats.
+fn render_formats(conn: &x11rb::rust_connection::RustConnection) -> Option<(u32, u32)> {
+    use x11rb::protocol::render::{ConnectionExt as _, PictType};
+    let r = conn.render_query_pict_formats().ok()?.reply().ok()?;
+    let find = |depth: u8, alpha: u16| r.formats.iter().find(|f| f.type_ == PictType::DIRECT && f.depth == depth
+        && f.direct.red_shift == 16 && f.direct.green_shift == 8 && f.direct.blue_shift == 0 && f.direct.alpha_mask == alpha).map(|f| f.id);
+    Some((find(24, 0)?, find(32, 0xff)?))
 }
 
 thread_local! {
@@ -96,7 +107,8 @@ fn state() -> Rc<State> {
         let root = conn.setup().roots[scr].root;
         let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok()?.reply().ok().map(|r| r.atom);
         let (check_atom, peek_atom) = (atom("_NET_SUPPORTING_WM_CHECK")?, atom("_AERODE_PEEK")?);
-        Some(X { conn, root, check_atom, peek_atom })
+        let formats = render_formats(&conn);
+        Some(X { conn, root, check_atom, peek_atom, formats })
     });
     let st = Rc::new(State {
         popup, area, wm: RefCell::new(None), wins: RefCell::new(vec![]), anchor: RefCell::new(None),
@@ -354,6 +366,12 @@ fn capture(st: &State, win: u32) {
     let (w, h) = (g.width as i32, g.height as i32);
     if w < 2 || h < 2 { return; }
     // with a compositor every top-level has an off-screen pixmap; without one, copy the screen
+    let k = (THUMB_W / w as f64).min(THUMB_H / h as f64).min(1.0);
+    let (tw, th) = ((w as f64 * k).round().max(1.0) as i32, (h as f64 * k).round().max(1.0) as i32);
+    if let Some(small) = capture_scaled(x, top, g.depth, w, h, tw, th) {
+        st.cache.borrow_mut().insert(win, small);
+        return;
+    }
     let pix = x.conn.generate_id().ok();
     let named = pix.map(|p| x.conn.composite_name_window_pixmap(top, p).ok().map(|c| c.check().is_ok()).unwrap_or(false)).unwrap_or(false);
     let drawable = if named { pix.unwrap() } else { top };
@@ -367,8 +385,6 @@ fn capture(st: &State, win: u32) {
     if img.data.len() < stride * h as usize { return; }
     let Ok(full) = cairo::ImageSurface::create_for_data(img.data, fmt, w, h, stride as i32) else { return };
     // scale into the 200 × 120 box once, here, instead of on every draw
-    let k = (THUMB_W / w as f64).min(THUMB_H / h as f64).min(1.0);
-    let (tw, th) = ((w as f64 * k).round().max(1.0) as i32, (h as f64 * k).round().max(1.0) as i32);
     let Ok(small) = cairo::ImageSurface::create(cairo::Format::ARgb32, tw, th) else { return };
     {
         let Ok(cr) = cairo::Context::new(&small) else { return };
@@ -378,6 +394,44 @@ fn capture(st: &State, win: u32) {
         cr.paint().ok();
     }
     st.cache.borrow_mut().insert(win, small);
+}
+
+/// The window scaled to tw × th by the X server (XRender, "good" filter), so only the thumbnail
+/// crosses the wire – a 4K window would otherwise be 33 MB per refresh.
+fn capture_scaled(x: &X, top: u32, depth: u8, w: i32, h: i32, tw: i32, th: i32) -> Option<cairo::ImageSurface> {
+    use x11rb::protocol::render::{ConnectionExt as _, CreatePictureAux, PictOp, Transform};
+    let (rgb24, argb32) = x.formats?;
+    let c = &x.conn;
+    let src_fmt = match depth { 32 => argb32, 24 => rgb24, _ => return None };
+    // the compositor's pixmap when there is one, else the window itself with its children
+    let pix = c.generate_id().ok()?;
+    let named = c.composite_name_window_pixmap(top, pix).ok().map(|ck| ck.check().is_ok()).unwrap_or(false);
+    let src_draw = if named { pix } else { top };
+    let (src, dst, dst_pix) = (c.generate_id().ok()?, c.generate_id().ok()?, c.generate_id().ok()?);
+    let fx = |v: f64| (v * 65536.0).round() as i32;
+    let (sx, sy) = (w as f64 / tw as f64, h as f64 / th as f64);
+    let ok = (|| -> Option<()> {
+        c.render_create_picture(src, src_draw, src_fmt, &CreatePictureAux::new().subwindowmode(xproto::SubwindowMode::INCLUDE_INFERIORS)).ok()?.check().ok()?;
+        c.render_set_picture_transform(src, Transform { matrix11: fx(sx), matrix12: 0, matrix13: 0, matrix21: 0, matrix22: fx(sy), matrix23: 0, matrix31: 0, matrix32: 0, matrix33: fx(1.0) }).ok()?;
+        c.render_set_picture_filter(src, b"good", &[]).ok()?;
+        c.create_pixmap(32, dst_pix, x.root, tw as u16, th as u16).ok()?.check().ok()?;
+        c.render_create_picture(dst, dst_pix, argb32, &CreatePictureAux::new()).ok()?;
+        c.render_composite(PictOp::SRC, src, x11rb::NONE, dst, 0, 0, 0, 0, 0, 0, tw as u16, th as u16).ok()?;
+        Some(())
+    })();
+    let img = ok.and_then(|_| c.get_image(xproto::ImageFormat::Z_PIXMAP, dst_pix, 0, 0, tw as u16, th as u16, !0).ok()?.reply().ok());
+    let _ = c.render_free_picture(src);
+    let _ = c.render_free_picture(dst);
+    let _ = c.free_pixmap(dst_pix);
+    if named { let _ = c.free_pixmap(pix); }
+    let _ = c.flush();
+    let img = img?;
+    let stride = (tw * 4) as usize;
+    if img.data.len() < stride * th as usize { return None; }
+    let mut data = img.data;
+    // a 24-bit source leaves the alpha byte undefined: make it opaque
+    if depth != 32 { for px in data.chunks_exact_mut(4) { px[3] = 255; } }
+    cairo::ImageSurface::create_for_data(data, cairo::Format::ARgb32, tw, th, stride as i32).ok()
 }
 
 // ---------------------------------------------------------------- drawing
