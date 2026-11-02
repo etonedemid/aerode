@@ -78,6 +78,9 @@ impl Taskbar {
         // start orb
         let orb_box = gtk::EventBox::new();
         orb_box.set_visible_window(false);
+        // the DrawingArea has its own window: keep the event box on top or it never sees clicks
+        orb_box.set_above_child(true);
+        orb_box.add_events(gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::BUTTON_RELEASE_MASK | gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
         let orb = gtk::DrawingArea::new();
         orb.set_size_request(54, h);
         orb_box.add(&orb);
