@@ -74,9 +74,25 @@ impl Desktop {
         overlay.add_overlay(&band_area);
         overlay.set_overlay_pass_through(&band_area, true);
         win.add(&overlay);
-        win.connect_draw(|_, cr| {
+        // the wallpaper is converted to a cairo surface once (per wallpaper), not on every repaint –
+        // set_source_pixbuf on a full-screen pixbuf for each frame made dragging the selection box stutter
+        let cache: RefCell<Option<(glib::WeakRef<gtk::gdk_pixbuf::Pixbuf>, gtk::cairo::Surface)>> = RefCell::new(None);
+        win.connect_draw(move |w, cr| {
             let wp = glass::wallpaper();
-            cr.set_source_pixbuf(&wp.sharp, 0.0, 0.0);
+            let mut c = cache.borrow_mut();
+            let stale = c.as_ref().map(|(p, _)| p.upgrade().as_ref() != Some(&wp.sharp)).unwrap_or(true);
+            if stale {
+                let surf = w.window().and_then(|gw| gw.create_similar_surface(gtk::cairo::Content::Color, wp.sharp.width(), wp.sharp.height()));
+                if let Some(s) = surf {
+                    if let Ok(c2) = gtk::cairo::Context::new(&s) { c2.set_source_pixbuf(&wp.sharp, 0.0, 0.0); c2.paint().ok(); }
+                    let weak = glib::WeakRef::new(); weak.set(Some(&wp.sharp));
+                    *c = Some((weak, s));
+                }
+            }
+            match c.as_ref() {
+                Some((_, s)) => { cr.set_source_surface(s, 0.0, 0.0).ok(); }
+                None => cr.set_source_pixbuf(&wp.sharp, 0.0, 0.0),
+            }
             cr.paint().ok();
             glib::Propagation::Proceed
         });
@@ -107,11 +123,14 @@ impl Desktop {
             let d2 = d.clone();
             ev.connect_motion_notify_event(move |_, e| {
                 let cur = *d2.band.borrow();
-                if let Some((x0, y0, _, _, ctrl)) = cur {
+                if let Some((x0, y0, ox, oy, ctrl)) = cur {
                     let (x, y) = e.position();
                     *d2.band.borrow_mut() = Some((x0, y0, x, y, ctrl));
                     d2.update_band_selection();
-                    d2.band_area.queue_draw();
+                    // repaint only what the rectangle covered before and covers now
+                    let (l, t) = (x0.min(ox).min(x).floor() as i32 - 2, y0.min(oy).min(y).floor() as i32 - 2);
+                    let (r, b) = (x0.max(ox).max(x).ceil() as i32 + 2, y0.max(oy).max(y).ceil() as i32 + 2);
+                    d2.band_area.queue_draw_area(l, t, r - l, b - t);
                 }
                 glib::Propagation::Stop
             });
@@ -290,8 +309,10 @@ impl Desktop {
             let hit = a.x() < rx1 && a.x() + a.width() > rx0 && a.y() < ry1 && a.y() + a.height() > ry0;
             if hit && !sel.contains(&b) { sel.push(b); }
         }
-        for w in self.selected.borrow().iter() { if !sel.contains(w) { w.style_context().remove_class("selected"); w.queue_draw(); } }
-        for w in &sel { w.style_context().add_class("selected"); w.queue_draw(); }
+        let old = self.selected.borrow().clone();
+        if old == sel { return; }
+        for w in old.iter() { if !sel.contains(w) { w.style_context().remove_class("selected"); } }
+        for w in &sel { if !old.contains(w) { w.style_context().add_class("selected"); } }
         *self.selected.borrow_mut() = sel;
     }
 
