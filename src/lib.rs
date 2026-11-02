@@ -1,5 +1,6 @@
 //! Aerode – a Windows 7 style desktop environment for Linux (X11).
 pub mod actioncenter;
+pub mod autoplay;
 pub mod cmdshell;
 pub mod config;
 pub mod console;
