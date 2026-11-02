@@ -404,7 +404,7 @@ impl Decor {
         let bx = if p.maximized { 0.0 } else { b };
         let mut tx = bx + 2.0;
         if let Some(icon) = p.icon {
-            let iy = if p.maximized { ((MAX_TOP as f64 - 16.0) / 2.0).round() } else { (b + (CAPTION as f64 - 16.0) / 2.0 - 1.0).round() };
+            let iy = if p.maximized { ((MAX_TOP as f64 - 16.0) / 2.0).round() } else { (b + (CAPTION as f64 - 16.0) / 2.0 - 3.0).round() };
             cr.save().ok();
             cr.translate(tx, iy);
             let s = 16.0 / icon.width().max(1) as f64;
@@ -427,7 +427,9 @@ impl Decor {
             layout.set_ellipsize(pangocairo::pango::EllipsizeMode::End);
             let (_, lr) = layout.pixel_extents();
             let lh = lr.height() as f64;
-            let ty = if p.maximized { ((MAX_TOP as f64 - lh) / 2.0).round() } else { (b + (CAPTION as f64 - lh) / 2.0).round() };
+            let ty = if p.maximized { ((MAX_TOP as f64 - lh) / 2.0).round() } else { (b + (CAPTION as f64 - lh) / 2.0 - 3.0).round() };
+            // (Win7 puts the caption's baseline level with the bottom of the caption buttons, a
+            // little above the caption band's middle)
             // TEXTGLOW: the text box (+1 px) grown by the part's CONTENTMARGINS, nine-sliced
             if self.parts.contains_key(&TEXTGLOW) && !p.title.is_empty() {
                 let (cl, cr_, ct, cb) = self.glow_margins;

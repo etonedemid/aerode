@@ -46,6 +46,11 @@ pub fn summary(msgs: &[Msg]) -> (String, Option<String>) {
 pub fn attach(tb: &Rc<Taskbar>) {
     let flag = util::first_icon(&["aerode-ac-flag", "emblem-important", "dialog-information"]);
     let (b, img) = tray_button(tb, flag, "Action Center");
+    crate::flyouts::tray_menu(&b, Rc::new(|| vec![
+        ("_Troubleshoot a problem".into(), Some(Rc::new(|| control("troubleshooting")) as Rc<dyn Fn()>)),
+        ("Open Windows _Update".into(), Some(Rc::new(|| control("update")) as Rc<dyn Fn()>)),
+        ("Open _Action Center".into(), Some(Rc::new(|| control("actioncenter")) as Rc<dyn Fn()>)),
+    ]));
     let msgs: Rc<RefCell<Vec<Msg>>> = Rc::new(RefCell::new(vec![]));
     // refresh, then (for a click) open the flyout with the fresh list
     let refresh: Rc<dyn Fn(Option<gtk::Widget>)> = {

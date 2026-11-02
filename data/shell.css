@@ -8,7 +8,7 @@
   box-shadow: none; padding: 0; margin: 0 1px; color: white;
   min-height: 0; min-width: 0; text-shadow: none; -gtk-icon-shadow: none;
 }
-.taskbar button.task { min-width: 60px; }
+.taskbar button.task { min-width: 58px; margin: 0 2px; }
 .taskbar.small button.task { min-width: 40px; }
 .taskbar button.task.running {
   background-image: linear-gradient(to bottom, rgba(255,255,255,0.20), rgba(255,255,255,0.07) 49%,
@@ -30,11 +30,11 @@
   border-color: rgba(255,255,255,0.45) rgba(0,0,0,0.5) rgba(0,0,0,0.5) rgba(0,0,0,0.5);
 }
 .taskbar button:active { background-image: linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(255,255,255,0.12)); }
-/* aero.msstyles extracted: the shell paints the task buttons from TaskBand2 (taskbar.rs); 60×40
-   buttons 2 px apart like Win7 (44 px with small icons) */
+/* aero.msstyles extracted: the shell paints the task buttons from TaskBand2 (taskbar.rs); 58×40
+   buttons 4 px apart, a 62 px pitch like Win7 (40 px buttons with small icons) */
 .taskbar.w7 button.task.w7 { background: none; background-image: none; border-width: 0; border-radius: 0;
-  box-shadow: none; padding: 0; margin: 0 1px; min-width: 60px; }
-.taskbar.w7.small button.task.w7 { min-width: 44px; }
+  box-shadow: none; padding: 0; margin: 0 2px; min-width: 58px; }
+.taskbar.w7.small button.task.w7 { min-width: 40px; }
 .taskbar .clock { color: white; padding: 0 6px; }
 .taskbar .clock label { color: white; }
 /* notification area: 16px icons on a 24px pitch, like Win7 */

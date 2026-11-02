@@ -106,7 +106,11 @@ impl Taskbar {
         if config::get().taskbar.small_icons { win.style_context().add_class("small"); }
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        win.add(&row);
+        // right-clicking the bar itself (not a button on it) opens the taskbar's menu
+        let row_ev = gtk::EventBox::new();
+        row_ev.set_visible_window(false);
+        row_ev.add(&row);
+        win.add(&row_ev);
 
         // start orb
         let orb_box = gtk::EventBox::new();
@@ -146,7 +150,7 @@ impl Taskbar {
 
         // the task band starts 4 px right of the orb's 54 px: first button frame at x = 59 (Win7)
         let tasks = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        tasks.set_margin_start(4);
+        tasks.set_margin_start(3);
         row.pack_start(&tasks, true, true, 0);
 
         let tray = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -163,6 +167,21 @@ impl Taskbar {
             orb: Orb { area: orb.clone(), events: orb_box.clone(), state: orb_state.clone(), hover: orb_hover, menu_open },
         });
 
+        {
+            let tbw = Rc::downgrade(&tb);
+            row_ev.connect_button_press_event(move |_, e| {
+                if e.button() != 3 { return glib::Propagation::Proceed; }
+                // presses on task buttons and notification icons are theirs
+                let on_button = { let mut ev: gtk::gdk::Event = (**e).clone(); gtk::event_widget(&mut ev) }.map(|w| w.is::<gtk::Button>() || w.ancestor(gtk::Button::static_type()).is_some()).unwrap_or(false);
+                if on_button { return glib::Propagation::Proceed; }
+                let Some(tb) = tbw.upgrade() else { return glib::Propagation::Proceed };
+                crate::flyouts::close_open();
+                crate::thumbs::hide();
+                let m = crate::flyouts::build_menu(tb.menu_items());
+                m.popup_at_pointer(Some(e));
+                glib::Propagation::Stop
+            });
+        }
         {
             let tb2 = tb.clone();
             let st = orb_state.clone();
@@ -446,6 +465,31 @@ impl Taskbar {
             glib::Propagation::Proceed
         });
         button.connect_leave_notify_event(|_, _| { crate::thumbs::leave(); glib::Propagation::Proceed });
+    }
+
+    /// The taskbar's right-click menu (Win7): window arrangement, Show the desktop, Task Manager,
+    /// Lock the taskbar, Properties. A leading ✓ marks a checked item.
+    pub fn menu_items(self: &Rc<Self>) -> Vec<(String, Option<Rc<dyn Fn()>>)> {
+        let wm = self.wm.clone();
+        let arrange = |how: u8| -> Option<Rc<dyn Fn()>> {
+            let wm = wm.clone();
+            Some(Rc::new(move || arrange_windows(&wm, how)))
+        };
+        let wm2 = self.wm.clone();
+        let locked = config::get().taskbar.locked;
+        vec![
+            ("Ca_scade windows".into(), arrange(0)),
+            ("Show windows stac_ked".into(), arrange(1)),
+            ("Show windows side by s_ide".into(), arrange(2)),
+            ("Show the _desktop".into(), Some(Rc::new(move || wm2.set_showing_desktop(!wm2.showing_desktop())))),
+            (String::new(), None),
+            ("Start Tas_k Manager".into(), Some(Rc::new(|| { util::spawn(&["aerode-taskmgr"]); }))),
+            (String::new(), None),
+            (format!("{}Lock the tas_kbar", if locked { "\u{2713}" } else { "" }), Some(Rc::new(move || {
+                config::update(|c| c.taskbar.locked = !locked);
+            }))),
+            ("P_roperties".into(), Some(Rc::new(|| { util::spawn(&["aerode-control", "taskbar"]); }))),
+        ]
     }
 
     fn thumb_wins(&self, wins: &[Client]) -> Vec<crate::thumbs::Win> {
@@ -834,5 +878,29 @@ mod tests {
         assert_eq!(stack_inset(1), 0.0);
         assert_eq!(stack_inset(2), 5.0);
         assert_eq!(stack_inset(7), 6.0);
+    }
+}
+
+/// Cascade (0), stack (1) or tile side by side (2) the open windows of the current desktop on the
+/// primary monitor's work area, like Win7's taskbar menu.
+fn arrange_windows(wm: &Rc<Wm>, how: u8) {
+    let desk = wm.current_desktop();
+    let wins: Vec<Client> = wm.clients().into_iter().filter(|c| !c.minimized && (c.desktop == desk || c.desktop == 0xffffffff)).collect();
+    if wins.is_empty() { return; }
+    let g = util::primary_geometry();
+    let (x0, y0, w, h) = (g.x(), g.y(), g.width(), g.height() - config::get().taskbar_height);
+    let n = wins.len() as i32;
+    for (i, c) in wins.iter().enumerate() {
+        let i = i as i32;
+        match how {
+            0 => {
+                // Win7 cascades from the top left, 26 px a step, each window about 2/3 of the area
+                let step = 26;
+                let k = i % (((h / 3) / step).max(1));
+                wm.place_outer(c.id, x0 + k * step, y0 + k * step, w * 2 / 3, h * 2 / 3);
+            }
+            1 => { let hh = h / n; wm.place_outer(c.id, x0, y0 + i * hh, w, hh); }
+            _ => { let ww = w / n; wm.place_outer(c.id, x0 + i * ww, y0, ww, h); }
+        }
     }
 }

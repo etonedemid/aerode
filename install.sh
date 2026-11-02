@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 DEPS=(gtk3 python cairo pango libx11 libxcb xorg-xsetroot xsettingsd picom
       7zip wimlib papirus-icon-theme noto-fonts xsecurelock i3lock xss-lock polkit
-      pipewire-pulse wireplumber pavucontrol networkmanager brightnessctl
+      pipewire-pulse libpulse wireplumber pavucontrol networkmanager brightnessctl
       playerctl ddcutil udiskie power-profiles-daemon rust)
 # KDE users already have KWallet; a second keyring hijacks org.freedesktop.secrets and logs apps out
 pacman -Q kwallet >/dev/null 2>&1 || DEPS+=(gnome-keyring)
