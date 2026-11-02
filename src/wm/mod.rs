@@ -169,7 +169,7 @@ impl Wm {
         let check_win = conn.generate_id()?;
         conn.create_window(0, check_win, root, -10, -10, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new())?;
         let decor = Decor::load();
-        let glass = glass::Glass::new(crate::config::get().colorization.dwm(), decor.theme_glass);
+        let glass = glass::Glass::new(crate::config::get().colorization.dwm(), decor.theme);
         let mut wm = Wm {
             conn, root, screen_num, atoms, clients: HashMap::new(), frames: HashMap::new(), stack: vec![],
             active: 0, prev_active: 0, monitors: vec![], workarea: Rect::default(), decor, argb, check_win,
@@ -1020,7 +1020,7 @@ impl Wm {
         let (active, maximized) = (self.active == w, c.maximized);
         let glass = |cr: &cairo::Context| self.glass.fill(cr, fr.x as f64, fr.y as f64, active, maximized, composited);
         let params = Params {
-            w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active, maximized,
+            w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active, maximized, small: is_small(c),
             buttons: &btns, composited, glass: &glass, screen_pos: (fr.x, fr.y), screen_size: self.screen_size(),
         };
         let depth = if self.argb.is_some() { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
@@ -1055,7 +1055,7 @@ impl Wm {
             }
         }
         let _ = self.conn.free_gc(gc);
-        self.shape_frame(frame, fw, fh, if c.maximized { 0 } else { decor::RADIUS as i32 });
+        self.shape_frame(frame, fw, fh, if c.maximized || is_small(c) { 0 } else { decor::RADIUS as i32 });
     }
 
     /// Place the resize zones along the frame edges (hidden when the window can't be resized).
@@ -1090,7 +1090,7 @@ impl Wm {
     // ---------------------------------------------------------- hit testing
     fn hit(&self, c: &Client, x: i32, y: i32) -> Hit {
         let fr = self.frame_rect(c);
-        for (b, r) in self.decor.button_rects(fr.w, c.maximized, &self.buttons_for(c)) {
+        for (b, r) in self.decor.button_rects(fr.w, c.maximized, is_small(c), &self.buttons_for(c)) {
             if x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3] { return Hit::Button(b); }
         }
         if c.maximized || c.fullscreen || !c.resizable { return Hit::Caption; }
@@ -1783,3 +1783,6 @@ fn zone_rects(fw: i32, fh: i32) -> [(i32, i32, i32, i32); 12] {
 const ZONE_EDGES: [u8; 12] = [4, 8, 1, 2, 5, 5, 6, 6, 9, 9, 10, 10];
 
 enum Hit { Button(Btn), Caption, Edge(u8) }
+
+/// Tool windows get Win7's small frame (SMALL* DWM parts, square corners, small close button).
+fn is_small(c: &Client) -> bool { c.kind == Kind::Utility }
