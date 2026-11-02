@@ -184,6 +184,8 @@ impl Explorer {
         let win = gtk::ApplicationWindow::new(app);
         win.set_default_size(900, 600);
         win.set_icon_name(Some(util::first_icon(&["system-file-manager", "folder"])));
+        // the header is glass extended into the window: translucent under a compositor
+        glass::enable_rgba(win.upcast_ref());
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         // ---------- glass header: back/forward, address bar, search
@@ -382,32 +384,17 @@ impl Explorer {
             search_gen: Cell::new(0), vm: gio::VolumeMonitor::get(),
         });
 
-        // glass behind the header (same look as the frame when not composited)
+        // the header is the frame's glass continued (Win7 extends it into the client area)
         {
-            let w = win.clone();
             header.connect_draw(move |h, cr| {
-                let (x, y) = h.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
-                let (ww, hh) = (h.allocated_width() as f64, h.allocated_height() as f64);
-                cr.set_source_pixbuf(&glass::wallpaper().blurred, -x as f64, -y as f64);
-                cr.paint().ok();
-                let c = aerode_frame_color();
-                // active = the WM's active window (_NET_WM_STATE_FOCUSED → GDK's FOCUSED state), the same
-                // thing the WM-drawn caption above and GTK's :backdrop follow. is_active() is the X keyboard
-                // focus and also flips on the NotifyGrab focus-outs of the WM's Windows-key grab, so the
-                // header blinked inactive/active/inactive (caption untouched) when Start was opened with Win.
-                let active = w.window().map(|gw| gw.state().contains(gdk::WindowState::FOCUSED)).unwrap_or(false);
-                cr.set_source_rgba(c[0], c[1], c[2], if active { 0.55 } else { 0.35 });
-                cr.paint().ok();
-                cr.set_source_rgba(1.0, 1.0, 1.0, if active { 0.18 } else { 0.38 });
-                cr.paint().ok();
-                let _ = (ww, hh);
+                glass::paint_widget_glass(h, cr);
                 glib::Propagation::Proceed
             });
             let h2 = header.clone();
             win.connect_configure_event(move |_, _| { h2.queue_draw(); false });
             let h3 = header.clone();
             win.connect_window_state_event(move |_, e| {
-                if e.changed_mask().contains(gdk::WindowState::FOCUSED) { h3.queue_draw(); }
+                if e.changed_mask().intersects(gdk::WindowState::FOCUSED | gdk::WindowState::MAXIMIZED) { h3.queue_draw(); }
                 glib::Propagation::Proceed
             });
         }
@@ -1414,6 +1401,3 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
         }
     }
 }
-
-/// Same colour the window frame uses (so the header glass matches).
-fn aerode_frame_color() -> [f64; 4] { crate::wm::colorization(&config::get().tint) }

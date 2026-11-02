@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11};
 
-const USAGE: &str = "usage: aerode [shell|start|run|personalize|reload|lock|quit|restart]
+const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|reload|lock|quit|restart]
        aerode sysmenu WINDOW X Y | taskbar-launch N
        aerode query-volume | query-network";
 
@@ -26,7 +26,9 @@ fn build(app: &gtk::Application) {
         Ok(w) => Rc::new(w),
         Err(e) => { eprintln!("aerode: cannot connect to X: {e}"); std::process::exit(1) }
     };
-    theme::write_openbox_theme();
+    // the saved window colour goes live for every glass painter (the WM, Explorer, …); this also
+    // drops an unsaved preview left behind by a shell that died with Personalize open
+    glass::publish(Some(&aerode::config::get().colorization.dwm()));
     // keyboard layouts set up in Plasma would otherwise be lost under aerode
     aerode::kbdlayout::import_plasma();
     aerode::kbdlayout::ensure();
@@ -106,11 +108,11 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
         "start" => { build(app); SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.start.toggle() }); }
         "run" => { build(app); dialogs::run_dialog(); }
         "personalize" => { build(app); dialogs::personalize(); }
+        "window-color" => { build(app); dialogs::window_color(); }
         "reload" => {
             aerode::config::reload();
             glass::reload();
-            theme::write_openbox_theme();
-            util::spawn(&["openbox", "--reconfigure"]);
+            glass::publish(Some(&aerode::config::get().colorization.dwm()));
             SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s.taskbar.refresh() });
             aerode::tray::reload();
         }
