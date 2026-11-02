@@ -87,6 +87,166 @@ fn kv_grid(rows: &[(&str, String)]) -> gtk::Grid {
 
 fn out(argv: &[&str]) -> String { util::output(argv).unwrap_or_default() }
 
+/// Win7 "Text Services and Input Languages": default input language, installed keyboards
+/// (Add / Remove / Move Up / Move Down), the hot key between input languages, Apply.
+fn input_languages() -> gtk::Widget {
+    use aerode::kbdlayout::{self, Layout};
+    let (cur, opts) = kbdlayout::current();
+    let list: Rc<RefCell<Vec<Layout>>> = Rc::new(RefCell::new(cur));
+    let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    v.set_margin_start(12);
+    let name = |l: &Layout| {
+        let (_, lang) = kbdlayout::language(l);
+        format!("{lang} - {}", kbdlayout::describe(&l.layout, &l.variant))
+    };
+    // default input language = the first layout
+    let defl = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    defl.pack_start(&gtk::Label::new(Some("Default input language:")), false, false, 0);
+    let default_combo = gtk::ComboBoxText::new();
+    defl.pack_start(&default_combo, true, true, 0);
+    v.pack_start(&defl, false, false, 0);
+    v.pack_start(&text("Installed services – the keyboards you can switch between:"), false, false, 0);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let lb = gtk::ListBox::new();
+    lb.style_context().add_class("frame");
+    let sw = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    sw.set_size_request(380, 130);
+    sw.set_shadow_type(gtk::ShadowType::In);
+    sw.add(&lb);
+    row.pack_start(&sw, true, true, 0);
+    let btns = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let (add, remove, up, down) = (gtk::Button::with_mnemonic("A_dd..."), gtk::Button::with_mnemonic("_Remove"), gtk::Button::with_mnemonic("Move _Up"), gtk::Button::with_mnemonic("Move Dow_n"));
+    for b in [&add, &remove, &up, &down] { btns.pack_start(b, false, false, 0); }
+    row.pack_start(&btns, false, false, 0);
+    v.pack_start(&row, false, false, 0);
+    let hk = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    hk.pack_start(&gtk::Label::new(Some("Between input languages:")), false, false, 0);
+    let hot = gtk::ComboBoxText::new();
+    let cur_hot = kbdlayout::hotkey(&opts);
+    for (label, opt) in kbdlayout::HOTKEYS { hot.append(Some(opt), label); }
+    if !hot.set_active_id(Some(&cur_hot)) { if cur_hot.is_empty() { hot.set_active_id(Some("")); } else { hot.append(Some(&cur_hot), &cur_hot); hot.set_active_id(Some(&cur_hot)); } }
+    hk.pack_start(&hot, false, false, 0);
+    v.pack_start(&hk, false, false, 0);
+    let apply = gtk::Button::with_mnemonic("_Apply");
+    apply.set_halign(gtk::Align::End);
+    v.pack_start(&apply, false, false, 0);
+
+    let refresh: Rc<dyn Fn()> = {
+        let (list, lb, default_combo) = (list.clone(), lb.clone(), default_combo.clone());
+        Rc::new(move || {
+            for c in lb.children() { lb.remove(&c); }
+            default_combo.remove_all();
+            for l in list.borrow().iter() {
+                let (abbr, _) = kbdlayout::language(l);
+                let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let a = gtk::Label::new(Some(&abbr));
+                a.style_context().add_class("dim-label");
+                a.set_width_chars(3);
+                r.pack_start(&a, false, false, 4);
+                let t = gtk::Label::new(Some(&name(l)));
+                t.set_xalign(0.0);
+                r.pack_start(&t, true, true, 0);
+                lb.add(&r);
+                default_combo.append_text(&kbdlayout::language(l).1);
+            }
+            default_combo.set_active(Some(0));
+            lb.show_all();
+        })
+    };
+    refresh();
+    let selected = { let lb = lb.clone(); move || lb.selected_row().map(|r| r.index() as usize) };
+    { let (list, refresh, lb) = (list.clone(), refresh.clone(), lb.clone()); default_combo.connect_changed(move |c| {
+        let Some(i) = c.active().map(|i| i as usize) else { return };
+        if i == 0 { return; }
+        { let mut l = list.borrow_mut(); if i < l.len() { let x = l.remove(i); l.insert(0, x); } }
+        refresh();
+        if let Some(r) = lb.row_at_index(0) { lb.select_row(Some(&r)); }
+    }); }
+    { let (list, refresh, sel) = (list.clone(), refresh.clone(), selected.clone()); remove.connect_clicked(move |_| {
+        if let Some(i) = sel() { let mut l = list.borrow_mut(); if l.len() > 1 { l.remove(i); } }
+        refresh();
+    }); }
+    for (b, dir) in [(&up, -1i32), (&down, 1)] {
+        let (list, refresh, sel, lb) = (list.clone(), refresh.clone(), selected.clone(), lb.clone());
+        b.connect_clicked(move |_| {
+            let Some(i) = sel() else { return };
+            let j = i as i32 + dir;
+            { let mut l = list.borrow_mut(); if j < 0 || j as usize >= l.len() { return; } l.swap(i, j as usize); }
+            refresh();
+            if let Some(r) = lb.row_at_index(j) { lb.select_row(Some(&r)); }
+        });
+    }
+    { let (list, refresh) = (list.clone(), refresh.clone()); add.connect_clicked(move |b| {
+        if let Some(l) = add_input_language(b.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok()).as_ref()) {
+            if !list.borrow().contains(&l) { list.borrow_mut().push(l); }
+            refresh();
+        }
+    }); }
+    { let (list, hot) = (list.clone(), hot.clone()); apply.connect_clicked(move |_| {
+        kbdlayout::apply(&list.borrow(), hot.active_id().as_deref().unwrap_or(""));
+    }); }
+    v.upcast()
+}
+
+/// "Add Input Language": every XKB layout with its variants, searchable.
+fn add_input_language(parent: Option<&gtk::Window>) -> Option<aerode::kbdlayout::Layout> {
+    let (layouts, variants) = aerode::kbdlayout::catalog();
+    let d = gtk::Dialog::with_buttons(Some("Add Input Language"), parent, gtk::DialogFlags::MODAL,
+        &[("OK", gtk::ResponseType::Ok), ("Cancel", gtk::ResponseType::Cancel)]);
+    d.set_default_size(420, 460);
+    let c = d.content_area();
+    c.set_spacing(6);
+    c.set_border_width(10);
+    c.pack_start(&text("Select the language and keyboard layout to add."), false, false, 0);
+    let search = gtk::SearchEntry::new();
+    c.pack_start(&search, false, false, 0);
+    // columns: description, layout, variant
+    let store = gtk::TreeStore::new(&[glib::Type::STRING, glib::Type::STRING, glib::Type::STRING]);
+    let mut sorted = layouts.clone();
+    sorted.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    for (code, desc) in &sorted {
+        let it = store.insert_with_values(None, None, &[(0, desc), (1, code), (2, &String::new())]);
+        for (_, var, vdesc) in variants.iter().filter(|(l, _, _)| l == code) {
+            store.insert_with_values(Some(&it), None, &[(0, vdesc), (1, code), (2, var)]);
+        }
+    }
+    let filter = gtk::TreeModelFilter::new(&store, None);
+    {
+        let search = search.clone();
+        filter.set_visible_func(move |m, it| {
+            let q = search.text().to_lowercase();
+            if q.is_empty() { return true; }
+            let hit = |it: &gtk::TreeIter| m.value(it, 0).get::<String>().unwrap_or_default().to_lowercase().contains(&q)
+                || m.value(it, 1).get::<String>().unwrap_or_default().to_lowercase() == q;
+            if hit(it) { return true; }
+            // keep a layout row when one of its variants matches
+            if let Some(ch) = m.iter_children(Some(it)) { loop { if hit(&ch) { return true; } if !m.iter_next(&ch) { break; } } }
+            false
+        });
+    }
+    { let f = filter.clone(); search.connect_search_changed(move |_| f.refilter()); }
+    let tv = gtk::TreeView::with_model(&filter);
+    tv.set_headers_visible(false);
+    let col = gtk::TreeViewColumn::new();
+    let cell = gtk::CellRendererText::new();
+    TreeViewColumnExt::pack_start(&col, &cell, true);
+    TreeViewColumnExt::add_attribute(&col, &cell, "text", 0);
+    tv.append_column(&col);
+    let sw = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    sw.set_shadow_type(gtk::ShadowType::In);
+    sw.add(&tv);
+    c.pack_start(&sw, true, true, 0);
+    { let d = d.clone(); tv.connect_row_activated(move |_, _, _| d.response(gtk::ResponseType::Ok)); }
+    d.show_all();
+    let r = d.run();
+    let pick = tv.selection().selected().map(|(m, it)| aerode::kbdlayout::Layout {
+        layout: m.value(&it, 1).get::<String>().unwrap_or_default(),
+        variant: m.value(&it, 2).get::<String>().unwrap_or_default(),
+    });
+    d.close();
+    if r == gtk::ResponseType::Ok { pick.filter(|l| !l.layout.is_empty()) } else { None }
+}
+
 /// Run a privileged command through polkit (shows our UAC prompt).
 fn admin(argv: &[&str]) -> bool {
     let mut a = vec!["pkexec"];
@@ -1022,22 +1182,7 @@ impl Cp {
         v.pack_start(&kv_grid(&[("Format:", loc.lines().find_map(|l| l.trim().strip_prefix("System Locale:")).unwrap_or("").trim().to_string()),
             ("Keyboard layout:", out(&["setxkbmap", "-query"]).lines().find_map(|l| l.strip_prefix("layout:")).unwrap_or("").trim().to_string())]), false, false, 0);
         v.pack_start(&section("Keyboards and Languages"), false, false, 0);
-        let lay = gtk::Entry::new();
-        lay.set_text(out(&["setxkbmap", "-query"]).lines().find_map(|l| l.strip_prefix("layout:")).unwrap_or("us").trim());
-        lay.set_placeholder_text(Some("e.g. us,ru"));
-        let apply = gtk::Button::with_label("Apply");
-        { let l = lay.clone(); apply.connect_clicked(move |_| {
-            let layouts = l.text().to_string();
-            util::spawn(&["setxkbmap", "-layout", &layouts, "-option", "grp:alt_shift_toggle"]);
-            let _ = std::fs::create_dir_all(config::conf_dir());
-            let _ = std::fs::write(config::conf_dir().join("keyboard.sh"), format!("#!/bin/sh\nsetxkbmap -layout '{layouts}' -option grp:alt_shift_toggle\n"));
-        }); }
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.pack_start(&gtk::Label::new(Some("Layouts:")), false, false, 0);
-        row.pack_start(&lay, true, true, 0);
-        row.pack_start(&apply, false, false, 0);
-        v.pack_start(&row, false, false, 0);
-        v.pack_start(&text("Switch between layouts with Left Alt+Shift, like Windows."), false, false, 0);
+        v.pack_start(&input_languages(), false, false, 0);
         v.upcast()
     }
 
