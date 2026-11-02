@@ -57,13 +57,12 @@ impl Switcher {
         {
             let cr = cairo::Context::new(&s).unwrap();
             let (w, h) = (self.w as f64, self.h as f64);
-            if !composited {
-                if let Some(wp) = &wm.wallpaper { cr.set_source_surface(wp, -(self.pos.0 as f64), -(self.pos.1 as f64)).ok(); cr.paint().ok(); }
-            }
-            // glass panel like the frame
+            // glass panel like the frame (active glass)
             crate::glass::rounded(&cr, 0.5, 0.5, w - 1.0, h - 1.0, 7.0);
-            cr.set_source_rgba(wm.color[0] * 0.8, wm.color[1] * 0.8, wm.color[2] * 0.8, if composited { 0.55 } else { 0.6 });
-            cr.fill_preserve().ok();
+            cr.save().ok();
+            cr.clip_preserve();
+            wm.glass.fill(&cr, self.pos.0 as f64, self.pos.1 as f64, true, false, composited);
+            cr.restore().ok();
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.7);
             cr.set_line_width(1.0);
             cr.stroke().ok();

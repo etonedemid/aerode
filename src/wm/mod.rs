@@ -1,5 +1,6 @@
 //! aerode-wm: a small reparenting X11 window manager drawing Windows 7 frames.
 pub mod decor;
+pub mod glass;
 pub mod keys;
 pub mod switcher;
 
@@ -38,7 +39,7 @@ x11rb::atom_manager! {
         _NET_REQUEST_FRAME_EXTENTS, _NET_WM_MOVERESIZE, _NET_MOVERESIZE_WINDOW, _NET_WM_ALLOWED_ACTIONS,
         _NET_WM_ACTION_MOVE, _NET_WM_ACTION_RESIZE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_MAXIMIZE_HORZ,
         _NET_WM_ACTION_MAXIMIZE_VERT, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_CHANGE_DESKTOP,
-        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS,
+        _NET_WM_USER_TIME, _NET_WM_WINDOW_OPACITY, _GTK_FRAME_EXTENTS, _NET_CM_S0, _AERODE_SNAP_PREVIEW, _AERODE_RESTART, _GTK_WORKAREAS, _AERODE_GLASS, _AERODE_COLORIZATION,
     }
 }
 
@@ -128,8 +129,10 @@ pub struct Wm {
     root_size: (i32, i32),
     last_move_redraw: Instant,
     composited_cache: std::cell::Cell<(Instant, bool)>,
-    pub wallpaper: Option<cairo::ImageSurface>,
-    pub color: [f64; 4],
+    /// frame glass: colourisation + the wallpaper behind it
+    pub glass: glass::Glass,
+    /// `_AERODE_COLORIZATION` changed; applied once the event queue is empty
+    glass_dirty: bool,
 }
 
 fn frame_events() -> EventMask {
@@ -165,25 +168,26 @@ impl Wm {
         });
         let check_win = conn.generate_id()?;
         conn.create_window(0, check_win, root, -10, -10, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new())?;
-        let cfg = crate::config::get();
+        let decor = Decor::load();
+        let glass = glass::Glass::new(crate::config::get().colorization.dwm(), decor.theme_glass);
         let mut wm = Wm {
             conn, root, screen_num, atoms, clients: HashMap::new(), frames: HashMap::new(), stack: vec![],
-            active: 0, prev_active: 0, monitors: vec![], workarea: Rect::default(), decor: Decor::load(), argb, check_win,
+            active: 0, prev_active: 0, monitors: vec![], workarea: Rect::default(), decor, argb, check_win,
             showing_desktop: false, current_desktop: 0, num_desktops: 1, drag: None,
             last_click: (0, Instant::now(), 0, 0), keys: keys::Keys::default(), switcher: None, snap_preview: None,
             snap_wa: None, root_size: (0, 0), kbd_drag: None,
             last_move_redraw: Instant::now(), composited_cache: std::cell::Cell::new((Instant::now() - std::time::Duration::from_secs(10), false)),
-            wallpaper: None, color: [0.45, 0.72, 0.99, cfg.tint()[3].clamp(0.2, 0.8)],
+            glass, glass_dirty: false,
         };
-        wm.color = colorization(&cfg.tint());
         {
             let n = wm.prop32(wm.root, wm.atoms._NET_NUMBER_OF_DESKTOPS, AtomEnum::CARDINAL).first().copied().unwrap_or(1);
             let cur = wm.prop32(wm.root, wm.atoms._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL).first().copied().unwrap_or(0);
             wm.num_desktops = n.clamp(1, 16);
             wm.current_desktop = cur.min(wm.num_desktops - 1);
         }
-        wm.load_wallpaper();
         wm.update_monitors();
+        wm.load_wallpaper();
+        wm.read_colorization();
         wm.set_supported()?;
         wm.keys.grab(&wm.conn, wm.root)?;
         // the root shows the arrow too (the session's `xsetroot` may be missing): the desktop, docks,
@@ -198,14 +202,27 @@ impl Wm {
     }
 
     fn load_wallpaper(&mut self) {
-        // blurred wallpaper used as fake glass when no compositor is running
-        let path = crate::glass::wallpaper_path();
-        self.wallpaper = path.and_then(|p| image::open(p).ok()).map(|img| {
-            let s = self.screen_size();
-            let img = img.resize_to_fill((s.0 as u32 / 8).max(1), (s.1 as u32 / 8).max(1), image::imageops::FilterType::Triangle).blur(3.0)
-                .resize_exact(s.0 as u32, s.1 as u32, image::imageops::FilterType::Triangle);
-            decor::rgba_surface(&img.to_rgba8())
+        let size = self.screen_size();
+        self.glass.set_wallpaper(size);
+    }
+
+    /// The live colourisation (root `_AERODE_COLORIZATION`, written by Personalize ▸ Window Color),
+    /// else the saved one. True when it changed.
+    fn read_colorization(&mut self) -> bool {
+        let v = self.prop32(self.root, self.atoms._AERODE_COLORIZATION, AtomEnum::CARDINAL);
+        let c = crate::glass::from_prop(&v).unwrap_or_else(|| {
+            crate::config::reload();
+            crate::config::get().colorization.dwm()
         });
+        self.glass.set_colorization(c)
+    }
+
+    fn apply_colorization(&mut self) {
+        self.glass_dirty = false;
+        if !self.read_colorization() { return; }
+        let wins: Vec<u32> = self.clients.values().filter(|c| c.frame.is_some()).map(|c| c.win).collect();
+        for w in wins { self.redraw(w); }
+        if let Some(sw) = &self.switcher { sw.draw(self); }
     }
 
     pub fn screen_size(&self) -> (i32, i32) {
@@ -1000,14 +1017,11 @@ impl Wm {
         if fw <= 0 || fh <= 0 { return; }
         let composited = self.composited();
         let btns = self.buttons_for(c);
-        let wp = self.wallpaper.clone();
-        let backdrop = move |cr: &cairo::Context, sx: f64, sy: f64| {
-            if let Some(wp) = &wp { cr.set_source_surface(wp, -sx, -sy).ok(); cr.paint().ok(); }
-            else { cr.set_source_rgb(0.35, 0.55, 0.75); cr.paint().ok(); }
-        };
+        let (active, maximized) = (self.active == w, c.maximized);
+        let glass = |cr: &cairo::Context| self.glass.fill(cr, fr.x as f64, fr.y as f64, active, maximized, composited);
         let params = Params {
-            w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active: self.active == w, maximized: c.maximized,
-            buttons: &btns, composited, color: self.color, backdrop: Some(&backdrop), screen_pos: (fr.x, fr.y),
+            w: fw, h: fh, title: &c.title, icon: c.icon.as_ref(), active, maximized,
+            buttons: &btns, composited, glass: &glass, screen_pos: (fr.x, fr.y), screen_size: self.screen_size(),
         };
         let depth = if self.argb.is_some() { 32 } else { self.conn.setup().roots[self.screen_num].root_depth };
         let (b, t) = (self.border_of(c), self.top_of(c));
@@ -1113,7 +1127,14 @@ impl Wm {
         let mut pending: std::collections::VecDeque<Event> = std::collections::VecDeque::new();
         loop {
             self.conn.flush()?;
-            let ev = match pending.pop_front() { Some(e) => e, None => self.conn.wait_for_event()? };
+            let ev = match pending.pop_front() {
+                Some(e) => e,
+                None => match self.conn.poll_for_event()? {
+                    Some(e) => e,
+                    None if self.glass_dirty => { self.apply_colorization(); continue; }
+                    None => self.conn.wait_for_event()?,
+                },
+            };
             // Motion compression: high-rate mice/high-refresh screens produce far more motion
             // events than we need – only act on the newest queued position.
             let ev = if let Event::MotionNotify(mut m) = ev {
@@ -1206,7 +1227,11 @@ impl Wm {
 
     fn property(&mut self, e: PropertyNotifyEvent) {
         let a = self.atoms;
-        if e.window == self.root { return; }
+        if e.window == self.root {
+            // a dragged intensity slider writes many values: repaint once the queue is drained
+            if e.atom == a._AERODE_COLORIZATION { self.glass_dirty = true; }
+            return;
+        }
         if !self.clients.contains_key(&e.window) { return; }
         if e.atom == a._NET_WM_NAME || e.atom == u32::from(AtomEnum::WM_NAME) {
             let t = self.read_title(e.window);
@@ -1569,10 +1594,11 @@ impl Wm {
         if let Ok(mut s) = cairo::ImageSurface::create(cairo::Format::ARgb32, r2.w, r2.h) {
             {
                 let cr = cairo::Context::new(&s).unwrap();
-                if !composited { if let Some(wp) = &self.wallpaper { cr.set_source_surface(wp, -(r2.x as f64), -(r2.y as f64)).ok(); cr.paint().ok(); } }
                 crate::glass::rounded(&cr, 0.5, 0.5, r2.w as f64 - 1.0, r2.h as f64 - 1.0, 6.0);
-                cr.set_source_rgba(self.color[0], self.color[1], self.color[2], 0.35);
-                cr.fill_preserve().ok();
+                cr.save().ok();
+                cr.clip_preserve();
+                self.glass.fill(&cr, r2.x as f64, r2.y as f64, true, false, composited);
+                cr.restore().ok();
                 cr.set_source_rgba(1.0, 1.0, 1.0, 0.8);
                 cr.set_line_width(2.0);
                 cr.stroke().ok();
@@ -1755,15 +1781,5 @@ fn zone_rects(fw: i32, fh: i32) -> [(i32, i32, i32, i32); 12] {
 
 /// Resize edges (1 left, 2 right, 4 top, 8 bottom) of each zone in `zone_rects`.
 const ZONE_EDGES: [u8; 12] = [4, 8, 1, 2, 5, 5, 6, 6, 9, 9, 10, 10];
-
-/// Win7 DWM colourisation (0xRRGGBB with alpha) derived from the Personalize tint.
-pub fn colorization(t: &[f64; 4]) -> [f64; 4] {
-    // default "Sky" = 0x6B74B8FC; scale other tints to similar lightness
-    let l = 0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2];
-    let k = if l > 0.0 { 0.62 / l } else { 1.0 };
-    let (r, g, b) = ((t[0] * k).min(1.0), (t[1] * k).min(1.0), (t[2] * k).min(1.0));
-    if (t[0] - 0.10).abs() < 0.01 && (t[1] - 0.22).abs() < 0.01 { return [0.455, 0.722, 0.988, 0.42]; }
-    [r, g, b, 0.30 + t[3] * 0.25]
-}
 
 enum Hit { Button(Btn), Caption, Edge(u8) }
