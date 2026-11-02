@@ -225,6 +225,14 @@ fn extract_wim(wim: &Path, dest: &Path) -> Result<()> {
     let info = Command::new("wimlib-imagex").arg("info").arg(wim).output()?;
     let count = String::from_utf8_lossy(&info.stdout).lines()
         .find_map(|l| l.strip_prefix("Image Count:").and_then(|v| v.trim().parse::<u32>().ok())).unwrap_or(1);
+    // only Windows 7 (NT 6.1): another Windows' icons/cursors/sounds would silently replace the Win7 ones
+    let detail = Command::new("wimlib-imagex").arg("info").arg(wim).arg(count.to_string()).output()?;
+    let detail = String::from_utf8_lossy(&detail.stdout).to_string();
+    let field = |k: &str| detail.lines().find_map(|l| l.strip_prefix(k).map(|v| v.trim().to_string())).unwrap_or_default();
+    let (major, minor, name) = (field("Major Version:"), field("Minor Version:"), field("Name:"));
+    if !major.is_empty() && (major != "6" || minor != "1") {
+        bail!("{} is not a Windows 7 image ({name}, version {major}.{minor}) – aerode needs a Windows 7 ISO", wim.display());
+    }
     let st = Command::new("wimlib-imagex").arg("extract").arg(wim).arg(count.to_string()).arg(format!("@{}", list.display()))
         .arg(format!("--dest-dir={}", dest.display())).args(["--no-acls", "--preserve-dir-structure", "--nullglob"])
         .env("WIMLIB_IMAGEX_IGNORE_CASE", "1").stdout(std::process::Stdio::null()).status()?;
