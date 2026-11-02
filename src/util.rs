@@ -436,3 +436,44 @@ pub fn log_panics(name: &'static str) {
         }
     }));
 }
+
+/// This user's processes named `name` (exactly, as /proc/<pid>/comm shows it) that belong to this
+/// X display – $DISPLAY in their environment, ":0" and ":0.0" being the same – and, with `arg1`,
+/// whose first argument is that ("shell" for the shell, not `aerode mixer` or `aerode lock`).
+/// What `aerode restart` and Log off may signal; other sessions of the same user are left alone.
+pub fn procs_on_display(name: &str, arg1: Option<&str>) -> Vec<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let norm = |d: &str| match d.rsplit_once(':') { Some((h, n)) => format!("{h}:{}", n.split('.').next().unwrap_or(n)), None => d.to_string() };
+    let ours = norm(&std::env::var("DISPLAY").unwrap_or_default());
+    let uid = unsafe { libc::getuid() };
+    let me = std::process::id();
+    let Ok(rd) = std::fs::read_dir("/proc") else { return vec![] };
+    rd.flatten().filter_map(|e| {
+        let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+        if pid == me || e.metadata().ok()?.uid() != uid { return None; }
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        if comm.trim_end() != name { return None; }
+        if let Some(a) = arg1 {
+            let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+            if cmd.split(|b| *b == 0).nth(1) != Some(a.as_bytes()) { return None; }
+        }
+        let env = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+        let on_ours = env.split(|b| *b == 0).any(|kv| kv.strip_prefix(b"DISPLAY=").map(|d| norm(&String::from_utf8_lossy(d)) == ours).unwrap_or(false));
+        on_ours.then_some(pid)
+    }).collect()
+}
+
+/// Send `sig` to every process `procs_on_display` finds; true when there was at least one.
+pub fn signal_on_display(name: &str, arg1: Option<&str>, sig: i32) -> bool {
+    let pids = procs_on_display(name, arg1);
+    for p in &pids { unsafe { libc::kill(*p as i32, sig); } }
+    !pids.is_empty()
+}
+
+#[cfg(test)]
+mod procs_tests {
+    #[test]
+    fn finds_nothing_for_an_unknown_name() {
+        assert!(super::procs_on_display("no-such-program-xyz", None).is_empty());
+    }
+}

@@ -220,7 +220,7 @@ pub fn hibernate() { lock_for_wakeup(); spawn(&["systemctl", "hibernate"]); }
 pub fn log_off() {
     end_session(crate::sounds::Event::Logoff, || {
         // ending the window manager ends the session (it is the session leader)
-        if !spawn(&["pkill", "-TERM", "-x", "aerode-wm"]) {
+        if !crate::util::signal_on_display("aerode-wm", None, libc::SIGTERM) {
             spawn(&["loginctl", "terminate-session", &std::env::var("XDG_SESSION_ID").unwrap_or_default()]);
         }
     });
