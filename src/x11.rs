@@ -215,7 +215,13 @@ impl Wm {
         let mut changed = false;
         while let Ok(Some(ev)) = self.conn.poll_for_event() {
             match ev {
-                Event::PropertyNotify(_) | Event::DestroyNotify(_) | Event::UnmapNotify(_) | Event::MapNotify(_) => changed = true,
+                Event::PropertyNotify(p) => {
+                    let a = &self.atoms;
+                    let relevant = [a._NET_CLIENT_LIST, a._NET_ACTIVE_WINDOW, a._NET_WM_NAME, u32::from(AtomEnum::WM_NAME), a._NET_WM_STATE,
+                        a.WM_STATE, a._NET_WM_ICON, a._NET_WM_DESKTOP, a._NET_CURRENT_DESKTOP, u32::from(AtomEnum::WM_HINTS), a._NET_SHOWING_DESKTOP];
+                    if relevant.contains(&p.atom) { changed = true; }
+                }
+                Event::DestroyNotify(_) | Event::UnmapNotify(_) | Event::MapNotify(_) => changed = true,
                 _ => {}
             }
         }

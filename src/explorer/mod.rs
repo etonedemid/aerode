@@ -683,7 +683,7 @@ impl Explorer {
     fn show_computer(self: &Rc<Self>) {
         self.stack.set_visible_child_name("computer");
         for c in self.computer.children() { self.computer.remove(&c); }
-        let mut disks: Vec<(String, PathBuf, &str)> = vec![("Local Disk (/)".into(), PathBuf::from("/"), "drive-harddisk")];
+        let mut disks: Vec<(String, PathBuf, &str)> = vec![("Local Disk (/)".into(), PathBuf::from("/"), util::first_icon(&["drive-harddisk-system", "drive-harddisk"]))];
         let home = config::home();
         disks.push((format!("Home ({})", home.display()), home, "drive-harddisk"));
         let mut removable: Vec<(String, Option<PathBuf>, Option<gio::Volume>, String)> = vec![];
@@ -1134,7 +1134,7 @@ impl Explorer {
         }
         add(None, "user-home", &glib::user_name().to_string_lossy(), &config::home().to_string_lossy());
         let comp = add(None, "computer", "Computer", "computer:///");
-        add(Some(&comp), "drive-harddisk", "Local Disk (/)", "/");
+        add(Some(&comp), util::first_icon(&["drive-harddisk-system", "drive-harddisk"]), "Local Disk (/)", "/");
         for m in self.vm.mounts() {
             if let Some(p) = m.root().path() { if p != Path::new("/") { add(Some(&comp), "drive-removable-media", &m.name(), &p.to_string_lossy()); } }
         }
