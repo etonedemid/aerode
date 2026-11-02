@@ -1,1 +1,3 @@
 /target
+# temporary git worktrees of background agents
+/.claude/worktrees/
