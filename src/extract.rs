@@ -18,7 +18,7 @@ const WANTED: &[&str] = &[
     "Windows/System32/cmd.exe", "Windows/System32/notepad.exe", "Windows/System32/calc.exe",
     "Windows/System32/mspaint.exe", "Windows/System32/SndVol.exe", "Windows/System32/taskmgr.exe",
     "Windows/System32/control.exe", "Windows/System32/timedate.cpl", "Windows/System32/pnidui.dll", "Windows/System32/SnippingTool.exe",
-    "Windows/System32/DeviceCenter.dll", "Windows/System32/SndVolSSO.dll", "Windows/System32/batmeter.dll", "Windows/System32/wscui.cpl", "Windows/System32/powercpl.dll",
+    "Windows/System32/DeviceCenter.dll", "Windows/System32/SndVolSSO.dll", "Windows/System32/batmeter.dll", "Windows/System32/ActionCenter.dll", "Windows/System32/wscui.cpl", "Windows/System32/powercpl.dll",
     "Windows/System32/timedate.cpl", "Windows/System32/mmsys.cpl", "Windows/System32/main.cpl",
     "Windows/System32/desk.cpl", "Windows/System32/themecpl.dll", "Windows/System32/sysdm.cpl",
     "Windows/System32/appwiz.cpl", "Windows/System32/inetcpl.cpl", "Windows/System32/netcenter.dll",
@@ -267,6 +267,12 @@ const ICONS: &[(&str, &str, Option<u16>, &[&str])] = &[
     ("audio-recorder", "Windows/System32/SoundRecorder.exe", None, &["gnome-sound-recorder", "org.gnome.SoundRecorder"]),
     // Control Panel ▸ System and Security / administrative tools (pages fall back to the
     // freedesktop names when an older extraction lacks these)
+    // the Action Center flag in the notification area (white) and the applet's blue flag
+    ("aerode-ac-flag", "Windows/System32/ActionCenter.dll", Some(5), &[]),
+    ("aerode-ac-flag-warning", "Windows/System32/ActionCenter.dll", Some(6), &[]),
+    ("aerode-ac-flag-error", "Windows/System32/ActionCenter.dll", Some(7), &[]),
+    ("aerode-ac-flag-clock", "Windows/System32/ActionCenter.dll", Some(8), &[]),
+    ("aerode-actioncenter", "Windows/System32/ActionCenter.dll", Some(1), &[]),
     ("aerode-shield-ok", "Windows/System32/imageres.dll", Some(106), &[]),
     ("aerode-shield-error", "Windows/System32/imageres.dll", Some(105), &["security-low"]),
     ("aerode-shield-warning", "Windows/System32/imageres.dll", Some(107), &[]),
