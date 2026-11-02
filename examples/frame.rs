@@ -13,8 +13,11 @@ fn main() {
         cr.save().unwrap();
         cr.translate(20.0 + i as f64 * 550.0, 20.0);
         let btns = [(Btn::Min, BState::Normal), (Btn::Max, BState::Normal), (Btn::Close, *st)];
-        d.render(&cr, &Params { w, h, title: "Untitled - Notepad", icon: None, active: *active, maximized: false, buttons: &btns,
-            composited: true, color: [0.45, 0.72, 0.99, 0.42], backdrop: None, screen_pos: (0, 0) });
+        // the WM's glass: Win7's default Sky colourisation, painted as for a compositor
+        let g = aerode::wm::glass::Glass::new(aerode::dwmcolor::Colorization::default(), d.theme);
+        let glass = |cr: &cairo::Context| g.fill(cr, 0.0, 0.0, *active, false, true);
+        d.render(&cr, &Params { w, h, title: "Untitled - Notepad", icon: None, active: *active, maximized: false, small: false, buttons: &btns,
+            composited: true, glass: &glass, screen_pos: (0, 0), screen_size: (1100, 620) });
         cr.set_source_rgb(1.0, 1.0, 1.0);
         cr.rectangle(BORDER as f64, TOP as f64, (w - 2 * BORDER) as f64, (h - TOP - BORDER) as f64);
         cr.fill().unwrap();
