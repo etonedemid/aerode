@@ -1183,6 +1183,7 @@ impl Wm {
     // ---------------------------------------------------------- event loop
     pub fn run(&mut self) -> Result<()> {
         let mut pending: std::collections::VecDeque<Event> = std::collections::VecDeque::new();
+        let mut panics: Vec<Instant> = vec![];
         loop {
             self.conn.flush()?;
             let ev = match pending.pop_front() {
@@ -1204,7 +1205,23 @@ impl Wm {
                 }
                 Event::MotionNotify(m)
             } else { ev };
-            if let Err(e) = self.handle(ev) { eprintln!("aerode-wm: {e}"); }
+            // a bug in one handler must not take the session down with it (the WM is the session
+            // leader): log it and carry on; if it keeps happening, start afresh with the windows kept
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(ev))) {
+                Ok(Err(e)) => eprintln!("aerode-wm: {e}"),
+                Ok(Ok(())) => {}
+                Err(_) => {
+                    let now = Instant::now();
+                    panics.retain(|t: &Instant| now.duration_since(*t).as_secs() < 60);
+                    panics.push(now);
+                    // drags and grabs may be half-done: let go of them
+                    self.drag = None;
+                    self.kbd_drag = None;
+                    let _ = self.conn.ungrab_pointer(CURRENT_TIME);
+                    let _ = self.conn.ungrab_keyboard(CURRENT_TIME);
+                    if panics.len() >= 5 { eprintln!("aerode-wm: repeated errors, restarting"); self.restart(); }
+                }
+            }
         }
     }
 
@@ -1371,6 +1388,9 @@ impl Wm {
                 self.sync_visibility(w);
                 if self.active == w && self.clients[&w].wm_hidden { self.focus_fallback(w); }
             }
+        } else if cfg!(debug_assertions) && e.type_ == a._AERODE_RESTART && w == self.check_win && d[0] == 0xDEAD {
+            // debug builds only: exercise the crash recovery in run()
+            panic!("test panic requested through _AERODE_RESTART");
         } else if e.type_ == a._AERODE_RESTART && w == self.check_win {
             self.restart();
         } else if e.type_ == a._AERODE_SNAP_PREVIEW && w == self.check_win {
