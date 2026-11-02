@@ -8,6 +8,9 @@ use std::rc::Rc;
 
 use aerode::{config, sounds, theme, util};
 
+mod pages;
+mod registry;
+
 const CSS: &str = r#"
 .cp-main { background-color: #ffffff; }
 .cp-title { font-size: 12pt; color: #1e3287; }
@@ -259,26 +262,20 @@ impl Cp {
         for c in self.body.children() { self.body.remove(&c); }
         for c in self.side.children() { self.side.remove(&c); }
         self.history.borrow_mut().push(page.to_string());
-        let (crumb, w): (&str, gtk::Widget) = match page {
-            "system" => ("System and Security ▸ System", self.page_system()),
-            "display" => ("Appearance and Personalization ▸ Display ▸ Screen Resolution", self.page_display()),
-            "personalization" => { util::spawn(&["aerode", "personalize"]); ("Appearance and Personalization", self.page_category("appearance")) }
-            "sound" => ("Hardware and Sound ▸ Sound", self.page_sound()),
-            "datetime" => ("Clock, Language, and Region ▸ Date and Time", self.page_datetime()),
-            "power" => ("Hardware and Sound ▸ Power Options", self.page_power()),
-            "mouse" => ("Hardware and Sound ▸ Mouse", self.page_mouse()),
-            "keyboard" => ("Hardware and Sound ▸ Keyboard", self.page_keyboard()),
-            "programs" => ("Programs ▸ Programs and Features", self.page_programs()),
-            "users" => ("User Accounts and Family Safety ▸ User Accounts", self.page_users()),
-            "network" => ("Network and Internet ▸ Network and Sharing Center", self.page_network()),
-            "defaults" => ("Programs ▸ Default Programs", self.page_defaults()),
-            "devices" => ("Hardware and Sound ▸ Devices and Printers", self.page_devices()),
-            "region" => ("Clock, Language, and Region ▸ Region and Language", self.page_region()),
-            "access" => ("Ease of Access ▸ Ease of Access Center", self.page_access()),
-            "startup" => ("System and Security ▸ Startup Programs", self.page_startup()),
-            "services" => ("System and Security ▸ Administrative Tools ▸ Services", self.page_services()),
-            c if c.starts_with("cat:") => (match &c[4..] { "system" => "System and Security", "network" => "Network and Internet", "hardware" => "Hardware and Sound", "programs" => "Programs", "users" => "User Accounts and Family Safety", "appearance" => "Appearance and Personalization", "clock" => "Clock, Language, and Region", _ => "Ease of Access" }, self.page_category(&c[4..])),
-            _ => ("All Control Panel Items", self.page_home()),
+        let all = registry::applets();
+        let (crumb, w): (String, gtk::Widget) = if page == "personalization" {
+            util::spawn(&["aerode", "personalize"]);
+            ("Appearance and Personalization".into(), self.page_category("appearance"))
+        } else if let Some(c) = page.strip_prefix("cat:") {
+            (registry::category_name(c).into(), self.page_category(c))
+        } else if page == "all" || page == "all-small" {
+            ("All Control Panel Items".into(), self.page_all(page == "all-small"))
+        } else if let Some(q) = page.strip_prefix("search:") {
+            (format!("Search Results for \"{q}\""), self.page_search(q))
+        } else if let Some(a) = all.iter().find(|a| a.id == page) {
+            (format!("{} ▸ {}", registry::category_name(a.cat), a.name), (a.build)(self))
+        } else {
+            ("All Control Panel Items".into(), self.page_home())
         };
         self.crumb.set_text(&format!("Control Panel ▸ {crumb}"));
         self.win.set_title(crumb.rsplit(" ▸ ").next().unwrap_or("Control Panel"));
@@ -310,7 +307,7 @@ impl Cp {
         let v = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         top.pack_start(&title("Adjust your computer's settings"), false, false, 0);
-        top.pack_end(&gtk::Label::new(Some("View by:  Category")), false, false, 0);
+        top.pack_end(&self.view_by("category"), false, false, 0);
         v.pack_start(&top, false, false, 0);
         let grid = gtk::Grid::new();
         grid.set_column_spacing(40);
@@ -346,38 +343,101 @@ impl Cp {
     }
 
     fn page_category(self: &Rc<Self>, cat: &str) -> gtk::Widget {
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        type L = (&'static str, &'static str);
-        let items: Vec<(&str, &str, &[L])> = match cat {
-            "system" => vec![("System", "computer", &[("View amount of RAM and processor speed", "system"), ("See the name of this computer", "system")]),
-                ("Power Options", "preferences-system-power", &[("Change battery settings", "power"), ("Change what the power buttons do", "power")]),
-                ("Administrative Tools", "applications-system", &[("Startup programs", "startup"), ("View services", "services")])],
-            "network" => vec![("Network and Sharing Center", "network-workgroup", &[("View network status and tasks", "network"), ("Connect to a network", "network")])],
-            "hardware" => vec![("Devices and Printers", "printer", &[("Add a device", "devices"), ("Mouse", "mouse"), ("Keyboard", "keyboard")]),
-                ("Sound", "audio-volume-high", &[("Adjust system volume", "sound"), ("Change system sounds", "sound"), ("Manage audio devices", "sound")]),
-                ("Power Options", "preferences-system-power", &[("Change power-saving settings", "power")]),
-                ("Display", "preferences-desktop-display", &[("Adjust screen resolution", "display")])],
-            "programs" => vec![("Programs and Features", "system-software-install", &[("Uninstall a program", "programs")]),
-                ("Default Programs", "preferences-desktop-default-applications", &[("Change default settings for media or devices", "defaults"), ("Set your default programs", "defaults")])],
-            "users" => vec![("User Accounts", "user-home", &[("Change account picture", "users"), ("Change your password", "users")])],
-            "appearance" => vec![("Personalization", "preferences-desktop-wallpaper", &[("Change the theme", "personalization"), ("Change desktop background", "personalization")]),
-                ("Display", "preferences-desktop-display", &[("Adjust screen resolution", "display")])],
-            "clock" => vec![("Date and Time", "preferences-system-time", &[("Set the time and date", "datetime"), ("Change the time zone", "datetime")]),
-                ("Region and Language", "preferences-desktop-keyboard", &[("Change keyboards or other input methods", "region")])],
-            _ => vec![("Ease of Access Center", "preferences-desktop-accessibility", &[("Optimize visual display", "access"), ("Change how your keyboard works", "access")])],
-        };
-        for (name, icon, links) in items {
+        let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        top.pack_end(&self.view_by("category"), false, false, 0);
+        v.pack_start(&top, false, false, 0);
+        for a in registry::applets().into_iter().filter(|a| a.cat == cat) {
             let h = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            h.pack_start(&util::image(icon, 48), false, false, 0);
+            h.pack_start(&util::image(a.icon, 48), false, false, 0);
             let col = gtk::Box::new(gtk::Orientation::Vertical, 1);
-            let t = gtk::Label::new(Some(name));
-            t.set_xalign(0.0);
+            let t = gtk::Button::with_label(a.name);
             t.style_context().add_class("cp-cat");
+            t.set_halign(gtk::Align::Start);
+            t.set_relief(gtk::ReliefStyle::None);
+            { let (me, id) = (self.clone(), a.id); t.connect_clicked(move |_| me.open(id)); }
             col.pack_start(&t, false, false, 0);
-            for (l, p) in links.iter() { let (me, p) = (self.clone(), *p); col.pack_start(&link(l, move || me.open(p)), false, false, 0); }
-            h.pack_start(&col, false, false, 0);
+            let tasks = gtk::FlowBox::new();
+            tasks.set_selection_mode(gtk::SelectionMode::None);
+            tasks.set_max_children_per_line(3);
+            tasks.set_column_spacing(14);
+            for (l, p) in a.tasks.iter() { let (me, p) = (self.clone(), *p); tasks.add(&link(l, move || me.open(p))); }
+            col.pack_start(&tasks, false, false, 0);
+            h.pack_start(&col, true, true, 0);
             v.pack_start(&h, false, false, 0);
         }
+        v.upcast()
+    }
+
+    /// Win7 "View by: Category / Large icons / Small icons" in the top right.
+    fn view_by(self: &Rc<Self>, current: &str) -> gtk::Widget {
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        h.pack_start(&gtk::Label::new(Some("View by:")), false, false, 0);
+        let c = gtk::ComboBoxText::new();
+        for (id, l) in [("category", "Category"), ("all", "Large icons"), ("all-small", "Small icons")] { c.append(Some(id), l); }
+        c.set_active_id(Some(current));
+        let me = self.clone();
+        c.connect_changed(move |c| if let Some(id) = c.active_id() { me.open(if id == "category" { "home" } else { id.as_str() }); });
+        h.pack_start(&c, false, false, 0);
+        h.upcast()
+    }
+
+    /// "All Control Panel Items": every applet by name, large (32 px) or small (16 px) icons.
+    fn page_all(self: &Rc<Self>, small: bool) -> gtk::Widget {
+        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        top.pack_start(&title("Adjust your computer's settings"), false, false, 0);
+        top.pack_end(&self.view_by(if small { "all-small" } else { "all" }), false, false, 0);
+        v.pack_start(&top, false, false, 0);
+        let mut all = registry::applets();
+        all.sort_by(|a, b| a.name.cmp(b.name));
+        let flow = gtk::FlowBox::new();
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_homogeneous(true);
+        flow.set_min_children_per_line(if small { 4 } else { 3 });
+        flow.set_max_children_per_line(if small { 4 } else { 3 });
+        flow.set_row_spacing(if small { 2 } else { 8 });
+        for a in all {
+            let b = gtk::Button::new();
+            b.set_relief(gtk::ReliefStyle::None);
+            b.style_context().add_class("cp-item");
+            let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            h.pack_start(&util::image(a.icon, if small { 16 } else { 32 }), false, false, 0);
+            let l = gtk::Label::new(Some(a.name));
+            l.set_xalign(0.0);
+            l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            h.pack_start(&l, true, true, 0);
+            b.add(&h);
+            let (me, id) = (self.clone(), a.id);
+            b.connect_clicked(move |_| me.open(id));
+            flow.add(&b);
+        }
+        v.pack_start(&flow, false, false, 0);
+        v.upcast()
+    }
+
+    /// Search: every applet and task whose name or keywords match.
+    fn page_search(self: &Rc<Self>, q: &str) -> gtk::Widget {
+        let v = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let q = q.to_lowercase();
+        let words: Vec<&str> = q.split_whitespace().collect();
+        let mut n = 0;
+        for a in registry::applets() {
+            let hay = format!("{} {} {}", a.name.to_lowercase(), a.keywords, a.tasks.iter().map(|t| t.0.to_lowercase()).collect::<Vec<_>>().join(" "));
+            if words.is_empty() || !words.iter().all(|w| hay.contains(w)) { continue; }
+            n += 1;
+            let h = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            h.pack_start(&util::image(a.icon, 32), false, false, 0);
+            let col = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            { let (me, id) = (self.clone(), a.id); let t = link(a.name, move || me.open(id)); t.style_context().add_class("cp-cat"); col.pack_start(&t, false, false, 0); }
+            for (l, p) in a.tasks.iter().filter(|t| words.iter().any(|w| t.0.to_lowercase().contains(w)) || words.iter().any(|w| a.keywords.contains(w))) {
+                let (me, p) = (self.clone(), *p);
+                col.pack_start(&link(l, move || me.open(p)), false, false, 0);
+            }
+            h.pack_start(&col, true, true, 0);
+            v.pack_start(&h, false, false, 0);
+        }
+        if n == 0 { v.pack_start(&text("No items match your search."), false, false, 0); }
         v.upcast()
     }
 
@@ -1272,16 +1332,13 @@ fn build(app: &gtk::Application, page: String) {
         c.open(&prev.unwrap_or_default());
     }); }
     {
-        // search: jump to the first page whose name matches
+        // search: results page that follows what you type (Win7 searches as you type)
         let c = cp.clone();
-        search.connect_activate(move |s| {
-            let q = s.text().to_lowercase();
-            let pages = [("system", "system computer name ram processor"), ("display", "display resolution screen monitor"), ("personalization", "personalization wallpaper background theme color"),
-                ("sound", "sound audio volume speakers microphone"), ("datetime", "date time clock zone"), ("power", "power battery sleep plan"), ("mouse", "mouse pointer cursor"),
-                ("keyboard", "keyboard repeat"), ("programs", "programs uninstall software features"), ("users", "user account password picture"), ("network", "network internet wifi"),
-                ("defaults", "default programs browser"), ("devices", "devices printers bluetooth"), ("region", "region language keyboard layout"), ("access", "ease access magnifier"),
-                ("startup", "startup autostart"), ("services", "services")];
-            if let Some((p, _)) = pages.iter().find(|(_, k)| k.split(' ').any(|w| w.starts_with(&q) || q.contains(w))) { c.open(p); }
+        search.connect_changed(move |s| {
+            let q = s.text().trim().to_string();
+            if q.is_empty() { return; }
+            if c.history.borrow().last().map(|h| h.starts_with("search:")).unwrap_or(false) { c.history.borrow_mut().pop(); }
+            c.open(&format!("search:{q}"));
         });
     }
     root.show_all();
