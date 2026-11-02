@@ -63,17 +63,17 @@ extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/A
   (xrandr without --rate, motion events not coalesced, console polling).
 - Verify on real hardware: real glass under picom, polkit agent with real polkitd, DDC/CI brightness,
   fish inside aerode-cmd, multi-monitor/high-refresh behaviour.
-- Not done yet: battery balloons/alarms per Win7 strings (scope=Device batteries, packs), a udev
-  device watcher instead of polling for Device Connect/Disconnect, Menu Pop-up/Command sounds in the
-  shell's menus, Print Complete via CUPS, `aerode restart`/log off `pkill`s that can hit other
-  sessions of the same user, `aerode-control sound-properties <sink>` for the mixer's device button.
+- Not done yet: verify on real hardware everything below; Win7 metrics still taken from user
+  feedback rather than measurements (caption text offset, 58 px task buttons at a 62 px pitch).
 - Done since the handoff (verify on real hardware): taskbar/Start menu from msstyles (`src/shellstyle.rs`)
   with colour hot-track, Win7 animations (`src/anim.rs`, `src/wm/anim.rs`, picom 12 config from
   `src/picomconf.rs`), desktop icon drag and drop, taskbar/tray context menus, Win7 event sound scheme +
   startup sound, SndVol flyout and Volume Mixer (`src/flyouts/volume.rs`, `src/mixer.rs`,
   `src/sys/audio.rs`), Snipping Tool / Command Prompt parity, Win7 sound schemes + lock/unlock/log-off/X bell/window
   event sounds, message-box sounds via `util::message_dialog_sounds`, paced interactive resize
-  (`_NET_WM_SYNC_REQUEST`), Motif min/max functions, configurable Aero Shake (Ease of Access).
+  (`_NET_WM_SYNC_REQUEST`), Motif min/max functions, configurable Aero Shake (Ease of Access), per-display `aerode restart`/log off
+  (`util::procs_on_display`), udev device sounds, composite battery + stobject balloon, menu and
+  print-complete sounds, the mixer's per-device Properties (`aerode-control sound-properties:<sink>`).
 - Done since: notification daemon (`src/notify.rs`, Win7 balloons), notification area with SNI +
   XEmbed icons and the Show hidden icons overflow (`src/tray/`), window system menu, keyboard layouts
   (`src/kbdlayout.rs`), Control Panel applet registry (`src/bin/aerode-control/`), Window Color with

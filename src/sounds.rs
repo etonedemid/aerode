@@ -717,6 +717,26 @@ pub fn start_watchers() {
     let mut warned = (false, false);
     let mut theme_for = 0u64;
     let mut ticks = 0u32;
+    // Print Complete (Win7's spooler plays it when a job of yours has printed): this user's CUPS
+    // jobs that left the queue as completed. On its own thread – lpstat can wait on a far-away
+    // CUPS server – and only asking while a sound is assigned.
+    let _ = std::thread::Builder::new().name("aerode-print-sound".into()).spawn(|| {
+        let mut printing: HashSet<String> = HashSet::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(6));
+            if file_for(Event::PrintComplete).is_none() || !crate::util::which("lpstat") { printing.clear(); continue; }
+            let ids = |args: &[&str]| -> HashSet<String> {
+                crate::util::output(args).unwrap_or_default().lines().filter_map(|l| l.split_whitespace().next().map(str::to_string)).collect()
+            };
+            let now = ids(&["lpstat", "-o"]);
+            let gone: Vec<String> = printing.difference(&now).cloned().collect();
+            if !gone.is_empty() {
+                let done = ids(&["lpstat", "-W", "completed", "-o"]);
+                if gone.iter().any(|j| done.contains(j)) { play_with(Event::PrintComplete, Policy::Yield); }
+            }
+            printing = now;
+        }
+    });
     let mut tick = move || {
         ticks = ticks.wrapping_add(1);
         if !live || ticks % 5 == 0 { check(); }
