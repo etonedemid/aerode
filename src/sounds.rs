@@ -696,19 +696,30 @@ pub fn write_sound_theme() -> std::io::Result<()> {
 /// the XDG sound theme following the scheme.
 pub fn start_watchers() {
     use std::collections::HashSet;
+    use std::{cell::RefCell, rc::Rc};
     fn usb() -> HashSet<String> {
         std::fs::read_dir("/sys/bus/usb/devices").map(|r| r.flatten()
             .filter(|e| !e.file_name().to_string_lossy().contains(':'))
             .map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
     }
-    let mut known = usb();
+    // plug/unplug: right away from udev's events (Win7 plays them on arrival), the poll below
+    // only catches what a missing udevadm would miss
+    let known = Rc::new(RefCell::new(usb()));
+    let check = { let known = known.clone(); Rc::new(move || {
+        let now = usb();
+        let mut k = known.borrow_mut();
+        if now.difference(&k).next().is_some() { play_with(Event::DeviceConnect, Policy::Yield); }
+        else if k.difference(&now).next().is_some() { play_with(Event::DeviceDisconnect, Policy::Yield); }
+        *k = now;
+    }) };
+    let live = { let c = check.clone(); crate::util::watch_lines(&["udevadm", "monitor", "--kernel", "--subsystem-match=usb"],
+        |l| l.contains(" add ") || l.contains(" remove "), std::time::Duration::from_millis(150), move || c()) };
     let mut warned = (false, false);
     let mut theme_for = 0u64;
+    let mut ticks = 0u32;
     let mut tick = move || {
-        let now = usb();
-        if now.difference(&known).next().is_some() { play_with(Event::DeviceConnect, Policy::Yield); }
-        else if known.difference(&now).next().is_some() { play_with(Event::DeviceDisconnect, Policy::Yield); }
-        known = now;
+        ticks = ticks.wrapping_add(1);
+        if !live || ticks % 5 == 0 { check(); }
         if let Some(b) = crate::sys::battery() {
             let (w, ev) = battery_alarm(warned, b.status == "Discharging", b.percent as i64);
             warned = w;

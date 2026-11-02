@@ -384,7 +384,7 @@ pub fn message_dialog_sounds() {
     if DIALOG_SOUNDS.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
     unsafe extern "C" fn hook(_hint: *mut gobject_ffi::GSignalInvocationHint, n: u32, params: *const gobject_ffi::GValue, _data: gtk::glib::ffi::gpointer) -> gtk::glib::ffi::gboolean {
         if n >= 1 {
-            let v = &*(params as *const gtk::glib::Value);
+            let v = unsafe { &*(params as *const gtk::glib::Value) };
             if let Ok(d) = v.get::<gtk::glib::Object>().map(|o| o.downcast::<gtk::MessageDialog>()) {
                 if let Ok(d) = d {
                     let kind = d.message_type();
