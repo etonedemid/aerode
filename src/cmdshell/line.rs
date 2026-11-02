@@ -110,6 +110,10 @@ impl Editor {
         let mut hist_i = self.history.len();
         let mut comp_state: Option<(String, usize, usize)> = None; // (original line, cycle index, cursor)
         self.set_cursor_shape();
+        // a prompt ending on a row's last column leaves the cursor waiting to wrap: wrap it now, so the
+        // input starts at column 0 of the next row like on Windows
+        let (cols, _) = term_size();
+        if prompt_len > 0 && prompt_len % cols == 0 { out(" \r"); }
         loop {
             let (cols, _) = term_size();
             let k = read_key()?;
@@ -189,29 +193,37 @@ impl Editor {
         }
     }
 
-    /// Move the cursor (which is at `from` in the input) to the end of the text.
+    /// Move the cursor (which is at `from` in the input, placed explicitly) to the end of the text: the
+    /// row of its last character (the terminal wraps lazily, so a full row keeps the cursor on it).
     fn move_to(&self, prompt_len: usize, from: usize, to: usize, cols: usize) {
-        let (r0, _) = ((prompt_len + from) / cols, 0);
-        let (r1, c1) = ((prompt_len + to) / cols, (prompt_len + to) % cols);
+        let r0 = (prompt_len + from) / cols;
+        let end = prompt_len + to;
+        let full = to > 0 && end % cols == 0;
+        let r1 = if full { end / cols - 1 } else { end / cols };
         if r1 > r0 { out(&format!("\x1b[{}B", r1 - r0)); } else if r0 > r1 { out(&format!("\x1b[{}A", r0 - r1)); }
-        out(&format!("\r\x1b[{}G", c1 + 1));
+        out(&format!("\r\x1b[{}G", if full { cols } else { end % cols + 1 }));
     }
 
+    /// Rewrite the input after the prompt (which may span several rows) and put the cursor at `pos`.
+    /// Positions count from the start of the prompt; the cursor sits at `old_pos`, placed explicitly.
     fn redraw(&self, prompt_len: usize, buf: &[char], old_pos: usize, pos: usize, old_len: usize, cols: usize) {
-        // go to start of input, rewrite everything, blank the leftovers, place cursor
-        let r = (prompt_len + old_pos) / cols;
-        if r > 0 { out(&format!("\x1b[{r}A")); }
-        out(&format!("\r\x1b[{}G", prompt_len % cols + 1));
+        let col = |p: usize| p % cols + 1;
+        // to the start of the input: the prompt's last row
+        let (start_row, cur_row) = (prompt_len / cols, (prompt_len + old_pos) / cols);
+        if cur_row > start_row { out(&format!("\x1b[{}A", cur_row - start_row)); }
+        out(&format!("\r\x1b[{}G", col(prompt_len)));
         let s: String = buf.iter().map(|c| if *c == '\u{1a}' { '→' } else { *c }).collect();
         out(&s);
         let pad = old_len.saturating_sub(buf.len());
         if pad > 0 { out(&" ".repeat(pad)); }
-        let end = prompt_len + buf.len().max(old_len);
-        // after writing, the terminal cursor is at `end` (or wrapped); go back to `pos`
-        let (re, rp) = (end / cols, (prompt_len + pos) / cols);
-        let re = if end % cols == 0 && end > 0 { re - 1 } else { re };
-        if re > rp { out(&format!("\x1b[{}A", re - rp)); }
-        out(&format!("\r\x1b[{}G", (prompt_len + pos) % cols + 1));
+        // where the terminal cursor is now: a write that ended on a row's last column leaves it on that
+        // row (pending wrap)
+        let written = buf.len().max(old_len);
+        let end = prompt_len + written;
+        let end_row = if written > 0 && end % cols == 0 { end / cols - 1 } else { end / cols };
+        let want = (prompt_len + pos) / cols;
+        if want > end_row { out(&"\r\n".repeat(want - end_row)); } else if end_row > want { out(&format!("\x1b[{}A", end_row - want)); }
+        out(&format!("\r\x1b[{}G", col(prompt_len + pos)));
     }
 
     fn colors(&self) -> String { format!("\x1b[{};{}m", sgr_win(self.popup_fg, false), sgr_win(self.popup_bg, true)) }

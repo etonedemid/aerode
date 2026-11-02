@@ -183,7 +183,7 @@ impl Term {
             let line = self.lines.get(y);
             let s: String = (x0..=x1.min(self.cols - 1)).map(|x| line.and_then(|l| l.get(x)).map(|c| c.ch).unwrap_or(' ')).collect();
             out.push_str(s.trim_end());
-            if y != y1 { out.push_str("\r\n"); }
+            if y != y1 { out.push('\n'); }
         }
         out
     }
@@ -243,6 +243,13 @@ impl Term {
                         if let Some((main, vt, cx, cy)) = self.alt.take() {
                             self.lines = main; self.vt = vt; self.cx = cx; self.cy = cy;
                             if *p == 1049 { self.cx = self.saved.0; self.cy = self.saved.1; }
+                            // the window may have been resized meanwhile: the main screen's lines get the
+                            // new width and the cursor stays on the (possibly shorter) screen
+                            let cols = self.cols;
+                            for l in self.lines.iter_mut() { l.resize(cols, Cell::default()); }
+                            self.cx = self.cx.min(cols - 1);
+                            if self.cy >= self.rows { self.vt += self.cy + 1 - self.rows; self.cy = self.rows - 1; }
+                            self.ensure_lines();
                         }
                     }
                     self.dirty = true;
@@ -385,6 +392,25 @@ mod tests {
         // nothing lost: the viewport moved down inside the 300-line buffer
         assert_eq!(t.line(0).unwrap()[0].ch, 'l');
         assert_eq!(t.vt, 3);
+    }
+
+    #[test]
+    fn alt_screen_survives_resize() {
+        // vim in a 25-row window that is made 14 rows high, then quits
+        let mut t = Term::new(80, 25, 300);
+        for i in 0..15 { feed(&mut t, &format!("line{i}\r\n")); }
+        feed(&mut t, "$ vim");
+        feed(&mut t, "\x1b[?1049h\x1b[2J\x1b[24;1Hstatus");
+        t.resize(80, 14, 300);
+        feed(&mut t, "\x1b[1;14r\x1b[14;1H~");
+        feed(&mut t, "\x1b[r\x1b[?1049l\r\n$ ");
+        // the main screen comes back with the prompt on screen, its text intact
+        assert!(t.vt + t.cy < t.vt + t.rows);
+        assert_eq!(row(&t, t.cy), "$");
+        assert_eq!(t.line(t.vt + t.cy - 1).unwrap().iter().map(|c| c.ch).collect::<String>().trim_end(), "$ vim");
+        for _ in 0..5 { feed(&mut t, "x\r\n"); }
+        assert_eq!(t.line(12).unwrap().iter().map(|c| c.ch).collect::<String>().trim_end(), "line12");
+        assert_eq!(t.cy, t.rows - 1);
     }
 
     #[test]
