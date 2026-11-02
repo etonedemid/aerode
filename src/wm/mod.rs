@@ -1178,6 +1178,7 @@ impl Wm {
         } else if e.type_ == a.WM_CHANGE_STATE && d[0] == 3 {
             self.minimize(w);
         } else if e.type_ == a._NET_WM_STATE {
+            let mut decided: Option<bool> = None;
             for prop in [d[1], d[2]] {
                 if prop == 0 { continue; }
                 let Some(c) = self.clients.get(&w) else { return };
@@ -1187,7 +1188,8 @@ impl Wm {
                     else if prop == a._NET_WM_STATE_HIDDEN { c.minimized }
                     else if prop == a._NET_WM_STATE_DEMANDS_ATTENTION { c.urgent }
                     else if prop == a._NET_WM_STATE_SKIP_TASKBAR { c.skip_taskbar } else { continue };
-                let on = match d[0] { 0 => false, 1 => true, _ => !cur };
+                // a toggle of MAXIMIZED_VERT+HORZ must not flip back on the second atom
+                let on = match d[0] { 0 => false, 1 => true, _ => *decided.get_or_insert(!cur) };
                 if prop == a._NET_WM_STATE_FULLSCREEN { self.set_fullscreen(w, on); }
                 else if prop == a._NET_WM_STATE_MAXIMIZED_VERT || prop == a._NET_WM_STATE_MAXIMIZED_HORZ { if on != cur { self.set_maximized(w, on); } }
                 else if prop == a._NET_WM_STATE_ABOVE { self.clients.get_mut(&w).unwrap().above = on; self.restack(); }
@@ -1487,7 +1489,7 @@ impl Wm {
     // ---------------------------------------------------------- keys
     fn key(&mut self, e: KeyPressEvent, press: bool) {
         let switching = self.switcher.is_some();
-        let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, switching, &self.conn) else { return };
+        let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, e.time, switching, &self.conn) else { return };
         let act = self.active;
         use keys::Action::*;
         match action {

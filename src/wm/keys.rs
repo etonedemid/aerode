@@ -71,6 +71,8 @@ pub struct Keys {
     super_codes: Vec<u8>,
     super_down_alone: bool,
     alt_codes: Vec<u8>,
+    /// last key release (code, time): X autorepeat sends release+press with the same timestamp
+    last_release: (u8, u32),
 }
 
 impl Keys {
@@ -105,8 +107,10 @@ impl Keys {
         Ok(())
     }
 
-    pub fn lookup(&mut self, code: u8, state: u16, press: bool, switching: bool, conn: &RustConnection) -> Option<Action> {
+    pub fn lookup(&mut self, code: u8, state: u16, press: bool, time: u32, switching: bool, conn: &RustConnection) -> Option<Action> {
         let mods = state & (SHIFT | CTRL | ALT | SUPER);
+        let repeat = press && self.last_release == (code, time);
+        if !press { self.last_release = (code, time); }
         if self.super_codes.contains(&code) {
             if press { self.super_down_alone = !switching; let _ = conn.allow_events(Allow::ASYNC_KEYBOARD, x11rb::CURRENT_TIME); return None; }
             if switching { self.super_down_alone = false; return Some(Action::SwitchCommit); }
@@ -126,7 +130,12 @@ impl Keys {
         if (sym == XK_LEFT || sym == XK_RIGHT) && mods & ALT != 0 && mods & SUPER == 0 && mods & CTRL == 0 {
             return Some(if sym == XK_LEFT { Action::SwitchPrev } else { Action::SwitchNext });
         }
-        self.map.get(&(code, mods)).cloned()
+        let act = self.map.get(&(code, mods)).cloned()?;
+        // holding a window-management chord must not run it again on whatever window got focus next
+        // (Win+Down held would minimize window after window); switching, desktops and media keys repeat
+        if repeat && !matches!(act, Action::SwitchNext | Action::SwitchPrev | Action::DesktopLeft | Action::DesktopRight)
+            && !matches!(&act, Action::Spawn(c) if c.contains("volume") || c.contains("brightness")) { return None; }
+        Some(act)
     }
 }
 
