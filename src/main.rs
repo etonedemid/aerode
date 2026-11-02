@@ -222,14 +222,8 @@ fn main() -> glib::ExitCode {
 /// Is this display's aerode-wm running from a binary that has since been replaced on disk
 /// (/proc/<pid>/exe reads "… (deleted)" after ./install.sh)?
 fn wm_binary_replaced() -> bool {
-    // ":0.0" and ":0" are the same display
-    let norm = |d: &str| match d.rsplit_once(':') { Some((h, n)) => format!("{h}:{}", n.split('.').next().unwrap_or(n)), None => d.to_string() };
-    let ours = norm(std::env::var("DISPLAY").unwrap_or_default().as_str());
-    util::output(&["pgrep", "-x", "aerode-wm"]).unwrap_or_default().lines().any(|pid| {
-        let pid = pid.trim();
-        let replaced = std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.to_string_lossy().ends_with(" (deleted)")).unwrap_or(false);
-        let env = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
-        replaced && env.split(|b| *b == 0).any(|kv| kv.strip_prefix(b"DISPLAY=").map(|d| norm(&*String::from_utf8_lossy(d)) == ours).unwrap_or(false))
+    util::procs_on_display("aerode-wm", None).into_iter().any(|pid| {
+        std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.to_string_lossy().ends_with(" (deleted)")).unwrap_or(false)
     })
 }
 
@@ -273,14 +267,14 @@ fn restart_session() {
     // 2. shell (taskbar, desktop, start menu)
     let _ = std::process::Command::new(&exe).arg("quit").status();
     std::thread::sleep(std::time::Duration::from_millis(600));
-    for pid in util::output(&["pgrep", "-x", "aerode"]).unwrap_or_default().lines() {
-        if pid.trim() != std::process::id().to_string() { let _ = std::process::Command::new("kill").arg(pid.trim()).status(); }
-    }
+    // a shell that did not quit: only this display's `aerode shell` (not `aerode lock`, the
+    // mixer or another session's shell)
+    util::signal_on_display("aerode", Some("shell"), libc::SIGTERM);
     detached(&[&exe, "shell"]);
     println!("aerode: shell restarted");
     // 3. compositor
     if util::which("picom") {
-        let _ = std::process::Command::new("pkill").args(["-x", "picom"]).status();
+        util::signal_on_display("picom", None, libc::SIGTERM);
         std::thread::sleep(std::time::Duration::from_millis(300));
         // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off);
         // the marker ("# aerode-picom 3") is the same one the session script checks
