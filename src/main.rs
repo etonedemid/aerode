@@ -218,7 +218,8 @@ fn restart_session() {
             wm_stale = true;
         } else if win != 0 && name == b"Aerode" {
             let ev = ClientMessageEvent::new(32, win, restart, [0u32; 5]);
-            wm_ok = conn.send_event(false, win, EventMask::NO_EVENT, ev).is_ok() && conn.flush().is_ok();
+            // round trip before the connection is dropped, or the server may never deliver it
+            wm_ok = conn.send_event(false, win, EventMask::NO_EVENT, ev).is_ok() && conn.get_input_focus().map(|c| c.reply().is_ok()).unwrap_or(false);
         }
     }
     if wm_stale {

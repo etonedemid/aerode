@@ -175,7 +175,9 @@ impl Wm {
             EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
             ev,
         );
-        let _ = self.conn.flush();
+        // a round trip, not just a flush: short-lived callers (aerode sysmenu) exit right after,
+        // and a connection that closes with the request in flight can lose it
+        let _ = self.conn.get_input_focus().map(|c| c.reply());
     }
 
     /// (maximized, minimized, resizable, can minimize) for the system menu.
