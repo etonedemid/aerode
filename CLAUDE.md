@@ -63,9 +63,9 @@ extracted assets in `~/.local/share/aerode/`, icon theme `~/.local/share/icons/A
   (xrandr without --rate, motion events not coalesced, console polling).
 - Verify on real hardware: real glass under picom, polkit agent with real polkitd, DDC/CI brightness,
   fish inside aerode-cmd, multi-monitor/high-refresh behaviour.
-- Not done yet: verify on real hardware everything below. Task buttons are 58 px with 4 px gaps at
-  the owner's request; native Win7 (learn.microsoft.com shell/images/taskbar/taskbar.png) measures
-  60 px buttons (incl. the 1 px dark outline) with 2 px gaps, 62 px pitch, first button at x=57.
+- Not done yet: verify on real hardware everything below. Task buttons are Win7 exact (owner's
+  choice): native Win7 (learn.microsoft.com shell/images/taskbar/taskbar.png) measures 60 px buttons
+  (incl. the 1 px dark outline) with 2 px gaps, 62 px pitch, first button at x=57.
   Caption text/icon positions are measured from a native Win7 frame (see the decor.rs comment).
   `examples/strdump` reads PE/MUI string tables (Win7 UI strings).
 - Done since the handoff (verify on real hardware): taskbar/Start menu from msstyles (`src/shellstyle.rs`)
