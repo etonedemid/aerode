@@ -189,3 +189,17 @@ button.vol-flat:disabled { opacity: 0.5; }
 .vol-tip label { color: #575757; }
 .mixer frame > border { border: 1px solid #d5dfe5; border-radius: 3px; }
 .vol-options label.main-instruction { color: #003399; font-size: 12pt; }
+
+/* taskbar Jump List (colours measured on a native Win7 Jump List): near-white list, #003399
+   category heading with a light rule, the tasks on a tinted band */
+menu.jumplist { background-color: rgb(251, 252, 254); padding: 0; min-width: 261px;
+  border: 1px solid rgb(10, 25, 33); }
+menu.jumplist menuitem { padding: 2px 10px 2px 15px; min-height: 18px; }
+menu.jumplist menuitem.jl-head { padding: 6px 10px 2px 15px; }
+menu.jumplist menuitem.jl-head:disabled label.jl-heading, menu.jumplist label.jl-heading { color: #003399; }
+menu.jumplist separator.jl-rule { background-color: rgb(170, 187, 222); min-height: 1px; margin: 0; }
+menu.jumplist separator.jl-band, menu.jumplist menuitem.jl-band { margin: 6px 0 0 0; padding: 0; min-height: 1px;
+  background-color: rgb(204, 217, 234); }
+menu.jumplist menuitem.jl-task { background-color: rgb(241, 245, 251); }
+menu.jumplist menuitem.jl-task:hover, menu.jumplist menuitem.jl-item:hover {
+  background-image: linear-gradient(to bottom, #fafbfd, #ebf3fd); border: 1px solid #b8d6fb; border-radius: 3px; }

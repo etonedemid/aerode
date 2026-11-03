@@ -512,16 +512,72 @@ impl Taskbar {
         }
     }
 
+    /// Win7's taskbar Jump List: the program's "Recent" category (the files it opened, as in the
+    /// Start menu), then the tasks area – the program itself, Pin/Unpin this program from taskbar,
+    /// Close window – on its tinted band. Colours measured on a native Win7 Jump List
+    /// (learn.microsoft.com shell/images/taskbar/jumplist.png).
     fn jump_menu(self: &Rc<Self>, g: &Group) -> gtk::Menu {
         let m = gtk::Menu::new();
+        m.style_context().add_class("jumplist");
+        // no check-mark column: Win7's icons sit near the left edge
+        m.set_reserve_toggle_size(false);
+        let row = |icon: Option<gtk::Image>, label: &str, task: bool| -> gtk::MenuItem {
+            let it = gtk::MenuItem::new();
+            let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            match icon { Some(i) => h.pack_start(&i, false, false, 0), None => { let sp = gtk::Box::new(gtk::Orientation::Horizontal, 0); sp.set_size_request(16, 16); h.pack_start(&sp, false, false, 0); } }
+            let l = gtk::Label::new(Some(label));
+            l.set_xalign(0.0);
+            l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            l.set_max_width_chars(34);
+            h.pack_start(&l, true, true, 0);
+            it.add(&h);
+            it.style_context().add_class(if task { "jl-task" } else { "jl-item" });
+            it
+        };
+        let gicon_img = |i: &gio::Icon| gtk::Image::from_gicon(i, gtk::IconSize::Menu);
+        let theme_img = |names: &[&str]| -> Option<gtk::Image> {
+            let n = util::first_icon(names);
+            (!n.is_empty()).then(|| gtk::Image::from_icon_name(Some(n), gtk::IconSize::Menu))
+        };
+        // ---- the Recent category
         if let Some(a) = &g.app {
-            let it = gtk::MenuItem::with_label(&a.display_name());
+            let (cat, items) = crate::startmenu::jump_items(a, &crate::startmenu::recent_index());
+            if !items.is_empty() {
+                let head = gtk::MenuItem::new();
+                let hb = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let hl = gtk::Label::new(Some(cat));
+                hl.style_context().add_class("jl-heading");
+                hb.pack_start(&hl, false, false, 0);
+                let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+                rule.set_valign(gtk::Align::Center);
+                rule.style_context().add_class("jl-rule");
+                hb.pack_start(&rule, true, true, 0);
+                head.add(&hb);
+                head.style_context().add_class("jl-head");
+                head.set_sensitive(false);
+                m.append(&head);
+                for j in items {
+                    let it = row(j.icon.as_ref().map(gicon_img), &j.label, false);
+                    if let Some(t) = &j.tip { it.set_tooltip_text(Some(t)); }
+                    let act = j.act.clone();
+                    it.connect_activate(move |_| act());
+                    m.append(&it);
+                }
+            }
+        }
+        // ---- the tasks band
+        let sep = gtk::SeparatorMenuItem::new();
+        sep.style_context().add_class("jl-band");
+        if !m.children().is_empty() { m.append(&sep); }
+        if let Some(a) = &g.app {
+            let it = row(a.icon().as_ref().map(gicon_img), &a.display_name(), true);
             let a2 = a.clone();
             it.connect_activate(move |_| util::launch(&a2));
             m.append(&it);
             if let Some(id) = a.id() {
                 let id = id.to_string();
-                let pin = gtk::MenuItem::with_label(if g.pinned { "Unpin this program from taskbar" } else { "Pin this program to taskbar" });
+                let label = if g.pinned { "Unpin this program from taskbar" } else { "Pin this program to taskbar" };
+                let pin = row(theme_img(&["aerode-pin", "pin", "window-pin", "emblem-pin", "view-pin"]), label, true);
                 let tb = Rc::downgrade(self);
                 let was = g.pinned;
                 pin.connect_activate(move |_| {
@@ -534,8 +590,7 @@ impl Taskbar {
             }
         }
         if !g.windows.is_empty() {
-            m.append(&gtk::SeparatorMenuItem::new());
-            let it = gtk::MenuItem::with_label(if g.windows.len() > 1 { "Close all windows" } else { "Close window" });
+            let it = row(theme_img(&["window-close", "process-stop"]), if g.windows.len() > 1 { "Close all windows" } else { "Close window" }, true);
             let wm = self.wm.clone();
             let ids: Vec<u32> = g.windows.iter().map(|w| w.id).collect();
             it.connect_activate(move |_| ids.iter().for_each(|i| wm.close(*i)));
