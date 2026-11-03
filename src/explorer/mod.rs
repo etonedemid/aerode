@@ -3005,9 +3005,13 @@ fn row_frames(tv: &gtk::TreeView) {
     {
         let hot = hot.clone();
         tv.connect_motion_notify_event(move |tv, ev| {
+            // motion over the rows comes from the bin window, already in bin coordinates (converting
+            // them again subtracted the header's height: the frame sat one row above the pointer);
+            // over the column headers there is no hot row
             let (x, y) = ev.position();
-            let (bx, by) = tv.convert_widget_to_bin_window_coords(x as i32, y as i32);
-            let p = tv.path_at_pos(bx, by).and_then(|(p, ..)| p);
+            let p = if ev.window().is_some() && ev.window() == tv.bin_window() {
+                tv.path_at_pos(x as i32, y as i32).and_then(|(p, ..)| p)
+            } else { None };
             if *hot.borrow() != p { *hot.borrow_mut() = p; tv.queue_draw(); }
             glib::Propagation::Proceed
         });

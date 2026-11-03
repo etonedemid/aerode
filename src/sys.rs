@@ -111,7 +111,8 @@ pub fn battery() -> Option<Battery> {
     let packs: Vec<Pack> = rd.flatten().filter_map(|e| {
         let p = e.path();
         if read(&p, "type")? != "Battery" { return None; }
-        if read(&p, "scope").as_deref() == Some("Device") || read(&p, "present").as_deref() == Some("0") { return None; }
+        if !is_system_battery(&e.file_name().to_string_lossy(), read(&p, "scope").as_deref(), &device_subsystem(&p)) { return None; }
+        if read(&p, "present").as_deref() == Some("0") { return None; }
         let num = |f: &str| read(&p, f).and_then(|v| v.parse::<u64>().ok());
         let (now, full) = match (num("energy_now"), num("energy_full")) {
             (Some(n), Some(f)) => (Some(n), Some(f)),
@@ -120,6 +121,25 @@ pub fn battery() -> Option<Battery> {
         Some(Pack { capacity: num("capacity").map(|c| c as u32), now, full, status: read(&p, "status").unwrap_or_default() })
     }).collect();
     composite(&packs)
+}
+
+/// The subsystem of a power supply's device ("acpi", "hid", "usb", "bluetooth", …).
+fn device_subsystem(p: &std::path::Path) -> String {
+    std::fs::read_link(p.join("device/subsystem")).ok()
+        .and_then(|l| l.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default()
+}
+
+/// Does this power supply power the computer? Only system batteries count (a laptop's ACPI packs);
+/// a wireless mouse, keyboard, headset or game controller reports a "Battery" too, often without
+/// scope=Device (that depends on the driver), so their bus decides.
+pub fn is_system_battery(name: &str, scope: Option<&str>, subsystem: &str) -> bool {
+    if scope == Some("Device") { return false; }
+    if scope == Some("System") { return true; }
+    if matches!(subsystem, "hid" | "usb" | "bluetooth" | "input" | "hidraw" | "i2c" | "serio") { return false; }
+    let n = name.to_ascii_lowercase();
+    if ["hid", "hidpp", "ps-controller", "sony_controller", "wacom", "xpadneo", "gip", "nintendo", "steam", "logitech", "apple-", "magicmouse"]
+        .iter().any(|p| n.starts_with(p)) { return false; }
+    true
 }
 
 #[derive(Debug, Clone, Default)]
@@ -160,6 +180,15 @@ mod battery_tests {
     }
     #[test]
     fn none_without_packs() { assert!(composite(&[]).is_none()); }
+    #[test]
+    fn peripherals_are_not_the_computers_battery() {
+        assert!(is_system_battery("BAT0", None, "acpi"));
+        assert!(is_system_battery("BAT1", Some("System"), ""));
+        assert!(!is_system_battery("hidpp_battery_0", None, "hid"));
+        assert!(!is_system_battery("ps-controller-battery-aa:bb", None, ""));
+        assert!(!is_system_battery("hid-00:11:22:33:44:55-battery", None, ""));
+        assert!(!is_system_battery("BAT0", Some("Device"), "acpi"));
+    }
 }
 
 /// Icon names for the battery, best first: the 10 %-step Win7 icons (built from batmeter.dll by
