@@ -148,3 +148,28 @@ pub fn paint(cr: &cairo::Context, class: &str, part: i32, state: i32, x: f64, y:
 pub fn size(class: &str, part: i32, state: i32) -> Option<(i32, i32)> {
     frame(class, part, state).map(|s| (s.width(), s.height()))
 }
+
+/// Win7's travel buttons (Explorer, Control Panel, Aero wizards): paint `b` from aero.msstyles'
+/// Navigation class – part 1 Back, 2 Forward, 3 the recent-pages arrow; states 1 normal, 2 hot,
+/// 3 pressed, 4 disabled – the glossy, partly see-through orbs drawn over the glass. Without an
+/// extracted theme the button keeps whatever it had.
+pub fn nav_button(b: &gtk::Button, part: i32) {
+    use gtk::prelude::*;
+    let Some((w, h)) = size("Navigation", part, 1) else { return };
+    // a from_icon_name button keeps its icon as the "image" property: clear that, not just the child
+    b.set_image(None::<&gtk::Widget>);
+    if let Some(c) = b.child() { b.remove(&c); }
+    let css = gtk::CssProvider::new();
+    let _ = css.load_from_data(b"button, button:hover, button:active, button:disabled { min-width: 0; min-height: 0; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }");
+    b.style_context().add_provider(&css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 10);
+    b.set_size_request(w, h);
+    b.connect_draw(move |b, cr| {
+        let f = b.state_flags();
+        let state = if !b.is_sensitive() || f.contains(gtk::StateFlags::INSENSITIVE) { 4 }
+            else if f.contains(gtk::StateFlags::ACTIVE) { 3 }
+            else if f.contains(gtk::StateFlags::PRELIGHT) { 2 } else { 1 };
+        let (aw, ah) = (b.allocated_width() as f64, b.allocated_height() as f64);
+        let (x, y) = (((aw - w as f64) / 2.0).floor(), ((ah - h as f64) / 2.0).floor());
+        if paint(cr, "Navigation", part, state, x, y, w as f64, h as f64) { gtk::glib::Propagation::Stop } else { gtk::glib::Propagation::Proceed }
+    });
+}

@@ -463,6 +463,8 @@ fn build(app: &gtk::Application, page: String) {
     let fwd = gtk::Button::from_icon_name(Some("go-next-symbolic"), gtk::IconSize::Button);
     fwd.style_context().add_class("nav");
     fwd.set_sensitive(false);
+    aerode::shellstyle::nav_button(&back, 1);
+    aerode::shellstyle::nav_button(&fwd, 2);
     header.pack_start(&back, false, false, 0);
     header.pack_start(&fwd, false, false, 0);
     let addr = gtk::Box::new(gtk::Orientation::Horizontal, 6);

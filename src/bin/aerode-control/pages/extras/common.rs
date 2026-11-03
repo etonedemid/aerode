@@ -416,6 +416,7 @@ pub fn wizard(title: &str, icon: &str, parent: Option<&gtk::Window>, size: (i32,
     let back = if aero {
         let b = gtk::Button::from_icon_name(Some("go-previous-symbolic"), gtk::IconSize::Button);
         b.style_context().add_class("nav");
+        aerode::shellstyle::nav_button(&b, 1);
         let strip = glass_strip();
         strip.pack_start(&b, false, false, 0);
         // the strip is the frame's glass continued: translucent under a compositor, redrawn when
