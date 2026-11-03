@@ -246,8 +246,6 @@ pub const CSS: &str = r#"
 .exp-header button.nav:disabled { background-image: radial-gradient(circle at 50% 35%, #f4f6f8, #c8d0da 60%, #9aa6b4); border-color: #7d8896; }
 .exp-header button.nav image { color: #fff; -gtk-icon-shadow: 0 1px 1px rgba(0,0,0,0.5); }
 .exp-header button.recent { min-width: 12px; min-height: 20px; padding: 0; border: none; background: none; box-shadow: none; }
-.exp-header button.w7nav, .exp-header button.w7nav:hover, .exp-header button.w7nav:active, .exp-header button.w7nav:disabled {
-  min-width: 0; min-height: 0; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }
 .exp-addr { background-color: rgba(255,255,255,0.92); border: 1px solid rgba(0,0,0,0.55); border-radius: 2px; min-height: 22px; }
 .exp-addr button { background: none; border: 1px solid transparent; border-radius: 0; box-shadow: none; padding: 0 3px; min-height: 20px; color: #000; }
 .exp-addr button:hover, .exp-addr button.open { background-image: linear-gradient(to bottom, #eaf6fd, #bfe2f8); border-color: #3c7fb1; }
@@ -410,7 +408,7 @@ impl Explorer {
         recent_b.set_focus_on_click(false);
         // Win7's travel buttons are aero.msstyles' Navigation parts (1 Back, 2 Forward, 3 the
         // recent-pages arrow): glossy, partly see-through orbs drawn over the glass header
-        for (b, part) in [(&back_b, 1), (&fwd_b, 2), (&recent_b, 3)] { msstyles_nav_button(b, part); }
+        for (b, part) in [(&back_b, 1), (&fwd_b, 2), (&recent_b, 3)] { crate::shellstyle::nav_button(b, part); }
         header.pack_start(&back_b, false, false, 0);
         header.pack_start(&fwd_b, false, false, 0);
         header.pack_start(&recent_b, false, false, 0);
@@ -3402,20 +3400,3 @@ mod tests {
     }
 }
 
-/// Paint `b` from aero.msstyles' Navigation class `part` (states: 1 normal, 2 hot, 3 pressed,
-/// 4 disabled) instead of the CSS orb, when the extracted theme has it.
-fn msstyles_nav_button(b: &gtk::Button, part: i32) {
-    let Some((w, h)) = crate::shellstyle::size("Navigation", part, 1) else { return };
-    if let Some(c) = b.child() { b.remove(&c); }
-    b.style_context().add_class("w7nav");
-    b.set_size_request(w, h);
-    b.connect_draw(move |b, cr| {
-        let f = b.state_flags();
-        let state = if !b.is_sensitive() || f.contains(gtk::StateFlags::INSENSITIVE) { 4 }
-            else if f.contains(gtk::StateFlags::ACTIVE) { 3 }
-            else if f.contains(gtk::StateFlags::PRELIGHT) { 2 } else { 1 };
-        let (aw, ah) = (b.allocated_width() as f64, b.allocated_height() as f64);
-        let (x, y) = (((aw - w as f64) / 2.0).floor(), ((ah - h as f64) / 2.0).floor());
-        if crate::shellstyle::paint(cr, "Navigation", part, state, x, y, w as f64, h as f64) { glib::Propagation::Stop } else { glib::Propagation::Proceed }
-    });
-}
