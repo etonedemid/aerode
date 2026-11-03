@@ -154,6 +154,11 @@ pub fn decode_dib(d: &[u8], icon: bool) -> Result<image::RgbaImage> {
     let pal: Vec<[u8; 4]> = (0..ncol).filter_map(|i| d.get(pal_off + i * 4..pal_off + i * 4 + 4).map(|c| [c[2], c[1], c[0], 255])).collect();
     let bits = pal_off + ncol * 4;
     let stride = (w * bpp).div_ceil(32) * 4;
+    // BI_RLE8 / BI_RLE4 / JPEG / PNG bodies are not plain rows; truncated data must not be read
+    // past its end (shell32.dll carries such bitmaps)
+    if matches!(comp, 1 | 2 | 4 | 5) { bail!("compressed DIB ({comp})"); }
+    if !matches!(bpp, 1 | 4 | 8 | 24 | 32) { bail!("unsupported bpp {bpp}"); }
+    if d.len() < bits + stride * h { bail!("truncated DIB"); }
     let mask_off = bits + stride * h;
     let mstride = w.div_ceil(32) * 4;
     let mut img = image::RgbaImage::new(w as u32, h as u32);
@@ -223,5 +228,18 @@ mod tests {
         assert_eq!(img.get_pixel(0, 0).0, [0, 0, 255, 255]);
         assert_eq!(img.get_pixel(1, 0).0[3], 0);
         assert_eq!(img.get_pixel(0, 1).0, [255, 0, 0, 255]);
+    }
+}
+
+#[cfg(test)]
+mod dib_tests {
+    #[test]
+    fn truncated_or_rle_dib_is_an_error_not_a_panic() {
+        let mut h = vec![0u8; 40];
+        h[0] = 40; h[4] = 16; h[8] = 16; h[12] = 1; h[14] = 8; // 16x16, 8 bpp, no pixel data
+        assert!(super::decode_dib(&h, false).is_err());
+        h[16] = 1; // BI_RLE8
+        h.extend(std::iter::repeat(0).take(2000));
+        assert!(super::decode_dib(&h, false).is_err());
     }
 }
