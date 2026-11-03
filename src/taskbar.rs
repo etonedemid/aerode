@@ -577,7 +577,7 @@ impl Taskbar {
             if let Some(id) = a.id() {
                 let id = id.to_string();
                 let label = if g.pinned { "Unpin this program from taskbar" } else { "Pin this program to taskbar" };
-                let pin = row(theme_img(&["aerode-pin", "pin", "window-pin", "emblem-pin", "view-pin"]), label, true);
+                let pin = row(Some(jl_icon(JlIcon::Pin)).or_else(|| theme_img(&["pin", "window-pin", "emblem-pin"])), label, true);
                 let tb = Rc::downgrade(self);
                 let was = g.pinned;
                 pin.connect_activate(move |_| {
@@ -590,7 +590,7 @@ impl Taskbar {
             }
         }
         if !g.windows.is_empty() {
-            let it = row(theme_img(&["window-close", "process-stop"]), if g.windows.len() > 1 { "Close all windows" } else { "Close window" }, true);
+            let it = row(Some(jl_icon(JlIcon::Close)), if g.windows.len() > 1 { "Close all windows" } else { "Close window" }, true);
             let wm = self.wm.clone();
             let ids: Vec<u32> = g.windows.iter().map(|w| w.id).collect();
             it.connect_activate(move |_| ids.iter().for_each(|i| wm.close(*i)));
@@ -959,4 +959,67 @@ fn arrange_windows(wm: &Rc<Wm>, how: u8) {
             _ => { let ww = w / n; wm.place_outer(c.id, x0 + i * ww, y0, ww, h); }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum JlIcon { Pin, Close }
+
+/// The Jump List's own 16 px task icons, as in Win7: Close window is the theme's small red
+/// caption close button (aero.msstyles Window part 19) with a white, dark-outlined X; the pin is
+/// Win7's blue pushpin, drawn (no Windows resource carries it as an image).
+fn jl_icon(which: JlIcon) -> gtk::Image {
+    let surf = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 16, 16).expect("surface");
+    {
+        let cr = gtk::cairo::Context::new(&surf).expect("cairo");
+        match which {
+            JlIcon::Close => {
+                if !shellstyle::paint(&cr, "Window", 19, 1, 1.0, 1.0, 14.0, 14.0) {
+                    crate::glass::rounded(&cr, 1.5, 1.5, 13.0, 13.0, 2.0);
+                    let g = gtk::cairo::LinearGradient::new(0.0, 1.0, 0.0, 15.0);
+                    g.add_color_stop_rgb(0.0, 0.93, 0.55, 0.47);
+                    g.add_color_stop_rgb(0.5, 0.80, 0.25, 0.16);
+                    g.add_color_stop_rgb(1.0, 0.72, 0.18, 0.10);
+                    cr.set_source(&g).ok();
+                    cr.fill_preserve().ok();
+                    cr.set_source_rgb(0.45, 0.10, 0.06);
+                    cr.set_line_width(1.0);
+                    cr.stroke().ok();
+                }
+                // the X: a dark outline under a white stroke
+                cr.set_line_cap(gtk::cairo::LineCap::Round);
+                for (w, c) in [(3.2, (0.25, 0.22, 0.22)), (1.6, (1.0, 1.0, 1.0))] {
+                    cr.set_line_width(w);
+                    cr.set_source_rgb(c.0, c.1, c.2);
+                    cr.move_to(5.0, 5.0); cr.line_to(11.0, 11.0);
+                    cr.move_to(11.0, 5.0); cr.line_to(5.0, 11.0);
+                    cr.stroke().ok();
+                }
+            }
+            JlIcon::Pin => {
+                // Win7's pushpin: a grey needle pointing down-left, a blue collar disc and a
+                // round glossy blue head up-right
+                cr.set_line_cap(gtk::cairo::LineCap::Round);
+                cr.set_line_width(1.8);
+                cr.set_source_rgb(0.42, 0.44, 0.48);
+                cr.move_to(1.5, 14.5); cr.line_to(6.5, 9.5);
+                cr.stroke().ok();
+                cr.save().ok();
+                cr.translate(7.6, 8.4);
+                cr.rotate(-std::f64::consts::FRAC_PI_4);
+                cr.scale(1.0, 0.5);
+                cr.arc(0.0, 0.0, 5.6, 0.0, std::f64::consts::TAU);
+                cr.restore().ok();
+                cr.set_source_rgb(0.12, 0.34, 0.70);
+                cr.fill().ok();
+                let g = gtk::cairo::RadialGradient::new(9.6, 4.0, 0.5, 10.6, 5.4, 4.8);
+                g.add_color_stop_rgb(0.0, 0.80, 0.92, 1.0);
+                g.add_color_stop_rgb(0.45, 0.30, 0.60, 0.95);
+                g.add_color_stop_rgb(1.0, 0.08, 0.30, 0.68);
+                cr.arc(10.6, 5.4, 4.4, 0.0, std::f64::consts::TAU);
+                cr.set_source(&g).ok();
+                cr.fill().ok();
+            }
+        }
+    }
+    gtk::Image::from_surface(Some(&surf))
 }
