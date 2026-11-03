@@ -146,14 +146,14 @@ pub struct StartMenu {
     jump_timer: RefCell<Option<glib::SourceId>>,
 }
 
-type Act = Rc<dyn Fn()>;
+pub(crate) type Act = Rc<dyn Fn()>;
 
 /// One entry of a Start menu jump list.
-struct JumpItem {
-    label: String,
-    icon: Option<gio::Icon>,
-    tip: Option<String>,
-    act: Act,
+pub(crate) struct JumpItem {
+    pub label: String,
+    pub icon: Option<gio::Icon>,
+    pub tip: Option<String>,
+    pub act: Act,
 }
 
 /// Getting Started's jump list (Win7: Personalize Windows, Transfer your files, Share with a
@@ -170,9 +170,9 @@ const GETTING_STARTED_TASKS: &[(&str, &str, &[&str])] = &[
 
 /// The recently used files, newest first: (entry, programs that opened it (lower case), id of the
 /// default program for its type).
-type RecentIndex = Vec<(gtk::RecentInfo, Vec<String>, Option<String>)>;
+pub(crate) type RecentIndex = Vec<(gtk::RecentInfo, Vec<String>, Option<String>)>;
 
-fn recent_index() -> RecentIndex {
+pub(crate) fn recent_index() -> RecentIndex {
     let Some(rm) = gtk::RecentManager::default() else { return vec![] };
     let mut items = rm.items();
     items.sort_by_key(|i| std::cmp::Reverse(i.modified()));
@@ -187,7 +187,7 @@ fn recent_index() -> RecentIndex {
 
 /// A program's Start menu jump list: Getting Started's tasks, else the recently opened files the
 /// program opened or is the default program for (Win7's "Recent" category), newest first.
-fn jump_items(app: &gio::AppInfo, recent: &RecentIndex) -> (&'static str, Vec<JumpItem>) {
+pub(crate) fn jump_items(app: &gio::AppInfo, recent: &RecentIndex) -> (&'static str, Vec<JumpItem>) {
     let id = app.id().map(|s| s.to_string()).unwrap_or_default();
     if id == "aerode-gettingstarted.desktop" {
         let v = GETTING_STARTED_TASKS.iter().map(|(l, icon, cmd)| {
