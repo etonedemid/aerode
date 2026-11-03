@@ -6,7 +6,7 @@ Windows 7 as closely as possible, while doing everything a modern Plasma desktop
 ## Rules
 - Commits: author `Demid <etonedemid@gmail.com>`. **Never** add `Co-Authored-By` or any Claude
   attribution/trailer lines to commits or PRs.
-- Push to `origin main` (github.com/etonedemid/aerode, private).
+- Push to `origin main` (github.com/etonedemid/aerode, public: never commit secrets or Microsoft files).
 - Never commit Microsoft files. All Windows 7 artwork/fonts/sounds are extracted at install time
   from the user's own ISO by `aerode-extract` into the home directory.
 - Wayland port is planned for later; for now everything is X11.
