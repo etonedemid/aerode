@@ -730,9 +730,7 @@ fn app_icon(s: &sys::Stream) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     if !s.icon.is_empty() { if let Some(p) = util::pixbuf(&s.icon, 32) { return Some(p); } }
     let bin = std::path::Path::new(&s.binary).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     if !bin.is_empty() {
-        if let Some(a) = util::app_by_id(&format!("{bin}.desktop")).or_else(|| util::all_apps().into_iter().find(|a| {
-            a.executable().file_name().map(|f| f.to_string_lossy() == bin).unwrap_or(false)
-        })) {
+        if let Some(a) = util::app_by_id(&format!("{bin}.desktop")).or_else(|| util::all_apps().into_iter().find(|a| util::own_exe(a) == bin.to_lowercase())) {
             if let Some(p) = util::gicon_pixbuf(a.icon().as_ref(), 32) { return Some(p); }
         }
         if let Some(p) = util::pixbuf(&bin, 32) { return Some(p); }

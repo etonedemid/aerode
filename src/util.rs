@@ -83,6 +83,16 @@ pub fn all_apps() -> Vec<gio::AppInfo> {
     v
 }
 
+/// Lowercase file name of the program `a` runs as itself; empty for a shortcut that only hands a URL
+/// to another program ("steam steam://rungameid/284160" is a game, not Steam).
+pub fn own_exe(a: &gio::AppInfo) -> String {
+    let cmd = a.commandline().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
+    if passes_url(&cmd) { return String::new(); }
+    a.executable().file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+fn passes_url(cmdline: &str) -> bool { cmdline.split_whitespace().skip(1).any(|arg| arg.contains("://")) }
+
 pub fn app_by_id(id: &str) -> Option<gio::AppInfo> {
     gio::DesktopAppInfo::new(id).map(|d| d.upcast())
 }
@@ -516,4 +526,15 @@ pub fn notify(app: &str, icon: &str, summary: &str, body: &str, suppress_sound: 
         c.call(Some("org.freedesktop.Notifications"), "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Notify",
             Some(&args), None, gio::DBusCallFlags::NONE, 5000, gio::Cancellable::NONE, |_| {});
     });
+}
+
+#[cfg(test)]
+mod own_exe_tests {
+    #[test]
+    fn shortcuts_that_pass_a_url_are_not_the_program_itself() {
+        assert!(super::passes_url("steam steam://rungameid/284160"));
+        assert!(super::passes_url("claude-desktop \"claude://claude.ai/new\""));
+        assert!(!super::passes_url("/usr/bin/steam %U"));
+        assert!(!super::passes_url("brave --incognito"));
+    }
 }

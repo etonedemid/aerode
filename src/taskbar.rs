@@ -65,8 +65,7 @@ pub fn app_key(app: &gio::AppInfo) -> String {
             return c.to_lowercase();
         }
     }
-    let exe = app.executable();
-    let exe = exe.file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let exe = util::own_exe(app);
     if !exe.is_empty() && exe != "env" && exe != "flatpak" && exe != "sh" {
         return exe;
     }

@@ -545,7 +545,7 @@ fn app_info(n: &Note) -> Option<gio::AppInfo> {
     util::all_apps().into_iter().find(|a| {
         a.display_name().to_lowercase() == name
             || a.id().map(|i| i.trim_end_matches(".desktop").to_lowercase().rsplit('.').next() == Some(name.as_str())).unwrap_or(false)
-            || a.executable().file_name().map(|f| f.to_string_lossy().to_lowercase() == name).unwrap_or(false)
+            || util::own_exe(a) == name
     })
 }
 
