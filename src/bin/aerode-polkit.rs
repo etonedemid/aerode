@@ -89,15 +89,31 @@ fn helper_path() -> Option<&'static str> {
         .into_iter().find(|p| std::path::Path::new(p).exists())
 }
 
-/// Run polkit's setuid helper. Returns Ok(true) on SUCCESS, Ok(false) on failure,
+/// Polkit >= 127 runs its helper from systemd, behind this socket, and no longer installs it setuid.
+const HELPER_SOCKET: &str = "/run/polkit/agent-helper.socket";
+
+/// Talk to polkit's helper. Returns Ok(true) on SUCCESS, Ok(false) on failure,
 /// with any PAM error/info text collected for display.
 fn authenticate(user: &str, cookie: &str, password: &str) -> (bool, String) {
-    let Some(helper) = helper_path() else { return (false, "polkit-agent-helper-1 not found".into()) };
-    let Ok(mut child) = Command::new(helper).arg(user).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
-        return (false, "could not start the polkit helper".into());
+    let mut child = None;
+    let (mut stdin, out): (Box<dyn Write>, Box<dyn std::io::Read>) = match std::os::unix::net::UnixStream::connect(HELPER_SOCKET).and_then(|s| Ok((s.try_clone()?, s))) {
+        Ok((w, r)) => {
+            let mut w = w;
+            // over the socket the user comes first, where the setuid helper takes it as an argument
+            let _ = writeln!(w, "{user}");
+            (Box::new(w), Box::new(r))
+        }
+        Err(_) => {
+            let Some(helper) = helper_path() else { return (false, "polkit-agent-helper-1 not found".into()) };
+            let Ok(mut c) = Command::new(helper).arg(user).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+                return (false, "could not start the polkit helper".into());
+            };
+            let io: (Box<dyn Write>, Box<dyn std::io::Read>) = (Box::new(c.stdin.take().unwrap()), Box::new(c.stdout.take().unwrap()));
+            child = Some(c);
+            io
+        }
     };
-    let mut stdin = child.stdin.take().unwrap();
-    let out = BufReader::new(child.stdout.take().unwrap());
+    let out = BufReader::new(out);
     // modern helpers read the cookie from stdin
     let _ = writeln!(stdin, "{cookie}");
     let mut msg = String::new();
@@ -117,7 +133,7 @@ fn authenticate(user: &str, cookie: &str, password: &str) -> (bool, String) {
         }
     }
     drop(stdin);
-    let _ = child.wait();
+    if let Some(mut c) = child { let _ = c.wait(); }
     (ok, msg)
 }
 
