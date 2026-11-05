@@ -701,7 +701,8 @@ pub fn performance(parent: Option<&gtk::Window>) -> gtk::Dialog {
     s.on_apply(move || {
         let mode = ["auto", "appearance", "performance", "custom"][rs.iter().position(|r| r.is_active()).unwrap_or(0)];
         let on: Vec<(&str, bool)> = checks.iter().map(|(k, c)| (*k, c.is_active())).collect();
-        apply_effects(mode, &on, &live);
+        // the state now, not when the dialog opened: Apply can be pressed more than once
+        apply_effects(mode, &on, &live_effects());
         let want_auto = sch[0].is_active();
         if want_auto != autogroup {
             let v = want_auto as u8;
