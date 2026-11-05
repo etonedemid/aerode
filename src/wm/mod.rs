@@ -881,13 +881,16 @@ impl Wm {
         }
         // keep maximised/snapped/fullscreen windows fitted to their monitor
         let ids: Vec<u32> = self.clients.keys().copied().collect();
-        for w in ids {
-            let Some(c) = self.clients.get(&w) else { continue };
-            let mon = self.monitor_of(&self.frame_rect(c));
-            if c.fullscreen { let m = self.monitors.get(mon).copied().unwrap_or_default(); self.configure(w, m); }
-            else if c.maximized { let wa = self.workarea_for(mon); self.maximize_in(w, wa); }
-            else if let Some(side) = c.snapped { let wa = self.workarea_for(mon); self.snap_in(w, side, wa); }
-        }
+        for w in ids { self.refit(w); }
+    }
+
+    /// Fit a maximised, snapped or fullscreen window to its monitor again.
+    fn refit(&mut self, w: u32) {
+        let Some(c) = self.clients.get(&w) else { return };
+        let mon = self.monitor_of(&self.frame_rect(c));
+        if c.fullscreen { let m = self.monitors.get(mon).copied().unwrap_or_default(); self.configure(w, m); }
+        else if c.maximized { let wa = self.workarea_for(mon); self.maximize_in(w, wa); }
+        else if let Some(side) = c.snapped { let wa = self.workarea_for(mon); self.snap_in(w, side, wa); }
     }
 
     /// Client geometry that makes a window's *visible* outer edge fill `outer`
@@ -1678,7 +1681,12 @@ impl Wm {
         } else if e.atom == a._GTK_FRAME_EXTENTS {
             let csd = self.read_csd(e.window);
             let c = self.clients.get_mut(&e.window).unwrap();
-            if c.frame.is_none() { c.csd = csd; }
+            if c.frame.is_none() && c.csd != csd {
+                c.csd = csd;
+                // Electron and GTK drop their shadow margins once maximised: a rectangle fitted with
+                // the old margins would hang off the screen and under the taskbar
+                self.refit(e.window);
+            }
         } else if e.atom == a.WM_PROTOCOLS {
             let p = self.prop32(e.window, a.WM_PROTOCOLS, AtomEnum::ATOM);
             self.clients.get_mut(&e.window).unwrap().protocols = p;
