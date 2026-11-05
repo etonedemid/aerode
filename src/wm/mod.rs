@@ -98,8 +98,8 @@ pub struct Client {
     pub focus_fade: Option<anim::Tween>,
     /// the next hide is a minimise that picom animates: unmap a moment later (`anim::MIN_UNMAP_DELAY`)
     pub defer_unmap: bool,
-    /// interactive resize pacing: the client's _NET_WM_SYNC_REQUEST_COUNTER, the last value we
-    /// asked for and when, the newest size waiting for the client, when we last resized it
+    /// interactive move/resize pacing: the client's _NET_WM_SYNC_REQUEST_COUNTER, the last value we
+    /// asked for and when, the newest geometry held back, when we last applied one
     pub sync_counter: Option<u32>,
     pub sync_sent: i64,
     pub sync_wait: Option<Instant>,
@@ -138,6 +138,10 @@ enum Drag {
 const SHAKE_MIN: i32 = 24;
 const SHAKE_DEFAULT_FLIPS: usize = 8;
 const SHAKE_MS_PER_FLIP: u128 = 250;
+/// Shortest time between two steps of an interactive move. Faster than a 165 Hz frame on purpose: a
+/// free-running timer at exactly the refresh rate would beat against vsync and skip frames.
+// ponytail: fixed 250 Hz rather than read from RandR; screens above 240 Hz get under one step a frame
+const MOVE_PACE: std::time::Duration = std::time::Duration::from_millis(4);
 
 #[derive(Default)]
 struct Shake {
@@ -783,6 +787,13 @@ impl Wm {
     }
 
     pub fn configure(&mut self, w: u32, g: Rect) {
+        self.place(w, g);
+        self.notify_geometry(w);
+    }
+
+    /// `configure` without the synthetic ConfigureNotify, for the steps of an interactive move:
+    /// `finish_move` tells the client once, when the drag ends.
+    fn place(&mut self, w: u32, g: Rect) {
         let Some(c) = self.clients.get_mut(&w) else { return };
         let g = Rect { w: g.w.max(c.min_size.0.max(1)), h: g.h.max(c.min_size.1.max(1)), ..g };
         let size_changed = g.w != c.geom.w || g.h != c.geom.h;
@@ -801,7 +812,6 @@ impl Wm {
         } else {
             let _ = self.conn.configure_window(w, &ConfigureWindowAux::new().x(g.x).y(g.y).width(g.w as u32).height(g.h as u32));
         }
-        self.notify_geometry(w);
         if size_changed {
             self.layout_zones(w);
             self.redraw(w);
@@ -1521,7 +1531,8 @@ impl Wm {
                         // sleep until an event arrives or the next frame/timer is due
                         Some(d) => {
                             use std::os::unix::io::AsRawFd;
-                            let ms = d.saturating_duration_since(Instant::now()).as_millis().min(1000) as i32;
+                            // rounded up: rounding down spins on poll(0) through the last partial millisecond
+                            let ms = d.saturating_duration_since(Instant::now()).as_micros().div_ceil(1000).min(1000) as i32;
                             let mut fd = libc::pollfd { fd: self.conn.stream().as_raw_fd(), events: libc::POLLIN, revents: 0 };
                             unsafe { libc::poll(&mut fd, 1, ms) };
                             continue;
@@ -1891,6 +1902,29 @@ impl Wm {
         self.configure(w, g);
     }
 
+    /// A step of an interactive move: at most one per `MOVE_PACE`, keeping only the newest position.
+    /// A window without a frame gets a real ConfigureNotify for every step, and browsers and
+    /// Electron handle each one: a 1000 Hz mouse must not mean 1000 of those a second.
+    fn move_paced(&mut self, w: u32, g: Rect) {
+        let Some(c) = self.clients.get_mut(&w) else { return };
+        let since = c.last_resize.map(|t| t.elapsed()).unwrap_or(MOVE_PACE);
+        if since < MOVE_PACE {
+            c.resize_pending = Some(g);
+            self.timers.set(MOVE_PACE - since, anim::Timer::ResizeFlush(w));
+            return;
+        }
+        c.resize_pending = None;
+        c.last_resize = Some(Instant::now());
+        self.place(w, g);
+    }
+
+    /// The move drag of `w` is over: apply the position still held back and tell the client where
+    /// the window ended up (ICCCM 4.1.5), so popups and drop targets land in the right place.
+    fn finish_move(&mut self, w: u32) {
+        if let Some(g) = self.clients.get_mut(&w).and_then(|c| c.resize_pending.take()) { self.place(w, g); }
+        self.notify_geometry(w);
+    }
+
     fn sync_value(&self, counter: u32) -> Option<i64> {
         use x11rb::protocol::sync::ConnectionExt as _;
         let r = self.conn.sync_query_counter(counter).ok()?.reply().ok()?;
@@ -1904,6 +1938,7 @@ impl Wm {
                 if let Some(g) = c.resize_pending.take() { self.configure(w, g); }
             }
         }
+        if let Some((w, Drag::Move { .. })) = self.drag { self.finish_move(w); }
         if let Some((w, Drag::Button { .. })) = self.drag {
             if let Some(c) = self.clients.get_mut(&w) { c.pressed = None; }
             self.redraw(w);
@@ -1954,6 +1989,7 @@ impl Wm {
     fn button_release(&mut self, e: ButtonReleaseEvent) {
         let Some((w, drag)) = self.drag.take() else { self.hide_snap_preview(); return };
         let _ = self.conn.ungrab_pointer(e.time);
+        if matches!(drag, Drag::Move { .. }) { self.finish_move(w); }
         if matches!(drag, Drag::Resize { .. }) || matches!(drag, Drag::Move { .. }) { self.redraw(w); }
         match drag {
             Drag::Button { btn } => {
@@ -2037,7 +2073,7 @@ impl Wm {
                 let min_y = self.monitors.iter().map(|m| m.y).min().unwrap_or(0);
                 let floor = if c.frame.is_some() { min_y + TOP / 2 } else { min_y - c.csd[2] };
                 let g = Rect { x: ox + rx - cx, y: (oy + ry - cy).max(floor), ..c.geom };
-                self.configure(w, g);
+                self.move_paced(w, g);
                 let (arrange, flips) = self.arrange_options();
                 if self.kbd_drag.is_none() && flips > 0 && self.shake.step(w, rx, ry, flips) { self.aero_shake(w); }
                 // Aero Snap preview when touching a screen edge
@@ -2419,8 +2455,11 @@ impl Wm {
                 anim::Timer::DelProp { win, atom } => { let _ = self.conn.delete_property(win, atom); }
                 anim::Timer::ResizeFlush(w) => {
                     if let Some(g) = self.clients.get(&w).and_then(|c| c.resize_pending) {
-                        if matches!(self.drag, Some((d, Drag::Resize { .. })) if d == w) { self.resize_paced(w, g); }
-                        else { self.clients.get_mut(&w).unwrap().resize_pending = None; self.configure(w, g); }
+                        match self.drag {
+                            Some((d, Drag::Resize { .. })) if d == w => self.resize_paced(w, g),
+                            Some((d, Drag::Move { .. })) if d == w => self.move_paced(w, g),
+                            _ => { self.clients.get_mut(&w).unwrap().resize_pending = None; self.configure(w, g); }
+                        }
                     }
                 }
                 anim::Timer::SwitchPeek => {

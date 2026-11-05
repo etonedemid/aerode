@@ -108,8 +108,8 @@ pub enum Timer {
     DelProp { win: u32, atom: u32 },
     /// Alt+Tab rested on an item: peek at that window
     SwitchPeek,
-    /// an interactive resize held back for the client (_NET_WM_SYNC_REQUEST / frame pacing):
-    /// apply the newest size once the client is ready
+    /// an interactive move or resize held back (_NET_WM_SYNC_REQUEST / frame pacing):
+    /// apply the newest geometry when it is due
     ResizeFlush(u32),
 }
 
