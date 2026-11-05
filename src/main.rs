@@ -277,15 +277,16 @@ fn restart_session() {
         util::signal_on_display("picom", None, libc::SIGTERM);
         std::thread::sleep(std::time::Duration::from_millis(300));
         // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off);
-        // the marker ("# aerode-picom 3") is the same one the session script checks
+        // the marker ("# aerode-picom 4") is the same one the session script checks
         aerode::picomconf::migrate_user_config();
         let base = aerode::picomconf::base_config();
         if !aerode::config::conf_dir().join("no-compositor").exists() {
             if base.exists() {
                 // picom ≥ 12.3: the generated config with Win7's window animations
+                // one queued frame: NVIDIA's default queue makes dragged windows trail the cursor (also in the session script)
                 let conf = aerode::picomconf::config_for_picom(&base).to_string_lossy().into_owned();
-                detached(&["picom", "--config", &conf]);
-            } else { detached(&["picom"]); }
+                detached(&["env", "__GL_MaxFramesAllowed=1", "picom", "--config", &conf]);
+            } else { detached(&["env", "__GL_MaxFramesAllowed=1", "picom"]); }
             println!("aerode: compositor restarted");
         }
     }

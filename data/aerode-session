@@ -84,7 +84,7 @@ else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr
 command -v xss-lock >/dev/null && xss-lock -- aerode screensaver &
 # a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping
 # VSync and window shadows off); `aerode restart` does the same (src/picomconf.rs)
-if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 3" "$CONF/picom.conf"; then
+if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 4" "$CONF/picom.conf"; then
   VS=; SH=
   grep -q "vsync = false" "$CONF/picom.conf" && VS='s/vsync = true;/vsync = false;/'
   grep -q "^shadow = false;" "$CONF/picom.conf" && SH='0,/^shadow = true;/s//shadow = false;/'
@@ -94,7 +94,8 @@ PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/p
 # picom >= 12.3 runs a generated config that includes this one and adds Windows 7's window
 # animations as window rules; older picom (which would ignore them) keeps the plain fades
 RUN_CONF=$(aerode picom-config "$PICOM_CONF" 2>/dev/null) && [ -f "$RUN_CONF" ] && PICOM_CONF="$RUN_CONF"
-command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && picom --config "$PICOM_CONF" -b
+# one queued frame: NVIDIA's default queue makes dragged windows trail the cursor (same in src/main.rs)
+command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && __GL_MaxFramesAllowed=1 picom --config "$PICOM_CONF" -b
 # automounting for AutoPlay. Win7 plays Device Connect and opens AutoPlay, with no balloon for the
 # mount: unless the user configured udiskie, keep only its error balloons ("Job failed")
 UDISKIE=; UDCONF="${XDG_CONFIG_HOME:-$HOME/.config}/udiskie"

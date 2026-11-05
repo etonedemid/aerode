@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 pub const SHIPPED: &str = "/usr/share/aerode/picom.conf";
 /// First line of a current shipped config; a user copy without it is rebuilt from the shipped one.
-pub const MARKER: &str = "# aerode-picom 3";
+pub const MARKER: &str = "# aerode-picom 4";
 /// Width of one taskbar slot of `_AERODE_MIN_SLOT`.
 pub const SLOT: i32 = 16;
 const HEADER: &str = "# aerode-picom-run 1";
