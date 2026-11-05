@@ -149,7 +149,7 @@ impl Taskbar {
 
         // the task band starts 4 px right of the orb's 54 px: first button frame at x = 59 (Win7)
         let tasks = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        // native Win7: the first task button's outline is at x = 57 (orb 54 + 2 + the 1 px button margin)
+        // the first task button's outline is at x = 60 (orb 54 + 2 + the 4 px button margin)
         tasks.set_margin_start(2);
         row.pack_start(&tasks, true, true, 0);
 
@@ -453,6 +453,11 @@ impl Taskbar {
             }
             glib::Propagation::Stop
         });
+        // the hover may have armed the name tooltip before the click: it must not pop up over a menu
+        button.connect_query_tooltip(|b, _, _, _, _| {
+            if gtk::grab_get_current().is_some_and(|w| w.is::<gtk::Menu>()) { b.stop_signal_emission_by_name("query-tooltip"); }
+            false
+        });
         // live thumbnails when the pointer rests on a running button
         let tb = Rc::downgrade(self);
         button.connect_enter_notify_event(move |b, _| {
@@ -726,6 +731,10 @@ fn dominant_color(pb: &Pixbuf) -> Option<[f64; 3]> {
 /// 5 active hot, 6 active pressed, 7 flashing) with the colour hot-track glow on hover.
 fn themed_task_button(b: &gtk::Button, v: &Rc<BtnVis>) {
     b.style_context().add_class("w7");
+    // widget margins, not CSS ones: a CSS margin stays inside the allocation we paint, and GTK clips it
+    // off, which cuts the frame's rounded edges
+    b.set_margin_start(4);
+    b.set_margin_end(4);
     v.color.set(default_hot_color());
     b.add_events(gdk::EventMask::POINTER_MOTION_MASK | gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
     {
