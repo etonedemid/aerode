@@ -31,6 +31,7 @@ struct BtnVis {
     pressed: Cell<bool>,
     /// pointer x inside the button: the colour hot-track light follows it
     x: Cell<f64>,
+    y: Cell<f64>,
     /// hot state opacity (0..1), faded in and out
     fade: Cell<f64>,
     anim: RefCell<Option<glib::SourceId>>,
@@ -742,6 +743,7 @@ fn themed_task_button(b: &gtk::Button, v: &Rc<BtnVis>) {
         b.connect_enter_notify_event(move |b, e| {
             v.hover.set(true);
             v.x.set(e.position().0);
+            v.y.set(e.position().1);
             animate_hot(b, &v);
             glib::Propagation::Proceed
         });
@@ -761,6 +763,7 @@ fn themed_task_button(b: &gtk::Button, v: &Rc<BtnVis>) {
         let v = v.clone();
         b.connect_motion_notify_event(move |b, e| {
             v.x.set(e.position().0);
+            v.y.set(e.position().1);
             if v.fade.get() > 0.0 { b.queue_draw(); }
             glib::Propagation::Proceed
         });
@@ -859,30 +862,27 @@ fn paint_task_button(cr: &cairo::Context, v: &BtnVis, w: f64, h: f64) {
         let st = match (active, pressed) { (true, true) => 6, (true, false) => 5, (false, true) => 3, (false, false) => 2 };
         cr.push_group();
         if !flashing { shellstyle::paint(cr, "TaskBand2", 5, st, 0.0, 0.0, fw, h); }
-        paint_hot_glow(cr, v.color.get(), v.x.get(), fw, h, pressed);
+        paint_hot_glow(cr, v.color.get(), v.x.get(), v.y.get(), fw, h, pressed);
         cr.pop_group_to_source().ok();
         cr.paint_with_alpha(hot).ok();
     }
 }
 
-/// The colour hot-track light: the button fills with the icon's colour from below, brightest in
-/// an elliptical light at the bottom edge centred on the pointer, with a near-white core; the
-/// inner edge picks up the colour around the pointer too.
-fn paint_hot_glow(cr: &cairo::Context, c: [f64; 3], mx: f64, w: f64, h: f64, pressed: bool) {
+/// The colour hot-track light: a tint of the icon's colour, brightest in an elliptical light centred
+/// on the pointer (owner's choice: Win7 keeps it at the bottom edge), with a near-white core; the inner
+/// edge picks up the colour around the pointer too.
+fn paint_hot_glow(cr: &cairo::Context, c: [f64; 3], mx: f64, my: f64, w: f64, h: f64, pressed: bool) {
     let mx = mx.clamp(2.0, (w - 2.0).max(2.0));
+    let my = my.clamp(2.0, (h - 2.0).max(2.0));
     let k = if pressed { 0.75 } else { 1.0 };
     cr.save().ok();
     glass::rounded(cr, 1.0, 1.0, w - 2.0, h - 2.0, 2.0);
     cr.clip();
-    let lg = cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
-    lg.add_color_stop_rgba(0.0, c[0], c[1], c[2], 0.0);
-    lg.add_color_stop_rgba(0.45, c[0], c[1], c[2], 0.08 * k);
-    lg.add_color_stop_rgba(1.0, c[0], c[1], c[2], 0.2 * k);
-    cr.set_source(&lg).ok();
+    cr.set_source_rgba(c[0], c[1], c[2], 0.1 * k);
     cr.paint().ok();
     let blob = |rx: f64, ry: f64, col: [f64; 3], stops: &[(f64, f64)]| {
         cr.save().ok();
-        cr.translate(mx, h);
+        cr.translate(mx, my);
         cr.scale(rx, ry);
         let rg = cairo::RadialGradient::new(0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
         for (o, a) in stops { rg.add_color_stop_rgba(*o, col[0], col[1], col[2], a * k); }
@@ -895,9 +895,8 @@ fn paint_hot_glow(cr: &cairo::Context, c: [f64; 3], mx: f64, w: f64, h: f64, pre
     blob(w * 0.28, h * 0.38, core, &[(0.0, 0.85), (1.0, 0.0)]);
     cr.restore().ok();
     // the edge lights up around the pointer
-    let eg = cairo::LinearGradient::new(mx - w, 0.0, mx + w, 0.0);
-    eg.add_color_stop_rgba(0.0, c[0], c[1], c[2], 0.1 * k);
-    eg.add_color_stop_rgba(0.5, c[0], c[1], c[2], 0.65 * k);
+    let eg = cairo::RadialGradient::new(mx, my, 0.0, mx, my, w);
+    eg.add_color_stop_rgba(0.0, c[0], c[1], c[2], 0.65 * k);
     eg.add_color_stop_rgba(1.0, c[0], c[1], c[2], 0.1 * k);
     cr.set_source(&eg).ok();
     cr.set_line_width(1.0);
