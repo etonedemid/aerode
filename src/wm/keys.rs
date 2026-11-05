@@ -55,7 +55,7 @@ fn bindings() -> Vec<(u16, u32, Action)> {
         (SUPER, 'e' as u32, s("aerode-explorer")), (SUPER, 'r' as u32, s("aerode run")),
         (SUPER, 'l' as u32, s("aerode lock")), (SUPER, 'p' as u32, s("aerode-control display")),
         (SUPER, 'f' as u32, s("aerode start")), (SUPER, XK_PAUSE, s("aerode-control system")),
-        (SUPER | SHIFT, 's' as u32, s("aerode-snip --clip")), (0, XK_PRINT, s("aerode-snip --full")),
+        (SUPER | SHIFT, 's' as u32, s("spectacle --region")), (0, XK_PRINT, s("aerode-snip --full")),
         (CTRL | SHIFT, XK_ESCAPE, s("aerode-taskmgr")), (CTRL | ALT, XK_DELETE, s("aerode-taskmgr")),
         (CTRL, XK_ESCAPE, s("aerode start")),
         // volume keys as Win7's SndVolSSO handles APPCOMMAND_VOLUME_UP/DOWN/MUTE and
