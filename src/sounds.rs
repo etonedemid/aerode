@@ -565,27 +565,14 @@ pub fn set_startup_sound(on: bool) {
 
 /// Is this the first shell of this logon session? Explorer keeps a volatile session key
 /// ("LogonSoundHasBeenPlayed", StartupHasBeenRun) so restarting it replays neither the logon sound
-/// nor the Startup programs. Here it is a root window property, which lives exactly as long as the
-/// X session; its value tells a later logon on the same X server apart (AERODE_SESSION is set by
-/// the session script, so `aerode restart` and crash restarts inherit it).
+/// nor the Startup programs. Here it is a marker in the runtime directory named after AERODE_SESSION,
+/// set by the session script, so `aerode restart` and crash restarts inherit it; creating it is atomic,
+/// so two shells started together still play it once.
 pub fn first_shell_of_session() -> bool {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
-    use x11rb::wrapper::ConnectionExt as _;
     let token = std::env::var("AERODE_SESSION").ok().filter(|s| !s.is_empty())
         .or_else(|| std::env::var("XDG_SESSION_ID").ok()).unwrap_or_default();
-    let Ok((conn, screen)) = x11rb::connect(None) else { return true };
-    let root = conn.setup().roots[screen].root;
-    let Some(atom) = conn.intern_atom(false, b"_AERODE_SESSION_STARTED").ok().and_then(|c| c.reply().ok()).map(|r| r.atom) else { return true };
-    // check and set under a server grab: two shells started together still play it once
-    let _ = conn.grab_server();
-    let old = conn.get_property(false, root, atom, AtomEnum::STRING, 0, 256).ok().and_then(|c| c.reply().ok())
-        .filter(|r| r.type_ != u32::from(AtomEnum::NONE)).map(|r| r.value);
-    let fresh = match old { None => true, Some(v) => !token.is_empty() && v != token.as_bytes() };
-    if fresh { let _ = conn.change_property8(PropMode::REPLACE, root, atom, AtomEnum::STRING, token.as_bytes()); }
-    let _ = conn.ungrab_server();
-    let _ = conn.get_input_focus().ok().and_then(|c| c.reply().ok());
-    fresh
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(format!("aerode-started-{token}"))).is_ok()
 }
 
 /// First logon since boot? Windows plays the startup tune once per boot for the whole machine

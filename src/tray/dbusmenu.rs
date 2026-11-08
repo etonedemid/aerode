@@ -86,8 +86,7 @@ pub fn show(dest: String, path: String, x: i32, y: i32) {
         event(&dest, &path, 0, "opened");
         { let (d, p) = (dest.clone(), path.clone()); m.connect_deactivate(move |_| event(&d, &p, 0, "closed")); }
         m.show_all();
-        let Some(rootwin) = gdk::Screen::default().and_then(|s| s.root_window()) else { return };
-        m.popup_at_rect(&rootwin, &gdk::Rectangle::new(x, y, 1, 1), gdk::Gravity::NorthWest, gdk::Gravity::NorthWest, None);
+        crate::shellwin::popup_menu_at(&m, x, y);
     });
 }
 

@@ -1,4 +1,4 @@
-//! Aerode – a Windows 7 style desktop environment for Linux (X11).
+//! Aerode – a Windows 7 style desktop environment for Linux (Wayland).
 pub mod actioncenter;
 pub mod anim;
 pub mod autoplay;
@@ -20,7 +20,6 @@ pub mod msstyles;
 pub mod notify;
 pub mod power;
 pub mod pe;
-pub mod picomconf;
 pub mod screensaver;
 pub mod shellstyle;
 pub mod sounds;
@@ -35,4 +34,6 @@ pub mod tzinfo;
 pub mod util;
 pub mod wincolor;
 pub mod wm;
-pub mod x11;
+pub mod shellwin;
+pub mod wmclient;
+pub mod wmipc;

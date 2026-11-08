@@ -1,9 +1,9 @@
 //! The window ("system") menu: right-click on a title bar, or Alt+Space.
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
 use std::rc::Rc;
 
-use crate::x11::Wm;
+use crate::wmclient::Wm;
 
 #[derive(Clone, Copy)]
 enum Glyph { Restore, Minimize, Maximize, Close }
@@ -69,20 +69,18 @@ pub fn show(wm: Rc<Wm>, w: u32, x: i32, y: i32) {
     }
     client_items(&wm, w, &m);
     m.show_all();
-    popup(m, x, y, 0);
+    crate::shellwin::popup_menu_at(&m, x, y);
 }
 
-/// Items a client adds below Close, like Win7's console adds Edit ▸, Defaults and Properties to its window
-/// menu. `_AERODE_SYSMENU_ITEMS` (UTF-8) holds one item per line: `id<TAB>Label[<TAB>shortcut text]`, where
-/// `Sub/Label` puts the item in submenu Sub and a leading `!` on the id greys it. Choosing an item writes
-/// its id to `_AERODE_SYSMENU_CMD` on the window, which the client watches.
+/// Items a client adds below Close, like Win7's console adds Edit >, Defaults and Properties to its window
+/// menu. `$XDG_RUNTIME_DIR/aerode-sysmenu-<pid>` holds one item per line: `id<TAB>Label[<TAB>shortcut text]`,
+/// where `Sub/Label` puts the item in submenu Sub and a leading `!` on the id greys it. Choosing an item
+/// writes its id to `aerode-sysmenu-<pid>.cmd` next to it, which the client watches.
 fn client_items(wm: &Rc<Wm>, w: u32, m: &gtk::Menu) {
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
-    use x11rb::wrapper::ConnectionExt as _;
-    let atom = |n: &[u8]| wm.conn.intern_atom(false, n).ok().and_then(|c| c.reply().ok()).map(|r| r.atom);
-    let (Some(items), Some(cmd), Some(utf8)) = (atom(b"_AERODE_SYSMENU_ITEMS"), atom(b"_AERODE_SYSMENU_CMD"), atom(b"UTF8_STRING")) else { return };
-    let text = wm.conn.get_property(false, w, items, AtomEnum::ANY, 0, 16384).ok().and_then(|c| c.reply().ok())
-        .map(|r| String::from_utf8_lossy(&r.value).into_owned()).unwrap_or_default();
+    let pid = wm.state().windows.iter().find(|x| x.id == w).map(|x| x.pid).unwrap_or(0);
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from) else { return };
+    let text = std::fs::read_to_string(dir.join(format!("aerode-sysmenu-{pid}"))).unwrap_or_default();
+    let cmd = dir.join(format!("aerode-sysmenu-{pid}.cmd"));
     if text.trim().is_empty() { return; }
     m.append(&gtk::SeparatorMenuItem::new());
     let mut subs: Vec<(String, gtk::Menu)> = vec![];
@@ -121,23 +119,9 @@ fn client_items(wm: &Rc<Wm>, w: u32, m: &gtk::Menu) {
         }
         it.add(&row);
         it.set_sensitive(sensitive);
-        let wm = wm.clone();
-        it.connect_activate(move |_| {
-            let _ = wm.conn.change_property8(PropMode::REPLACE, w, cmd, utf8, id.as_bytes());
-            // a round trip so the property lands before the menu goes away
-            let _ = wm.conn.get_input_focus().ok().and_then(|c| c.reply().ok());
-        });
+        let cmd = cmd.clone();
+        it.connect_activate(move |_| { let _ = std::fs::write(&cmd, id.as_bytes()); });
         parent.append(&it);
     }
 }
 
-/// GTK gives up on a popup whose grab fails; the WM may still hold the button/key that opened it.
-fn popup(m: gtk::Menu, x: i32, y: i32, tries: u32) {
-    let Some(root) = gdk::Screen::default().and_then(|s| s.root_window()) else { return };
-    // anchored to the root window GTK would shrink the menu to a few rows; flip/slide instead
-    m.set_anchor_hints(gdk::AnchorHints::FLIP | gdk::AnchorHints::SLIDE);
-    m.popup_at_rect(&root, &gdk::Rectangle::new(x, y, 1, 1), gdk::Gravity::NorthWest, gdk::Gravity::NorthWest, None);
-    if !m.is_visible() && tries < 15 {
-        glib::timeout_add_local_once(std::time::Duration::from_millis(60), move || popup(m, x, y, tries + 1));
-    }
-}

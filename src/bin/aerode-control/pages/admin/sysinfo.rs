@@ -219,7 +219,7 @@ pub fn load(id: &str) -> Table {
         }
         "comp.display" => {
             let mut rows = vec![];
-            let modes: Vec<String> = sh(&["xrandr", "--current"]).lines().filter(|l| l.contains(" connected")).map(|l| l.to_string()).collect();
+            let modes: Vec<String> = sh(&["aerode-xrandr", "--current"]).lines().filter(|l| l.contains(" connected")).map(|l| l.to_string()).collect();
             let glx = sh(&["glxinfo", "-B"]);
             let g = |k: &str| glx.lines().find_map(|l| l.trim().strip_prefix(k)).map(|s| s.trim().to_string()).unwrap_or_default();
             for (slot, name, drv, _) in pci_by_class(&["03"]) {

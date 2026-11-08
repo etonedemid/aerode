@@ -12,7 +12,7 @@ use gtk::{cairo, gdk, gio, glib};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use aerode::{config, theme, util, x11::Wm};
+use aerode::{config, theme, util};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind { Free, Rect, Window, Full }
@@ -24,15 +24,8 @@ impl Kind {
 }
 
 fn capture_screen() -> Option<Pixbuf> {
-    let root = gdk::Screen::default()?.root_window()?;
-    let (w, h) = (root.width(), root.height());
-    let surf = cairo::ImageSurface::create(cairo::Format::Rgb24, w, h).ok()?;
-    {
-        let cr = cairo::Context::new(&surf).ok()?;
-        cr.set_source_window(&root, 0.0, 0.0);
-        cr.paint().ok()?;
-    }
-    gdk::pixbuf_get_from_surface(&surf, 0, 0, w, h)
+    let surf = aerode::wmipc::call(&aerode::wmipc::Req::Screenshot).and_then(|v| aerode::wmipc::read_image(&v))?;
+    gdk::pixbuf_get_from_surface(&surf, 0, 0, surf.width(), surf.height())
 }
 
 // ------------------------------------------------------------- options (Win7 Options dialog)
@@ -71,23 +64,8 @@ fn ink_color() -> (f64, f64, f64) { color_named(&opt_str("ink_color").unwrap_or_
 // ------------------------------------------------------------- selection overlay
 /// Frames of the visible top-level windows, topmost first, for Window Snip.
 fn window_rects() -> Vec<(i32, i32, i32, i32)> {
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
-    let Ok(wm) = Wm::connect() else { return vec![] };
-    let atom = |n: &[u8]| wm.conn.intern_atom(false, n).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
-    let (stacking, extents, state, hidden) = (atom(b"_NET_CLIENT_LIST_STACKING"), atom(b"_NET_FRAME_EXTENTS"), atom(b"_NET_WM_STATE"), atom(b"_NET_WM_STATE_HIDDEN"));
-    let prop = |w: u32, a: u32, ty: AtomEnum| -> Vec<u32> {
-        wm.conn.get_property(false, w, a, ty, 0, 1024).ok().and_then(|c| c.reply().ok()).and_then(|r| r.value32().map(|v| v.collect())).unwrap_or_default()
-    };
-    let mut ids = prop(wm.root, stacking, AtomEnum::WINDOW);
-    if ids.is_empty() { ids = wm.client_ids(); }
-    ids.into_iter().rev().filter_map(|id| {
-        if prop(id, state, AtomEnum::ATOM).contains(&hidden) { return None; }
-        let g = wm.conn.get_geometry(id).ok()?.reply().ok()?;
-        let t = wm.conn.translate_coordinates(id, wm.root, 0, 0).ok()?.reply().ok()?;
-        let e = prop(id, extents, AtomEnum::CARDINAL);
-        let (l, r, top, b) = (*e.first().unwrap_or(&0) as i32, *e.get(1).unwrap_or(&0) as i32, *e.get(2).unwrap_or(&0) as i32, *e.get(3).unwrap_or(&0) as i32);
-        Some((t.dst_x as i32 - l, t.dst_y as i32 - top, g.width as i32 + l + r, g.height as i32 + top + b))
-    }).collect()
+    let st = aerode::wmipc::state();
+    st.windows.iter().rev().filter(|w| !w.minimized && w.desktop == st.current_desktop).map(|w| (w.frame[0], w.frame[1], w.frame[2], w.frame[3])).collect()
 }
 
 /// The frozen, whitewashed screen the user snips from.
@@ -98,8 +76,10 @@ fn select(kind: Kind, shot: Pixbuf, tool: bool, done: Rc<dyn Fn(Option<Pixbuf>)>
     let overlay = !tool || opt("overlay", true);
     let ink = ink_color();
     let show_ink = tool && opt("ink", true);
-    let win = gtk::Window::new(gtk::WindowType::Popup);
-    win.move_(0, 0);
+    // ponytail: one surface on the first monitor; a per-monitor overlay when snipping across monitors matters
+    let win = gtk::Window::new(gtk::WindowType::Toplevel);
+    aerode::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-snip", gtk_layer_shell::KeyboardMode::Exclusive);
+    aerode::shellwin::place(&win, 0, 0);
     win.set_size_request(sw, sh);
     win.set_app_paintable(true);
     let area = gtk::DrawingArea::new();
@@ -305,23 +285,8 @@ fn main_capturing(kind: Kind) {
     }
 }
 
-/// Put a toplevel's frame (its ancestor that is a child of the root) at the top of the stack.
-fn raise_frame(w: &gtk::ApplicationWindow) {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt, StackMode};
-    let Some(xid) = w.window().and_then(|g| g.downcast::<gdkx11::X11Window>().ok()).map(|x| x.xid() as u32) else { return };
-    let Ok(wm) = Wm::connect() else { return };
-    let mut win = xid;
-    for _ in 0..8 {
-        let Some(t) = wm.conn.query_tree(win).ok().and_then(|c| c.reply().ok()) else { return };
-        if t.parent == wm.root || t.parent == 0 { break; }
-        win = t.parent;
-    }
-    let _ = wm.conn.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
-    let _ = wm.conn.flush();
-    // a round trip, so the request is not lost when the connection closes
-    let _ = wm.conn.get_input_focus().ok().and_then(|c| c.reply().ok());
-}
+/// Bring the main window to the top of the stack.
+fn raise_frame(w: &gtk::ApplicationWindow) { w.present(); }
 
 /// The main window between snips.
 fn main_idle() {

@@ -1,8 +1,5 @@
-//! Global keyboard shortcuts (Windows 7 set + a few Plasma extras).
-use std::collections::HashMap;
-use x11rb::connection::Connection;
-use x11rb::protocol::xproto::*;
-use x11rb::rust_connection::RustConnection;
+//! Global keyboard shortcuts (Windows 7 set + a few Plasma extras), checked ahead of the clients.
+use smithay::input::keyboard::{keysyms as ks, ModifiersState};
 
 #[derive(Clone, Debug)]
 pub enum Action {
@@ -13,141 +10,89 @@ pub enum Action {
     SwitchNext, SwitchPrev, SwitchCommit, SwitchCancel,
     DesktopLeft, DesktopRight, DesktopAdd, DesktopRemove,
     SysMenu,
+    /// Ctrl+Alt+Fn: go to another virtual terminal
+    Vt(i32),
 }
 
-const SHIFT: u16 = 1;
-const CTRL: u16 = 4;
-const ALT: u16 = 8;
-const SUPER: u16 = 64;
-const IGNORED: [u16; 4] = [0, 2, 16, 18]; // CapsLock / NumLock combos
+const SHIFT: u8 = 1;
+const CTRL: u8 = 2;
+const ALT: u8 = 4;
+const SUPER: u8 = 8;
 
-// keysyms
-const XK_TAB: u32 = 0xff09;
-const XK_ESCAPE: u32 = 0xff1b;
-const XK_F4: u32 = 0xffc1;
-const XK_SPACE: u32 = 0x20;
-const XK_LEFT: u32 = 0xff51;
-const XK_UP: u32 = 0xff52;
-const XK_RIGHT: u32 = 0xff53;
-const XK_DOWN: u32 = 0xff54;
-const XK_HOME: u32 = 0xff50;
-const XK_PRINT: u32 = 0xff61;
-const XK_PAUSE: u32 = 0xff13;
-const XK_SUPER_L: u32 = 0xffeb;
-const XK_SUPER_R: u32 = 0xffec;
-const XK_ALT_L: u32 = 0xffe9;
-const XK_DELETE: u32 = 0xffff;
-
-fn bindings() -> Vec<(u16, u32, Action)> {
+fn bindings() -> Vec<(u8, u32, Action)> {
     use Action::*;
     let s = |c: &str| Spawn(c.to_string());
     let mut v = vec![
-        (ALT, XK_TAB, SwitchNext), (ALT | SHIFT, XK_TAB, SwitchPrev),
-        (SUPER, XK_TAB, SwitchNext), (SUPER | SHIFT, XK_TAB, SwitchPrev),
-        (ALT, XK_F4, Close), (ALT, XK_SPACE, SysMenu),
-        (SUPER, XK_UP, Maximize), (SUPER, XK_DOWN, RestoreOrMinimize),
-        (SUPER, XK_LEFT, SnapLeft), (SUPER, XK_RIGHT, SnapRight),
-        (SUPER | SHIFT, XK_UP, MaximizeVert), (SUPER | SHIFT, XK_DOWN, RestoreOrMinimize),
-        (SUPER | SHIFT, XK_LEFT, MonitorLeft), (SUPER | SHIFT, XK_RIGHT, MonitorRight),
-        (SUPER, 'd' as u32, ShowDesktop), (SUPER, 'm' as u32, ShowDesktop), (SUPER, XK_HOME, MinimizeOthers),
-        (SUPER | CTRL, XK_LEFT, DesktopLeft), (SUPER | CTRL, XK_RIGHT, DesktopRight),
-        (SUPER | CTRL, 'd' as u32, DesktopAdd), (SUPER | CTRL, XK_F4, DesktopRemove),
-        (SUPER, 'e' as u32, s("aerode-explorer")), (SUPER, 'r' as u32, s("aerode run")),
-        (SUPER, 'l' as u32, s("aerode lock")), (SUPER, 'p' as u32, s("aerode-control display")),
-        (SUPER, 'f' as u32, s("aerode start")), (SUPER, XK_PAUSE, s("aerode-control system")),
-        (SUPER | SHIFT, 's' as u32, s("spectacle --region")), (0, XK_PRINT, s("aerode-snip --full")),
-        (CTRL | SHIFT, XK_ESCAPE, s("aerode-taskmgr")), (CTRL | ALT, XK_DELETE, s("aerode-taskmgr")),
-        (CTRL, XK_ESCAPE, s("aerode start")),
+        (ALT, ks::KEY_Tab, SwitchNext), (ALT | SHIFT, ks::KEY_Tab, SwitchPrev),
+        (ALT | SHIFT, ks::KEY_ISO_Left_Tab, SwitchPrev),
+        (SUPER, ks::KEY_Tab, SwitchNext), (SUPER | SHIFT, ks::KEY_Tab, SwitchPrev),
+        (SUPER | SHIFT, ks::KEY_ISO_Left_Tab, SwitchPrev),
+        (ALT, ks::KEY_F4, Close), (ALT, ks::KEY_space, SysMenu),
+        (SUPER, ks::KEY_Up, Maximize), (SUPER, ks::KEY_Down, RestoreOrMinimize),
+        (SUPER, ks::KEY_Left, SnapLeft), (SUPER, ks::KEY_Right, SnapRight),
+        (SUPER | SHIFT, ks::KEY_Up, MaximizeVert), (SUPER | SHIFT, ks::KEY_Down, RestoreOrMinimize),
+        (SUPER | SHIFT, ks::KEY_Left, MonitorLeft), (SUPER | SHIFT, ks::KEY_Right, MonitorRight),
+        (SUPER, ks::KEY_d, ShowDesktop), (SUPER, ks::KEY_m, ShowDesktop), (SUPER, ks::KEY_Home, MinimizeOthers),
+        (SUPER | CTRL, ks::KEY_Left, DesktopLeft), (SUPER | CTRL, ks::KEY_Right, DesktopRight),
+        (SUPER | CTRL, ks::KEY_d, DesktopAdd), (SUPER | CTRL, ks::KEY_F4, DesktopRemove),
+        (SUPER, ks::KEY_e, s("aerode-explorer")), (SUPER, ks::KEY_r, s("aerode run")),
+        (SUPER, ks::KEY_l, s("aerode lock")), (SUPER, ks::KEY_p, s("aerode-control display")),
+        (SUPER, ks::KEY_f, s("aerode start")), (SUPER, ks::KEY_Pause, s("aerode-control system")),
+        (SUPER | SHIFT, ks::KEY_s, s("aerode-snip")), (0, ks::KEY_Print, s("aerode-snip --full")),
+        (CTRL | SHIFT, ks::KEY_Escape, s("aerode-taskmgr")), (CTRL | ALT, ks::KEY_Delete, s("aerode-taskmgr")),
+        (CTRL, ks::KEY_Escape, s("aerode start")),
         // volume keys as Win7's SndVolSSO handles APPCOMMAND_VOLUME_UP/DOWN/MUTE and
         // APPCOMMAND_MICROPHONE_VOLUME_MUTE: +-2 % from the loudest channel (balance kept, a level
         // above 100 % never lowered by Up), unmuting first; serialised with the shell's own changes
-        (0, 0x1008ff13, s("aerode volume-step up")),
-        (0, 0x1008ff11, s("aerode volume-step down")),
-        (0, 0x1008ff12, s("aerode audio-mute")),
-        (0, 0x1008ffb2, s("aerode mic-mute")),
-        (0, 0x1008ff14, s("playerctl play-pause")), (0, 0x1008ff17, s("playerctl next")), (0, 0x1008ff16, s("playerctl previous")),
-        (0, 0x1008ff02, s("brightnessctl set 5%+")), (0, 0x1008ff03, s("brightnessctl set 5%-")),
-        (0, 0x1008ff1d, s("aerode-calc")), (0, 0x1008ff5d, s("aerode-explorer")),
+        (0, ks::KEY_XF86AudioRaiseVolume, s("aerode volume-step up")),
+        (0, ks::KEY_XF86AudioLowerVolume, s("aerode volume-step down")),
+        (0, ks::KEY_XF86AudioMute, s("aerode audio-mute")),
+        (0, ks::KEY_XF86AudioMicMute, s("aerode mic-mute")),
+        (0, ks::KEY_XF86AudioPlay, s("playerctl play-pause")), (0, ks::KEY_XF86AudioNext, s("playerctl next")), (0, ks::KEY_XF86AudioPrev, s("playerctl previous")),
+        (0, ks::KEY_XF86MonBrightnessUp, s("brightnessctl set 5%+")), (0, ks::KEY_XF86MonBrightnessDown, s("brightnessctl set 5%-")),
+        (0, ks::KEY_XF86Calculator, s("aerode-calc")), (0, ks::KEY_XF86Explorer, s("aerode-explorer")),
     ];
     // Win+1..9 handled by the shell (taskbar launch); register them as commands
-    for i in 1..=9u32 { v.push((SUPER, '0' as u32 + i, s(&format!("aerode taskbar-launch {i}")))); }
+    for i in 1..=9u32 { v.push((SUPER, ks::KEY_0 + i, s(&format!("aerode taskbar-launch {i}")))); }
     v
 }
 
-#[derive(Default)]
 pub struct Keys {
-    map: HashMap<(u8, u16), Action>,
-    sym_of: HashMap<u8, u32>,
-    super_codes: Vec<u8>,
+    map: Vec<(u8, u32, Action)>,
     super_down_alone: bool,
-    alt_codes: Vec<u8>,
-    /// last key release (code, time): X autorepeat sends release+press with the same timestamp
-    last_release: (u8, u32),
 }
 
+impl Default for Keys { fn default() -> Keys { Keys { map: bindings(), super_down_alone: false } } }
+
+fn is_super(s: u32) -> bool { s == ks::KEY_Super_L || s == ks::KEY_Super_R }
+fn is_alt(s: u32) -> bool { s == ks::KEY_Alt_L || s == ks::KEY_Alt_R }
+
 impl Keys {
-    pub fn grab(&mut self, conn: &RustConnection, root: u32) -> anyhow::Result<()> {
-        let setup = conn.setup();
-        let (min, max) = (setup.min_keycode, setup.max_keycode);
-        let km = conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
-        let per = km.keysyms_per_keycode as usize;
-        let mut code_of: HashMap<u32, u8> = HashMap::new();
-        self.sym_of.clear();
-        for (i, chunk) in km.keysyms.chunks(per.max(1)).enumerate() {
-            let code = min + i as u8;
-            if let Some(&sym) = chunk.first() {
-                if sym != 0 { code_of.entry(sym).or_insert(code); self.sym_of.insert(code, sym); }
-            }
+    /// What a key does. `sym` is the Latin keysym (so Win+E works on a Russian layout), `modified` the
+    /// keysym of the current group. An action returned on press means the client must not see the key.
+    pub fn lookup(&mut self, sym: u32, modified: u32, m: &ModifiersState, press: bool, repeat: bool, switching: bool) -> Option<Action> {
+        let mods = (m.shift as u8 * SHIFT) | (m.ctrl as u8 * CTRL) | (m.alt as u8 * ALT) | (m.logo as u8 * SUPER);
+        // XF86Switch_VT_n comes from the Ctrl+Alt+Fn level of the keymap
+        if press && (ks::KEY_XF86Switch_VT_1..=ks::KEY_XF86Switch_VT_12).contains(&modified) {
+            return Some(Action::Vt((modified - ks::KEY_XF86Switch_VT_1 + 1) as i32));
         }
-        // with a non-Latin first layout (e.g. "ru,us") the letters of Win+E / Win+R / Win+D… only exist in
-        // a later XKB group: the core map lists every group's levels after the first, so look there too
-        for (i, chunk) in km.keysyms.chunks(per.max(1)).enumerate() {
-            for &sym in chunk.iter().skip(1) { if sym != 0 { code_of.entry(sym).or_insert(min + i as u8); } }
-        }
-        let _ = conn.ungrab_key(Grab::ANY, root, ModMask::ANY);
-        self.map.clear();
-        for (mods, sym, act) in bindings() {
-            let Some(&code) = code_of.get(&sym) else { continue };
-            self.map.insert((code, mods), act);
-            for ig in IGNORED {
-                let _ = conn.grab_key(true, root, ModMask::from(mods | ig), code, GrabMode::ASYNC, GrabMode::ASYNC);
-            }
-        }
-        // the Windows key on its own opens Start (on release, if nothing else was pressed)
-        self.super_codes = [XK_SUPER_L, XK_SUPER_R].iter().filter_map(|s| code_of.get(s).copied()).collect();
-        for &c in &self.super_codes {
-            for ig in IGNORED { let _ = conn.grab_key(true, root, ModMask::from(ig), c, GrabMode::ASYNC, GrabMode::SYNC); }
-        }
-        self.alt_codes = code_of.get(&XK_ALT_L).copied().into_iter().collect();
-        Ok(())
-    }
-
-    pub fn sym(&self, code: u8) -> u32 { self.sym_of.get(&code).copied().unwrap_or(0) }
-
-    pub fn lookup(&mut self, code: u8, state: u16, press: bool, time: u32, switching: bool, conn: &RustConnection) -> Option<Action> {
-        let mods = state & (SHIFT | CTRL | ALT | SUPER);
-        let repeat = press && self.last_release == (code, time);
-        if !press { self.last_release = (code, time); }
-        if self.super_codes.contains(&code) {
-            if press { self.super_down_alone = !switching; let _ = conn.allow_events(Allow::ASYNC_KEYBOARD, x11rb::CURRENT_TIME); return None; }
+        if is_super(sym) {
+            if press { self.super_down_alone = !switching; return None; }
             if switching { self.super_down_alone = false; return Some(Action::SwitchCommit); }
             let fire = self.super_down_alone && mods & !SUPER == 0;
             self.super_down_alone = false;
             return fire.then(|| Action::Spawn("aerode start".into()));
         }
-        self.super_down_alone = false;
-        let sym = self.sym_of.get(&code).copied().unwrap_or(0);
         if !press {
-            // releasing Alt/Super ends the window switcher
-            if self.alt_codes.contains(&code) || self.super_codes.contains(&code) { return Some(Action::SwitchCommit); }
-            if sym == 0xffe9 || sym == 0xffea || sym == XK_SUPER_L || sym == XK_SUPER_R { return Some(Action::SwitchCommit); }
-            return None;
+            // releasing Alt ends the window switcher
+            return (switching && is_alt(sym)).then_some(Action::SwitchCommit);
         }
-        if sym == XK_ESCAPE && mods & ALT != 0 { return Some(Action::SwitchCancel); }
-        if (sym == XK_LEFT || sym == XK_RIGHT) && mods & ALT != 0 && mods & SUPER == 0 && mods & CTRL == 0 {
-            return Some(if sym == XK_LEFT { Action::SwitchPrev } else { Action::SwitchNext });
+        self.super_down_alone = false;
+        if sym == ks::KEY_Escape && switching { return Some(Action::SwitchCancel); }
+        if switching && (sym == ks::KEY_Left || sym == ks::KEY_Right) {
+            return Some(if sym == ks::KEY_Left { Action::SwitchPrev } else { Action::SwitchNext });
         }
-        let act = self.map.get(&(code, mods)).cloned()?;
+        let act = self.map.iter().find(|b| b.0 == mods && (b.1 == sym || b.1 == modified)).map(|b| b.2.clone())?;
         // holding a window-management chord must not run it again on whatever window got focus next
         // (Win+Down held would minimize window after window); switching, desktops and media keys repeat
         if repeat && !matches!(act, Action::SwitchNext | Action::SwitchPrev | Action::DesktopLeft | Action::DesktopRight)
@@ -156,30 +101,25 @@ impl Keys {
     }
 }
 
-/// Load a named cursor from the cursor theme, falling back to the X cursor font (left_ptr etc).
-pub fn cursor(conn: &RustConnection, screen: usize, name: &str) -> Option<u32> {
-    thread_local! { static CACHE: std::cell::RefCell<HashMap<String, u32>> = Default::default(); }
-    if let Some(c) = CACHE.with(|c| c.borrow().get(name).copied()) { return Some(c); }
-    let handle = x11rb::cursor::Handle::new(conn, screen, &x11rb::resource_manager::new_from_default(conn).ok()?).ok()?.reply().ok()?;
-    let mut c = handle.load_cursor(conn, name).ok()?;
-    // x11rb returns None (0) when no theme has the name – unlike libXcursor it has no cursor-font fallback
-    // (its own "core" theme path also passes the glyph index without the *2), so do it here
-    if c == x11rb::NONE { c = font_cursor(conn, name).unwrap_or(x11rb::NONE); }
-    CACHE.with(|cc| cc.borrow_mut().insert(name.to_string(), c));
-    Some(c)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn m(alt: bool, logo: bool) -> ModifiersState { ModifiersState { alt, logo, ..Default::default() } }
 
-/// Glyph cursor from the core "cursor" font (indices from <X11/cursorfont.h>).
-fn font_cursor(conn: &RustConnection, name: &str) -> Option<u32> {
-    let glyph: u16 = match name {
-        "left_ptr" => 68, "fleur" => 52, "top_side" => 138, "bottom_side" => 16, "left_side" => 70, "right_side" => 96,
-        "top_left_corner" => 134, "top_right_corner" => 136, "bottom_left_corner" => 12, "bottom_right_corner" => 14,
-        _ => return None,
-    };
-    let font = conn.generate_id().ok()?;
-    conn.open_font(font, b"cursor").ok()?;
-    let c = conn.generate_id().ok()?;
-    let _ = conn.create_glyph_cursor(c, font, font, glyph, glyph + 1, 0, 0, 0, 0xffff, 0xffff, 0xffff);
-    let _ = conn.close_font(font);
-    Some(c)
+    #[test]
+    fn super_alone_opens_start_but_not_after_a_chord() {
+        let mut k = Keys::default();
+        assert!(k.lookup(ks::KEY_Super_L, ks::KEY_Super_L, &m(false, true), true, false, false).is_none());
+        assert!(matches!(k.lookup(ks::KEY_Super_L, ks::KEY_Super_L, &m(false, true), false, false, false), Some(Action::Spawn(c)) if c == "aerode start"));
+        k.lookup(ks::KEY_Super_L, ks::KEY_Super_L, &m(false, true), true, false, false);
+        assert!(matches!(k.lookup(ks::KEY_e, ks::KEY_e, &m(false, true), true, false, false), Some(Action::Spawn(_))));
+        assert!(k.lookup(ks::KEY_Super_L, ks::KEY_Super_L, &m(false, true), false, false, false).is_none());
+    }
+
+    #[test]
+    fn repeat_only_for_switching_and_volume() {
+        let mut k = Keys::default();
+        assert!(k.lookup(ks::KEY_Down, ks::KEY_Down, &m(false, true), true, true, false).is_none());
+        assert!(matches!(k.lookup(ks::KEY_Tab, ks::KEY_Tab, &m(true, false), true, true, false), Some(Action::SwitchNext)));
+    }
 }

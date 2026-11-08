@@ -375,13 +375,15 @@ pub fn run(kind: &str, as_saver: bool) {
     let (w, h) = (r.width(), r.height());
     // Bubbles float over a picture of the desktop
     let backdrop = if kind == "bubbles" {
-        screen.root_window().and_then(|root| root.pixbuf(r.x(), r.y(), w, h))
+        crate::wmipc::call(&crate::wmipc::Req::Screenshot).and_then(|v| crate::wmipc::read_image(&v))
+            .and_then(|s| gtk::gdk::pixbuf_get_from_surface(&s, r.x(), r.y(), w, h))
             .or_else(|| Some(glass::wallpaper().sharp.clone()))
     } else { None };
     let saver = Rc::new(RefCell::new(Saver::new(kind, w as f64, h as f64, backdrop)));
-    let win = gtk::Window::new(gtk::WindowType::Popup);
+    let win = gtk::Window::new(gtk::WindowType::Toplevel);
+    crate::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-screensaver", gtk_layer_shell::KeyboardMode::Exclusive);
     win.set_app_paintable(true);
-    win.move_(r.x(), r.y());
+    crate::shellwin::place(&win, r.x(), r.y());
     win.set_default_size(w, h);
     win.set_size_request(w, h);
     win.add_events(gdk::EventMask::POINTER_MOTION_MASK | gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::KEY_PRESS_MASK);
@@ -422,28 +424,17 @@ pub fn run(kind: &str, as_saver: bool) {
         }
     });
     win.show_all();
-    // take the keyboard and pointer like a real screen saver (retry: a menu may hold a grab)
-    {
-        let w = win.clone();
-        let tries = Cell::new(0);
-        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
-            let ok = w.window().and_then(|gw| gw.display().default_seat().map(|seat| seat.grab(&gw, gdk::SeatCapabilities::ALL, false, None, None, None) == gdk::GrabStatus::Success)).unwrap_or(false);
-            tries.set(tries.get() + 1);
-            if ok || tries.get() > 40 { glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
-        });
-    }
     if as_saver {
         // the X server's own saver window covers ours: switch it off now, keep it off until the display
         // is due to turn off (Power Options), then let DPMS take the screen dark
         let idle_at_start = config::get().screensaver.wait as u64 * 60;
         let off_after = display_off_secs().map(|d| d.saturating_sub(idle_at_start));
         if off_after != Some(0) {
-            util::spawn(&["xset", "s", "reset"]);
             let t0 = std::time::Instant::now();
             glib::timeout_add_local(std::time::Duration::from_secs(20), move || {
                 match off_after {
-                    Some(s) if t0.elapsed().as_secs() >= s => { util::spawn(&["xset", "dpms", "force", "off"]); glib::ControlFlow::Break }
-                    _ => { util::spawn(&["xset", "s", "reset"]); glib::ControlFlow::Continue }
+                    Some(s) if t0.elapsed().as_secs() >= s => { crate::wmipc::send(crate::wmipc::Req::DpmsOff); glib::ControlFlow::Break }
+                    _ => { glib::ControlFlow::Continue }
                 }
             });
         }

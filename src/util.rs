@@ -476,7 +476,7 @@ pub fn log_panics(name: &'static str) {
 pub fn procs_on_display(name: &str, arg1: Option<&str>) -> Vec<u32> {
     use std::os::unix::fs::MetadataExt;
     let norm = |d: &str| match d.rsplit_once(':') { Some((h, n)) => format!("{h}:{}", n.split('.').next().unwrap_or(n)), None => d.to_string() };
-    let ours = norm(&std::env::var("DISPLAY").unwrap_or_default());
+    let ours = norm(&std::env::var("WAYLAND_DISPLAY").unwrap_or_default());
     let uid = unsafe { libc::getuid() };
     let me = std::process::id();
     let Ok(rd) = std::fs::read_dir("/proc") else { return vec![] };
@@ -490,7 +490,7 @@ pub fn procs_on_display(name: &str, arg1: Option<&str>) -> Vec<u32> {
             if cmd.split(|b| *b == 0).nth(1) != Some(a.as_bytes()) { return None; }
         }
         let env = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
-        let on_ours = env.split(|b| *b == 0).any(|kv| kv.strip_prefix(b"DISPLAY=").map(|d| norm(&String::from_utf8_lossy(d)) == ours).unwrap_or(false));
+        let on_ours = env.split(|b| *b == 0).any(|kv| kv.strip_prefix(b"WAYLAND_DISPLAY=").map(|d| norm(&String::from_utf8_lossy(d)) == ours).unwrap_or(false));
         on_ours.then_some(pid)
     }).collect()
 }

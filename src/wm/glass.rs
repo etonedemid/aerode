@@ -2,7 +2,7 @@
 //! following the live colourisation the Window Color page publishes on the root window
 //! (`_AERODE_COLORIZATION`, see `crate::glass`).
 //!
-//! With a compositor the frame gets the translucent colour picom needs (`picom_fit`; picom blurs
+//! With a compositor the frame gets the translucent colour picom needs (`blur_fit`; picom blurs
 //! what is behind, frames are tagged `_AERODE_GLASS`); without one the glass is faked from the
 //! wallpaper blurred the Win7 way; with "Enable transparency" off it is a solid colour.
 use cairo::Context;
@@ -56,7 +56,7 @@ impl Glass {
     /// (premultiplied colour, alpha) to paint so that picom's `S + (1-a) * blur(B)` matches Win7.
     fn fit(&self, k: &ShaderConsts) -> ([f64; 3], f64) {
         if let Some(r) = self.fits.borrow().iter().find(|(kk, _)| kk == k).map(|(_, r)| *r) { return r; }
-        let r = k.picom_fit(&self.sample);
+        let r = k.blur_fit(&self.sample);
         let mut f = self.fits.borrow_mut();
         if f.len() >= 8 { f.remove(0); }
         f.push((*k, r));

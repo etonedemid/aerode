@@ -42,11 +42,8 @@ fn closed_by_itself(w: &gtk::Window) {
 pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget>) -> gtk::Window {
     close_open();
     let w = gtk::Window::new(gtk::WindowType::Toplevel);
+    crate::shellwin::init(&w, gtk_layer_shell::Layer::Overlay, "aerode-glass-r6", gtk_layer_shell::KeyboardMode::Exclusive);
     w.set_decorated(false);
-    w.set_type_hint(gdk::WindowTypeHint::Utility);
-    w.set_skip_taskbar_hint(true);
-    w.set_skip_pager_hint(true);
-    w.set_keep_above(true);
     w.set_app_paintable(true);
     crate::glass::enable_rgba(&w);
     w.style_context().add_class("aerode");
@@ -64,7 +61,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     });
     w.add(&frame);
     w.connect_draw(move |w, cr| {
-        let (x, y) = w.position();
+        let (x, y) = crate::shellwin::pos(w);
         let fh = foot_box.as_ref().map(|f| f.allocated_height() as f64).unwrap_or(0.0);
         crate::glass::paint_flyout(cr, w.allocated_width() as f64, w.allocated_height() as f64, x as f64, y as f64, fh);
         glib::Propagation::Proceed
@@ -80,14 +77,11 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     frame.show_all();
     let (_, nat) = w.preferred_size();
     let geo = util::primary_geometry();
-    let (ax, _) = anchor
-        .window()
-        .map(|gw| { let (_, x, y) = gw.origin(); (x, y) })
-        .unwrap_or((0, 0));
+    let (ax, _) = crate::shellwin::gdk_origin(anchor);
     let alloc = anchor.allocation();
     let x = (ax + alloc.x() + alloc.width() / 2 - nat.width / 2).clamp(geo.x() + 4, geo.x() + geo.width() - nat.width - 4);
     let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 4;
-    w.move_(x, y);
+    crate::shellwin::place(&w, x, y);
     // Win7 fades the flyout in (and closes it at once)
     crate::anim::self_animated(&w);
     let animate = crate::anim::effect("animate_taskbar");

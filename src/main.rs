@@ -4,11 +4,11 @@ use gtk::{gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, x11};
+use aerode::{desktop, dialogs, glass, startmenu, sys, taskbar, theme, util, wmclient};
 
 const USAGE: &str = "usage: aerode [shell|start|run|personalize|window-color|gadgets|reload|lock|quit|restart]
        aerode sysmenu WINDOW X Y | taskbar-launch N | screensaver [--preview NAME] | autoplay DIR
-       aerode query-volume | query-network | picom-config [CONFIG]
+       aerode query-volume | query-network
        aerode mixer | volume-step up|down [N] | audio-mute | mic-mute";
 
 struct Shell {
@@ -23,9 +23,9 @@ fn build(app: &gtk::Application) {
     if SHELL.with(|s| s.borrow().is_some()) { return; }
     theme::init_app();
     theme::load_css(theme::SHELL_CSS);
-    let wm = match x11::Wm::connect() {
+    let wm = match wmclient::Wm::connect() {
         Ok(w) => Rc::new(w),
-        Err(e) => { eprintln!("aerode: cannot connect to X: {e}"); std::process::exit(1) }
+        Err(e) => { eprintln!("aerode: {e}"); std::process::exit(1) }
     };
     // the saved window colour goes live for every glass painter (the WM, Explorer, …); this also
     // drops an unsaved preview left behind by a shell that died with Personalize open
@@ -76,7 +76,7 @@ fn autostart() {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.ends_with(".desktop") || !seen.insert(name) { continue; }
             let Some(a) = gio::DesktopAppInfo::from_filename(e.path()) else { continue };
-            // the session starts the compositor with aerode's config; picom's own autostart entry would race it
+            // leftovers from an X11 setup: a second compositor makes no sense inside aerode-wm
             let exe = a.executable().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
             if matches!(exe.as_str(), "picom" | "compton" | "xcompmgr" | "compiz") { continue; }
             if a.is_hidden() || !a.shows_in(Some("Aerode")) { continue; }
@@ -86,24 +86,10 @@ fn autostart() {
     }
 }
 
-/// Is another process's aerode taskbar on this display? (Then this one was meant to reach it over
+/// Is another process's aerode shell in this session? (Then this one was meant to reach it over
 /// D-Bus and must not build a second desktop and taskbar.)
 fn other_shell_running() -> bool {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
-    let Ok((conn, screen)) = x11rb::connect(None) else { return false };
-    let root = conn.setup().roots[screen].root;
-    let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
-    let (list, pid_a) = (atom("_NET_CLIENT_LIST"), atom("_NET_WM_PID"));
-    let wins: Vec<u32> = conn.get_property(false, root, list, AtomEnum::WINDOW, 0, 4096).ok().and_then(|c| c.reply().ok())
-        .and_then(|r| r.value32().map(|v| v.collect())).unwrap_or_default();
-    let me = std::process::id();
-    wins.into_iter().any(|w| {
-        let name = conn.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
-        let class = conn.get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
-        let pid = conn.get_property(false, w, pid_a, AtomEnum::CARDINAL, 0, 1).ok().and_then(|c| c.reply().ok()).and_then(|r| r.value32().and_then(|mut v| v.next())).unwrap_or(0);
-        name == b"Taskbar" && class.starts_with(b"aerode\0") && pid != me && pid != 0
-    })
+    !util::procs_on_display("aerode", Some("shell")).is_empty()
 }
 
 fn command(app: &gtk::Application, args: &[String]) -> i32 {
@@ -127,8 +113,7 @@ fn command(app: &gtk::Application, args: &[String]) -> i32 {
             // settings changed in Control Panel (desktop icons, folder options, taskbar size...)
             SHELL.with(|s| if let Some(s) = s.borrow().as_ref() { s._desktop.rebuild(); s.taskbar.resize(); s.taskbar.refresh() });
             aerode::tray::reload();
-            // Visual Effects switches: picom 12 reloads the regenerated animation rules by itself
-            aerode::picomconf::refresh(None);
+            aerode::wmipc::send(aerode::wmipc::Req::ReloadConfig);
         }
         "gadgets" => { build(app); aerode::gadgets::show_gallery(); }
         "quit" => app.quit(),
@@ -199,12 +184,6 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::SUCCESS;
         }
         Some("restart") => { restart_session(); return glib::ExitCode::SUCCESS; }
-        // the session script: which config file picom starts with (picom ≥ 12.3 gets Win7's animations)
-        Some("picom-config") => {
-            let base = args.get(2).map(std::path::PathBuf::from).unwrap_or_else(aerode::picomconf::base_config);
-            println!("{}", aerode::picomconf::config_for_picom(&base).display());
-            return glib::ExitCode::SUCCESS;
-        }
         Some("-h") | Some("--help") => { println!("{USAGE}"); return glib::ExitCode::SUCCESS; }
         _ => {}
     }
@@ -227,67 +206,18 @@ fn wm_binary_replaced() -> bool {
     })
 }
 
-/// `aerode restart`: restart the window manager in place, the shell and the compositor,
-/// without logging out (open windows are kept).
+/// `aerode restart`: restart the shell (taskbar, desktop, Start) without logging out. The compositor
+/// can't be replaced in place on Wayland: its clients would lose their connection, so a new
+/// aerode-wm takes a log off.
 fn restart_session() {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask};
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode".into());
-    let detached = |argv: &[&str]| {
-        use std::os::unix::process::CommandExt;
-        let _ = std::process::Command::new(argv[0]).args(&argv[1..]).stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).process_group(0).spawn();
-    };
-    // 1. window manager
-    let (mut wm_ok, mut wm_stale) = (false, false);
-    if let Ok((conn, screen)) = x11rb::connect(None) {
-        let root = conn.setup().roots[screen].root;
-        let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0);
-        let check = atom("_NET_SUPPORTING_WM_CHECK");
-        let restart = atom("_AERODE_RESTART");
-        let win = conn.get_property(false, root, check, AtomEnum::WINDOW, 0, 1).ok().and_then(|c| c.reply().ok())
-            .and_then(|r| r.value32().and_then(|mut v| v.next())).unwrap_or(0);
-        let name = conn.get_property(false, win, atom("_NET_WM_NAME"), atom("UTF8_STRING"), 0, 64).ok().and_then(|c| c.reply().ok()).map(|r| r.value).unwrap_or_default();
-        // a WM built before it published its pid here cannot re-exec a binary that ./install.sh replaced: it
-        // would tear down every frame, fail to exec "aerode-wm (deleted)" and keep running the OLD code
-        let reexec_ok = conn.get_property(false, win, atom("_NET_WM_PID"), AtomEnum::CARDINAL, 0, 1).ok()
-            .and_then(|c| c.reply().ok()).map(|r| r.value_len > 0).unwrap_or(false);
-        if win != 0 && name == b"Aerode" && !reexec_ok && wm_binary_replaced() {
-            wm_stale = true;
-        } else if win != 0 && name == b"Aerode" {
-            let ev = ClientMessageEvent::new(32, win, restart, [0u32; 5]);
-            // round trip before the connection is dropped, or the server may never deliver it
-            wm_ok = conn.send_event(false, win, EventMask::NO_EVENT, ev).is_ok() && conn.get_input_focus().map(|c| c.reply().is_ok()).unwrap_or(false);
-        }
-    }
-    if wm_stale {
-        println!("aerode: the running window manager is an older build that cannot load the new one in place;");
-        println!("        log out and back in once (the window manager was left alone)");
-    } else if wm_ok { println!("aerode: window manager restarting"); } else { println!("aerode: window manager not running, starting it"); detached(&["aerode-wm"]); }
-    // 2. shell (taskbar, desktop, start menu)
+    use std::os::unix::process::CommandExt;
     let _ = std::process::Command::new(&exe).arg("quit").status();
     std::thread::sleep(std::time::Duration::from_millis(600));
-    // a shell that did not quit: only this display's `aerode shell` (not `aerode lock`, the
-    // mixer or another session's shell)
+    // a shell that did not quit: only this session's `aerode shell`
     util::signal_on_display("aerode", Some("shell"), libc::SIGTERM);
-    detached(&[&exe, "shell"]);
+    let _ = std::process::Command::new(&exe).arg("shell").stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).process_group(0).spawn();
     println!("aerode: shell restarted");
-    // 3. compositor
-    if util::which("picom") {
-        util::signal_on_display("picom", None, libc::SIGTERM);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        // a copy saved by an older Control Panel lacks newer rules: rebuild it (keeping VSync off);
-        // the marker ("# aerode-picom 4") is the same one the session script checks
-        aerode::picomconf::migrate_user_config();
-        let base = aerode::picomconf::base_config();
-        if !aerode::config::conf_dir().join("no-compositor").exists() {
-            if base.exists() {
-                // picom ≥ 12.3: the generated config with Win7's window animations
-                // one queued frame: NVIDIA's default queue makes dragged windows trail the cursor (also in the session script)
-                let conf = aerode::picomconf::config_for_picom(&base).to_string_lossy().into_owned();
-                detached(&["env", "__GL_MaxFramesAllowed=1", "picom", "--config", &conf]);
-            } else { detached(&["env", "__GL_MaxFramesAllowed=1", "picom"]); }
-            println!("aerode: compositor restarted");
-        }
-    }
+    if wm_binary_replaced() { println!("aerode: aerode-wm was updated: log off and back on to run the new one"); }
 }

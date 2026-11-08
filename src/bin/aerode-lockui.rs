@@ -1,39 +1,26 @@
-//! The Windows 7 locked screen, as modules for xsecurelock. One binary, two roles chosen by the
-//! name it is started under (install.sh links both into /usr/lib/aerode):
+//! The Windows 7 locked screen: the logon background, the user tile, "Locked"; a key press brings
+//! the password box (one dot per character) with the round arrow button, the Caps Lock balloon, and
+//! "The user name or password is incorrect." with OK after a wrong password, back to the box like Win7.
 //!
-//! * `saver_aerode` – the idle "Locked" screen: the logon background, the user tile, the name and
-//!   "Locked".
-//! * `auth_aerode` – what a key press brings up: the password box (● per character) with the round
-//!   arrow button, "Switch User", the Caps Lock balloon, and "The user name or password is
-//!   incorrect." with OK after a wrong password, back to the password box like Win7.
-//!
-//! xsecurelock owns the lock: it grabs keyboard and pointer, keeps the screen covered if a module
-//! dies, and forwards keystrokes to this module on stdin. The password check is PAM in
-//! xsecurelock's own `authproto_pam`, which this module drives through its packet protocol
-//! (helpers/authproto.h: `<type> <len>\n<message>\n`); it unlocks only when authproto_pam
-//! exits 0. Nothing here touches PAM or keeps the password beyond the conversation.
-use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+//! The compositor owns the lock (`wmipc::Req::Lock`): it shows only this program's surfaces and
+//! unlocks when it exits 0, so a crash here leaves the session locked. The password check is PAM in
+//! xsecurelock's `authproto_pam`, driven through its packet protocol (helpers/authproto.h:
+//! `<type> <len>\n<message>\n`); this exits 0 only when authproto_pam does. Nothing here touches PAM
+//! or keeps the password beyond the conversation. `--demo` shows it as an ordinary run: Esc quits.
+use std::cell::RefCell;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{ChildStdin, Command, Stdio};
+use std::rc::Rc;
 
-use cairo::{Context, Format, ImageSurface};
-use x11rb::connection::Connection;
-use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xproto::*;
-use x11rb::protocol::Event;
-use x11rb::rust_connection::RustConnection;
+use cairo::{Context, ImageSurface};
+use gtk::prelude::*;
+use gtk::{gdk, glib};
+use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode { Saver, Prompt, Busy, Error }
 
 struct Ui {
-    conn: RustConnection,
-    win: u32,
-    gc: u32,
-    depth: u8,
-    w: i32,
-    h: i32,
     /// the monitor the tile is centred on (the primary one)
     mon: (f64, f64, f64, f64),
     monitors: Vec<(f64, f64, f64, f64)>,
@@ -45,102 +32,94 @@ struct Ui {
     echo: Option<String>,
     caps: bool,
     message: String,
+    /// what has been typed; wiped as soon as it is sent or dropped
+    buf: Vec<u8>,
+    /// the running conversation
+    auth: Option<ChildStdin>,
+    /// authproto is waiting for an answer ('p' password, 'u' user)
+    asked: Option<char>,
+    answered: u32,
+    failed_msg: String,
+    windows: Vec<gtk::Window>,
+    last_key: std::time::Instant,
 }
+
+enum Packet { Msg(u8, String), Done(bool) }
 
 fn main() {
-    let argv0 = std::env::args().next().unwrap_or_default();
-    let role = std::path::Path::new(&argv0).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let demo = std::env::args().nth(1).filter(|a| a == "--demo");
-    let auth = role.starts_with("auth_") || std::env::args().nth(2).as_deref() == Some("auth");
-    let Some(mut ui) = Ui::open(demo.is_some()) else { std::process::exit(1) };
-    if auth {
-        ui.mode = Mode::Prompt;
-        std::process::exit(authenticate(&mut ui));
+    let demo = std::env::args().nth(1).as_deref() == Some("--demo");
+    if gtk::init().is_err() { std::process::exit(1); }
+    let Some(display) = gdk::Display::default() else { std::process::exit(1) };
+    let mut monitors = vec![];
+    let mut mon = None;
+    for i in 0..display.n_monitors() {
+        let Some(m) = display.monitor(i) else { continue };
+        let g = m.geometry();
+        let rect = (g.x() as f64, g.y() as f64, g.width() as f64, g.height() as f64);
+        if m.is_primary() { mon = Some(rect); }
+        monitors.push((rect, m));
     }
-    ui.mode = Mode::Saver;
-    ui.draw_all();
-    // the saver just keeps the picture up until xsecurelock sends SIGTERM
-    loop {
-        match ui.conn.wait_for_event() {
-            Ok(Event::Expose(e)) if e.count == 0 => ui.draw_all(),
-            Ok(_) => {}
-            Err(_) => std::process::exit(0),
-        }
+    let rects: Vec<_> = monitors.iter().map(|m| m.0).collect();
+    let mon = mon.or(rects.first().copied()).unwrap_or((0.0, 0.0, 1366.0, 768.0));
+    let data = aerode::config::data_dir();
+    let load = |p: std::path::PathBuf| image::open(p).ok().map(|i| aerode::wm::decor::rgba_surface(&i.to_rgba8()));
+    let bg = ["lockscreen.png", "lockscreen.jpg", "wallpaper.jpg"].iter().find_map(|f| load(data.join(f)));
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let face = load(home.join(".face")).or_else(|| load(data.join("avatar.png")));
+    let ui = Rc::new(RefCell::new(Ui {
+        mon, monitors: rects, bg, face, name: user_name(), mode: Mode::Saver, chars: 0, echo: None, caps: false, message: String::new(),
+        buf: Vec::new(), auth: None, asked: None, answered: 0, failed_msg: String::new(), windows: vec![], last_key: std::time::Instant::now(),
+    }));
+    let (tx, rx) = async_channel::unbounded::<Packet>();
+    for (rect, m) in &monitors {
+        let w = gtk::Window::new(gtk::WindowType::Toplevel);
+        w.init_layer_shell();
+        w.set_layer(Layer::Overlay);
+        w.set_namespace("aerode-lock");
+        w.set_monitor(m);
+        // the keyboard goes to the window of the monitor with the tile
+        w.set_keyboard_mode(if *rect == mon { KeyboardMode::Exclusive } else { KeyboardMode::None });
+        w.set_exclusive_zone(-1);
+        for e in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] { w.set_anchor(e, true); }
+        w.set_app_paintable(true);
+        w.add_events(gdk::EventMask::KEY_PRESS_MASK | gdk::EventMask::BUTTON_PRESS_MASK);
+        let (u, r) = (ui.clone(), *rect);
+        w.connect_draw(move |_, cr| {
+            cr.translate(-r.0, -r.1);
+            u.borrow().paint(cr);
+            glib::Propagation::Stop
+        });
+        let (u, t) = (ui.clone(), tx.clone());
+        w.connect_key_press_event(move |_, e| { key(&u, &t, e, demo); glib::Propagation::Stop });
+        let (u, t) = (ui.clone(), tx.clone());
+        // a click wakes it like a key
+        w.connect_button_press_event(move |_, _| { if u.borrow().mode == Mode::Saver { start_conversation(&u, &t); } glib::Propagation::Stop });
+        w.show_all();
+        ui.borrow_mut().windows.push(w);
     }
+    {
+        let u = ui.clone();
+        glib::spawn_future_local(async move {
+            while let Ok(p) = rx.recv().await { packet(&u, p); }
+        });
+    }
+    // left alone at the prompt: back to the picture (and the conversation, with anything typed, gone)
+    {
+        let u = ui.clone();
+        glib::timeout_add_seconds_local(5, move || {
+            let idle = u.borrow().last_key.elapsed().as_secs() >= 60;
+            if idle && matches!(u.borrow().mode, Mode::Prompt | Mode::Error) { cancel(&u); }
+            glib::ControlFlow::Continue
+        });
+    }
+    gtk::main();
 }
 
-// ---------------------------------------------------------------- authentication
+fn redraw(u: &Rc<RefCell<Ui>>) { for w in &u.borrow().windows { w.queue_draw(); } }
 
-/// Runs authproto conversations until one succeeds (0) or the user gives up (1).
-fn authenticate(ui: &mut Ui) -> i32 {
-    let timeout = std::env::var("XSECURELOCK_AUTH_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(300u64);
-    loop {
-        ui.mode = Mode::Prompt;
-        ui.message.clear();
-        ui.draw_all();
-        let Some(mut child) = spawn_authproto() else { return 1 };
-        let mut out = child.stdout.take().unwrap();
-        let mut inp = child.stdin.take().unwrap();
-        let mut failed_msg = String::new();
-        let mut cancelled = false;
-        let mut answered = 0;
-        loop {
-            let Some((ty, msg)) = read_packet(ui, &mut out, timeout) else { break };
-            match ty {
-                b'i' => { ui.message = msg; ui.draw_dynamic(); }
-                b'e' => { failed_msg = msg; }
-                b'P' | b'U' => {
-                    // authproto_pam asks again after a wrong password instead of failing:
-                    // Win7 says so first, then shows the box again
-                    if answered > 0 {
-                        ui.mode = Mode::Error;
-                        ui.message = incorrect(&failed_msg);
-                        failed_msg.clear();
-                        ui.draw_all();
-                        if !wait_ok(ui, 60) { let _ = inp.write_all(b"x 0\n\n"); let _ = inp.flush(); cancelled = true; break; }
-                        ui.message.clear();
-                    }
-                    ui.mode = Mode::Prompt;
-                    ui.draw_all();
-                    ui.echo = (ty == b'U').then(String::new);
-                    match read_line(ui, timeout) {
-                        Some(mut answer) => {
-                            ui.mode = Mode::Busy;
-                            ui.draw_dynamic();
-                            let t = if ty == b'U' { 'u' } else { 'p' };
-                            let _ = write!(inp, "{t} {}\n", answer.len());
-                            let _ = inp.write_all(&answer);
-                            let _ = inp.write_all(b"\n");
-                            let _ = inp.flush();
-                            answer.iter_mut().for_each(|b| *b = 0);
-                            answered += 1;
-                        }
-                        None => {
-                            let _ = inp.write_all(b"x 0\n\n");
-                            let _ = inp.flush();
-                            cancelled = true;
-                        }
-                    }
-                    ui.echo = None;
-                    ui.chars = 0;
-                }
-                _ => {}
-            }
-            if cancelled { break; }
-        }
-        drop(inp);
-        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-        if ok { return 0; }
-        if cancelled { return 1; }
-        // Win7: the message with an OK button, then the password box again
-        ui.mode = Mode::Error;
-        ui.message = incorrect(&failed_msg);
-        ui.draw_all();
-        if !wait_ok(ui, 60) { return 1; }
-    }
-}
+fn wipe(buf: &mut Vec<u8>) { buf.iter_mut().for_each(|b| *b = 0); buf.clear(); }
 
-/// Win7's wording for a failed logon, unless PAM said something more specific (account expired…).
+/// Win7's wording for a failed logon, unless PAM said something more specific (account expired...).
 fn incorrect(pam: &str) -> String {
     let l = pam.to_lowercase();
     if pam.is_empty() || l.contains("authentication") || l.contains("incorrect") || l.contains("password") {
@@ -148,188 +127,152 @@ fn incorrect(pam: &str) -> String {
     } else { pam.to_string() }
 }
 
-fn spawn_authproto() -> Option<Child> {
+/// Start authproto_pam, with a thread reading its packets.
+fn start_conversation(u: &Rc<RefCell<Ui>>, tx: &async_channel::Sender<Packet>) {
     let path = std::env::var("XSECURELOCK_AUTHPROTO").ok().filter(|p| !p.is_empty()).or_else(|| {
         ["/usr/libexec/xsecurelock/authproto_pam", "/usr/lib/xsecurelock/authproto_pam", "/usr/local/libexec/xsecurelock/authproto_pam"]
             .iter().find(|p| std::path::Path::new(p).exists()).map(|p| p.to_string())
-    })?;
-    Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok()
+    });
+    let mut ui = u.borrow_mut();
+    ui.last_key = std::time::Instant::now();
+    ui.answered = 0;
+    ui.message.clear();
+    ui.failed_msg.clear();
+    wipe(&mut ui.buf);
+    ui.chars = 0;
+    ui.mode = Mode::Prompt;
+    let child = path.and_then(|p| Command::new(p).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok());
+    let Some(mut child) = child else {
+        ui.mode = Mode::Error;
+        ui.message = "The password can't be checked: xsecurelock's authproto_pam is missing.".into();
+        drop(ui);
+        redraw(u);
+        return;
+    };
+    ui.auth = child.stdin.take();
+    let out = child.stdout.take();
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        if let Some(out) = out {
+            let mut r = BufReader::new(out);
+            while let Some((t, m)) = read_packet(&mut r) { let _ = tx.send_blocking(Packet::Msg(t, m)); }
+        }
+        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        let _ = tx.send_blocking(Packet::Done(ok));
+    });
+    drop(ui);
+    redraw(u);
 }
 
-/// Wait until `fd` is readable, serving X expose events meanwhile. False on timeout.
-fn wait_readable(ui: &mut Ui, fd: i32, until: Instant) -> bool {
-    loop {
-        // events already read off the X socket by an earlier reply
-        while let Ok(Some(ev)) = ui.conn.poll_for_event() { ui.event(ev); }
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() { return false; }
-        let xfd = ui.conn.stream().as_raw_fd();
-        let mut fds = [libc::pollfd { fd, events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: xfd, events: libc::POLLIN, revents: 0 }];
-        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, left.as_millis().min(i32::MAX as u128) as i32) };
-        if n < 0 { continue; }
-        if fds[0].revents != 0 { return true; }
-    }
-}
-
-fn read_packet(ui: &mut Ui, out: &mut std::process::ChildStdout, timeout: u64) -> Option<(u8, String)> {
-    let mut head = Vec::new();
-    loop {
-        // authproto may take a while (PAM delays after a wrong password): keep the screen alive
-        if !wait_readable(ui, out.as_raw_fd(), Instant::now() + Duration::from_secs(timeout.max(60))) { return None; }
-        let b = read_byte(out.as_raw_fd())?;
-        if b == b'\n' { break; }
-        head.push(b);
-        if head.len() > 32 { return None; }
-    }
-    let head = String::from_utf8_lossy(&head).to_string();
-    let (ty, len) = head.split_once(' ')?;
+fn read_packet(r: &mut impl BufRead) -> Option<(u8, String)> {
+    let mut head = String::new();
+    if r.read_line(&mut head).ok()? == 0 { return None; }
+    let (ty, len) = head.trim_end().split_once(' ')?;
     let len: usize = len.trim().parse().ok()?;
     if len > 65536 { return None; }
     let mut msg = vec![0u8; len + 1];
-    out.read_exact(&mut msg).ok()?;
+    r.read_exact(&mut msg).ok()?;
     msg.pop();
     Some((*ty.as_bytes().first()?, String::from_utf8_lossy(&msg).into_owned()))
 }
 
-/// One byte straight from the fd (no std buffering: poll() must see everything that is pending).
-fn read_byte(fd: i32) -> Option<u8> {
-    let mut b = 0u8;
-    loop {
-        let n = unsafe { libc::read(fd, &mut b as *mut u8 as *mut libc::c_void, 1) };
-        if n == 1 { return Some(b); }
-        if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted { continue; }
-        return None;
-    }
-}
-
-/// Keystrokes from xsecurelock until Enter (the answer) or Escape/timeout/EOF (None).
-fn read_line(ui: &mut Ui, timeout: u64) -> Option<Vec<u8>> {
-    let mut buf: Vec<u8> = Vec::with_capacity(256);
-    let mut deadline = Instant::now() + Duration::from_secs(timeout);
-    ui.chars = 0;
-    ui.caps = caps_lock(&ui.conn, ui.win);
-    ui.draw_dynamic();
-    loop {
-        if !wait_readable(ui, 0, deadline) { buf.iter_mut().for_each(|x| *x = 0); return None; }
-        let Some(b) = read_byte(0) else { buf.iter_mut().for_each(|x| *x = 0); return None };
-        deadline = Instant::now() + Duration::from_secs(timeout);
-        match b {
-            b'\r' | b'\n' => return Some(buf),
-            0 | 0x1b => { buf.iter_mut().for_each(|x| *x = 0); return None; }
-            0x08 | 0x7f => {
-                // drop one UTF-8 character
-                while let Some(c) = buf.pop() { if c & 0xC0 != 0x80 { break; } }
+fn packet(u: &Rc<RefCell<Ui>>, p: Packet) {
+    let mut ui = u.borrow_mut();
+    match p {
+        Packet::Msg(b'i', m) => ui.message = m,
+        Packet::Msg(b'e', m) => ui.failed_msg = m,
+        Packet::Msg(t @ (b'P' | b'U'), _) => {
+            ui.asked = Some(if t == b'U' { 'u' } else { 'p' });
+            ui.echo = (t == b'U').then(String::new);
+            // authproto_pam asks again after a wrong password instead of failing: Win7 says so first
+            if ui.answered > 0 {
+                ui.mode = Mode::Error;
+                ui.message = incorrect(&ui.failed_msg);
+                ui.failed_msg.clear();
+            } else {
+                ui.mode = Mode::Prompt;
             }
-            0x01 | 0x15 => { buf.iter_mut().for_each(|x| *x = 0); buf.clear(); }
-            c if c < 0x20 => {}
-            c => { if buf.len() < 256 { buf.push(c); } }
         }
-        ui.chars = String::from_utf8_lossy(&buf).chars().count();
-        if let Some(e) = ui.echo.as_mut() { *e = String::from_utf8_lossy(&buf).into_owned(); }
-        ui.caps = caps_lock(&ui.conn, ui.win);
-        ui.draw_dynamic();
+        Packet::Msg(..) => {}
+        // the only way out of the lock
+        Packet::Done(true) => std::process::exit(0),
+        Packet::Done(false) => {
+            ui.auth = None;
+            ui.asked = None;
+            if ui.mode == Mode::Saver { return; }
+            ui.mode = Mode::Error;
+            ui.message = incorrect(&ui.failed_msg);
+        }
+    }
+    drop(ui);
+    redraw(u);
+}
+
+fn cancel(u: &Rc<RefCell<Ui>>) {
+    let mut ui = u.borrow_mut();
+    if let Some(mut inp) = ui.auth.take() { let _ = inp.write_all(b"x 0\n\n"); let _ = inp.flush(); }
+    wipe(&mut ui.buf);
+    ui.chars = 0;
+    ui.asked = None;
+    ui.echo = None;
+    ui.message.clear();
+    ui.mode = Mode::Saver;
+    drop(ui);
+    redraw(u);
+}
+
+fn key(u: &Rc<RefCell<Ui>>, tx: &async_channel::Sender<Packet>, e: &gdk::EventKey, demo: bool) {
+    use gdk::keys::constants as k;
+    let kv = e.keyval();
+    u.borrow_mut().last_key = std::time::Instant::now();
+    let mode = u.borrow().mode;
+    if demo && kv == k::Escape && mode == Mode::Saver { std::process::exit(1); }
+    match mode {
+        Mode::Saver => start_conversation(u, tx),
+        Mode::Busy => {}
+        Mode::Error => {
+            if kv == k::Return || kv == k::KP_Enter || kv == k::space || kv == k::Escape {
+                let alive = u.borrow().auth.is_some();
+                if alive { let mut ui = u.borrow_mut(); ui.mode = Mode::Prompt; ui.message.clear(); drop(ui); redraw(u); }
+                else { start_conversation(u, tx); }
+            }
+        }
+        Mode::Prompt => {
+            if kv == k::Escape { cancel(u); return; }
+            let mut ui = u.borrow_mut();
+            if kv == k::Return || kv == k::KP_Enter {
+                let Some(t) = ui.asked.take() else { return };
+                let mut answer = std::mem::take(&mut ui.buf);
+                if let Some(inp) = ui.auth.as_mut() {
+                    let _ = write!(inp, "{t} {}\n", answer.len());
+                    let _ = inp.write_all(&answer);
+                    let _ = inp.write_all(b"\n");
+                    let _ = inp.flush();
+                }
+                wipe(&mut answer);
+                ui.answered += 1;
+                ui.mode = Mode::Busy;
+                ui.chars = 0;
+                ui.echo = None;
+            } else if kv == k::BackSpace {
+                // drop one UTF-8 character
+                while let Some(c) = ui.buf.pop() { if c & 0xC0 != 0x80 { break; } }
+            } else if let Some(c) = kv.to_unicode().filter(|c| !c.is_control()) {
+                if ui.buf.len() < 256 { let mut b = [0u8; 4]; ui.buf.extend_from_slice(c.encode_utf8(&mut b).as_bytes()); }
+            }
+            let text = String::from_utf8_lossy(&ui.buf).into_owned();
+            ui.chars = text.chars().count();
+            if let Some(echo) = ui.echo.as_mut() { *echo = text; }
+            ui.caps = gdk::Display::default().and_then(|d| gdk::Keymap::for_display(&d)).is_some_and(|k| k.is_caps_locked());
+            drop(ui);
+            redraw(u);
+        }
     }
 }
-
-/// After a wrong password: wait for Enter / Escape / Space (the OK button), or give up.
-fn wait_ok(ui: &mut Ui, secs: u64) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(secs);
-    loop {
-        if !wait_readable(ui, 0, deadline) { return false; }
-        let Some(b) = read_byte(0) else { return false };
-        if matches!(b, b'\r' | b'\n' | b' ' | 0x1b) { return true; }
-    }
-}
-
-fn caps_lock(conn: &RustConnection, win: u32) -> bool {
-    conn.query_pointer(win).ok().and_then(|c| c.reply().ok()).map(|r| u16::from(r.mask) & u16::from(KeyButMask::LOCK) != 0).unwrap_or(false)
-}
-
-// ---------------------------------------------------------------- window and drawing
 
 impl Ui {
-    fn open(demo: bool) -> Option<Ui> {
-        let (conn, screen) = x11rb::connect(None).ok()?;
-        let root = conn.setup().roots[screen].root;
-        let parent = if demo { root } else {
-            let v = std::env::var("XSCREENSAVER_WINDOW").ok()?;
-            let v = v.trim();
-            if let Some(h) = v.strip_prefix("0x") { u32::from_str_radix(h, 16).ok()? } else { v.parse().ok()? }
-        };
-        let g = conn.get_geometry(parent).ok()?.reply().ok()?;
-        let (w, h) = if demo { (1366, 768) } else { (g.width as i32, g.height as i32) };
-        let win = conn.generate_id().ok()?;
-        conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, win, parent, 0, 0, w as u16, h as u16, 0, WindowClass::INPUT_OUTPUT, 0,
-            &CreateWindowAux::new().background_pixel(0x1d4f7a).event_mask(EventMask::EXPOSURE)).ok()?;
-        conn.map_window(win).ok()?;
-        // xsecurelock leaves its auth window unmapped until the module shows it (auth_x11 does
-        // XMapRaised too); the saver window is already mapped, so this changes nothing there
-        if !demo {
-            conn.map_window(parent).ok()?;
-            conn.configure_window(parent, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)).ok()?;
-        }
-        let gc = conn.generate_id().ok()?;
-        conn.create_gc(gc, win, &CreateGCAux::new()).ok()?;
-        let depth = conn.get_geometry(win).ok()?.reply().ok()?.depth;
-        // monitors in this window's coordinates (the lock window covers the whole screen)
-        let mut monitors = vec![];
-        let mut mon = None;
-        if !demo {
-            if let Ok(Ok(r)) = conn.randr_get_monitors(root, true).map(|c| c.reply()) {
-                for m in r.monitors {
-                    let rect = (m.x as f64, m.y as f64, m.width as f64, m.height as f64);
-                    if m.primary { mon = Some(rect); }
-                    monitors.push(rect);
-                }
-            }
-        }
-        if monitors.is_empty() { monitors.push((0.0, 0.0, w as f64, h as f64)); }
-        let mon = mon.unwrap_or(monitors[0]);
-        let data = aerode::config::data_dir();
-        let load = |p: std::path::PathBuf| image::open(p).ok().map(|i| aerode::wm::decor::rgba_surface(&i.to_rgba8()));
-        let bg = ["lockscreen.png", "lockscreen.jpg", "wallpaper.jpg"].iter().find_map(|f| load(data.join(f)));
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
-        let face = load(home.join(".face")).or_else(|| load(data.join("avatar.png")));
-        let _ = conn.flush();
-        Some(Ui { conn, win, gc, depth, w, h, mon, monitors, bg, face, name: user_name(), mode: Mode::Saver, chars: 0, echo: None, caps: false, message: String::new() })
-    }
-
-    fn event(&mut self, ev: Event) {
-        if let Event::Expose(e) = ev { if e.count == 0 { self.draw_all(); } }
-    }
-
     fn cx(&self) -> f64 { self.mon.0 + self.mon.2 / 2.0 }
     fn tile_cy(&self) -> f64 { self.mon.1 + self.mon.3 * 0.40 }
-    /// the part that changes while typing: password box, arrow, balloon, messages
-    fn dynamic_rect(&self) -> (i32, i32, i32, i32) {
-        let y = self.tile_cy() + 150.0;
-        ((self.cx() - 230.0) as i32, y as i32, 460, 240)
-    }
-
-    fn draw_all(&mut self) { self.present(None); }
-    fn draw_dynamic(&mut self) { let r = self.dynamic_rect(); self.present(Some(r)); }
-
-    fn present(&mut self, area: Option<(i32, i32, i32, i32)>) {
-        let (x0, y0, w, h) = area.unwrap_or((0, 0, self.w, self.h));
-        let (x0, y0) = (x0.max(0), y0.max(0));
-        let (w, h) = (w.min(self.w - x0), h.min(self.h - y0));
-        if w <= 0 || h <= 0 { return; }
-        let Ok(mut s) = ImageSurface::create(Format::Rgb24, w, h) else { return };
-        {
-            let Ok(cr) = Context::new(&s) else { return };
-            cr.translate(-x0 as f64, -y0 as f64);
-            self.paint(&cr);
-        }
-        s.flush();
-        let stride = s.stride() as usize;
-        let Ok(data) = s.data().map(|d| d.to_vec()) else { return };
-        let rows = (200_000 / stride).max(1);
-        for y in (0..h as usize).step_by(rows) {
-            let n = rows.min(h as usize - y);
-            let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, self.win, self.gc, w as u16, n as u16, x0 as i16, (y0 + y as i32) as i16, 0, self.depth, &data[y * stride..(y + n) * stride]);
-        }
-        let _ = self.conn.flush();
-    }
 
     fn paint(&self, cr: &Context) {
         // the logon background on every monitor

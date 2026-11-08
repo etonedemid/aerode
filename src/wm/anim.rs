@@ -1,7 +1,7 @@
 //! Timed effects of aerode-wm – the Windows 7 DWM animations the window manager draws itself – and
 //! the small timer queue of its event loop.
 //!
-//! picom (≥ 12.3, see `crate::picomconf`) animates the application windows; aerode-wm animates its
+//! The compositor animates application windows itself (`render::WinAnim`); this holds the shared timing.
 //! own surfaces and marks them `_AERODE_NO_ANIM`:
 //! - caption-button glow: cross-fades in `GLOW_IN`, out `GLOW_OUT`;
 //! - the frame after a focus change: cross-fades between its inactive and active look (`FOCUS_FADE`);
@@ -25,11 +25,7 @@ pub const SNAP_GROW: Duration = Duration::from_millis(200);
 pub const RIPPLE: Duration = Duration::from_millis(600);
 pub const PEEK_FADE: Duration = Duration::from_millis(250);
 pub const SWITCH_PEEK: Duration = Duration::from_millis(500);
-/// How long a minimising window stays mapped so that picom reads its `_AERODE_MIN_SLOT` (and picks
-/// the minimise animation) before the unmap: one compositor frame or two.
-pub const MIN_UNMAP_DELAY: Duration = Duration::from_millis(40);
 /// How long `_AERODE_MIN_SLOT` stays after a restore and `_AERODE_ANIM_GEOM` after a maximise or
-/// snap: longer than picom needs to start the animation, shorter than any follow-up drag.
 pub const PROP_LINGER: Duration = Duration::from_millis(300);
 /// Frame interval of the animations drawn here.
 pub const FRAME: Duration = Duration::from_millis(16);
@@ -102,7 +98,6 @@ impl Glow {
 /// Timers of the event loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Timer {
-    /// unmap a minimised window's top-level now that picom has seen its `_AERODE_MIN_SLOT`
     Unmap(u32),
     /// delete property `atom` of window `win`
     DelProp { win: u32, atom: u32 },

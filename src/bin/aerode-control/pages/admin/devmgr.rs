@@ -369,8 +369,8 @@ pub fn collect(hidden: bool) -> Vec<Dev> {
         }
     }
     if monitors == 0 {
-        for l in sh(&["xrandr", "--query"]).lines().filter(|l| l.contains(" connected")) {
-            devs.push(Dev { class: "Monitors", name: "Generic PnP Monitor".into(), bus: "X11".into(), maker: "(Standard monitor types)".into(), location: l.split_whitespace().next().unwrap_or("").into(), driver: "xrandr".into(), ..Default::default() });
+        for l in sh(&["aerode-xrandr", "--query"]).lines().filter(|l| l.contains(" connected")) {
+            devs.push(Dev { class: "Monitors", name: "Generic PnP Monitor".into(), bus: "X11".into(), maker: "(Standard monitor types)".into(), location: l.split_whitespace().next().unwrap_or("").into(), driver: "aerode-xrandr".into(), ..Default::default() });
         }
     }
     // ---------------------------------------------------------------- batteries / AC

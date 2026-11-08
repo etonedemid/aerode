@@ -70,14 +70,14 @@ impl Desktop {
         let win = gtk::Window::new(gtk::WindowType::Toplevel);
         win.set_application(Some(app));
         win.set_title("Desktop");
-        win.set_type_hint(gdk::WindowTypeHint::Desktop);
+        crate::shellwin::init(&win, gtk_layer_shell::Layer::Background, "aerode-desktop", gtk_layer_shell::KeyboardMode::OnDemand);
+        // over the whole monitor, panels or not
+        gtk_layer_shell::LayerShell::set_exclusive_zone(&win, -1);
         win.set_decorated(false);
-        win.set_skip_taskbar_hint(true);
-        win.set_skip_pager_hint(true);
-        win.set_keep_below(true);
-        win.stick();
         win.set_app_paintable(true);
-        win.move_(g.x(), g.y());
+        crate::shellwin::place(&win, g.x(), g.y());
+        gtk_layer_shell::LayerShell::set_anchor(&win, gtk_layer_shell::Edge::Bottom, true);
+        gtk_layer_shell::LayerShell::set_anchor(&win, gtk_layer_shell::Edge::Right, true);
         win.set_size_request(g.width(), g.height());
         win.style_context().add_class("aerode");
         win.style_context().add_class("desktop");

@@ -254,11 +254,8 @@ impl StartMenu {
         let win = gtk::Window::new(gtk::WindowType::Toplevel);
         win.set_application(Some(app));
         win.set_title("Start menu");
+        crate::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, &format!("aerode-glass-r6-t{OV}"), gtk_layer_shell::KeyboardMode::Exclusive);
         win.set_decorated(false);
-        win.set_type_hint(gdk::WindowTypeHint::Utility);
-        win.set_skip_taskbar_hint(true);
-        win.set_skip_pager_hint(true);
-        win.set_keep_above(true);
         win.set_app_paintable(true);
         crate::glass::enable_rgba(&win);
         win.set_size_request(W, OV + 476);
@@ -504,7 +501,7 @@ impl StartMenu {
             let s = Rc::downgrade(&sm);
             win.connect_draw(move |w, cr| {
                 if let Some(s) = s.upgrade() {
-                    let (x, y) = w.position();
+                    let (x, y) = crate::shellwin::pos(w);
                     s.paint(cr, x as f64, y as f64);
                 }
                 glib::Propagation::Proceed
@@ -545,7 +542,7 @@ impl StartMenu {
         self.populate();
         let g = util::primary_geometry();
         let (_, hm) = self.geom.get();
-        self.win.move_(g.x(), g.y() + g.height() - config::get().taskbar_height - hm - OV);
+        crate::shellwin::place(&self.win, g.x(), g.y() + g.height() - config::get().taskbar_height - hm - OV);
         self.armed.set(false);
         if let Some(f) = self.on_show.borrow().as_ref() { f(); }
         self.win.show();

@@ -819,7 +819,7 @@ pub(crate) fn cleartype_tuner(cp: &Rc<Cp>) {
     stack.add_named(&p1, "1");
     {
         let res = res.clone();
-        util::output_async(vec!["xrandr".into(), "--query".into()], move |out| {
+        util::output_async(vec!["aerode-xrandr".into(), "--query".into()], move |out| {
             let out = out.unwrap_or_default();
             let mut lines = out.lines();
             let mut msg = String::from("Your monitor is set to its native resolution.");

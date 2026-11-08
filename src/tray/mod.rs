@@ -1,5 +1,5 @@
 //! The Windows 7 notification area for programs: the icons applications put next to the clock
-//! (StatusNotifierItem over D-Bus, legacy XEmbed tray icons, and the shell's own extras such as
+//! (StatusNotifierItem over D-Bus and the shell's own extras such as
 //! external-monitor brightness), the "Show hidden icons" arrow with its overflow flyout, and the
 //! Notification Area Icons settings behind "Customize...".
 //!
@@ -8,7 +8,6 @@
 //! it calms down, unless the user picked "Hide icon and notifications".
 mod dbusmenu;
 mod sni;
-mod xembed;
 
 use gtk::gdk_pixbuf::{Colorspace, Pixbuf};
 use gtk::prelude::*;
@@ -29,7 +28,6 @@ pub enum Status {
 #[derive(Clone)]
 pub enum Backend {
     Sni(Rc<sni::Item>),
-    XEmbed(u32),
     Builtin(Rc<dyn Fn(&gtk::Widget)>),
 }
 
@@ -121,7 +119,6 @@ pub fn attach(tb: &Rc<crate::taskbar::Taskbar>) {
     let a = Rc::new(Area { chevron, visible, items: RefCell::new(vec![]), buttons: RefCell::new(vec![]), overflow: RefCell::new(None) });
     AREA.with(|x| *x.borrow_mut() = Some(a));
     sni::start();
-    xembed::start();
 }
 
 /// Add one of the shell's own icons (e.g. monitor brightness); `activate` gets the widget to
@@ -269,12 +266,12 @@ fn reposition(w: &gtk::Window, anchor: &gtk::Widget) {
     let Some(child) = w.child() else { return };
     let (_, nat) = child.preferred_size();
     let geo = util::primary_geometry();
-    let (ax, _) = anchor.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
+    let (ax, _) = crate::shellwin::gdk_origin(anchor);
     let alloc = anchor.allocation();
     let x = (ax + alloc.x() + alloc.width() / 2 - nat.width / 2).clamp(geo.x() + 4, geo.x() + geo.width() - nat.width - 4);
     let y = geo.y() + geo.height() - config::get().taskbar_height - nat.height - 4;
     w.resize(nat.width.max(1), nat.height.max(1));
-    w.move_(x, y);
+    crate::shellwin::place(w, x, y);
 }
 
 /// A notification-area icon: on the taskbar (`overflow` false) or in the overflow grid.
@@ -384,15 +381,13 @@ fn backend_of(id: &str) -> Option<Backend> {
 
 fn click(id: &str, e: &gdk::EventButton, w: &gtk::Widget, overflow: bool) {
     let (Some(a), Some(backend)) = (area(), backend_of(id)) else { return };
-    let (rx, ry) = e.root();
-    let (x, y) = (rx as i32, ry as i32);
+    let (x, y) = crate::shellwin::pointer();
     // clicking an icon in the overflow closes it, like Win7
     let anchor: gtk::Widget = if overflow { flyouts::close_open(); a.chevron.clone().upcast() } else { w.clone() };
     match (backend, e.button()) {
         (Backend::Sni(it), 1) => sni::activate(&it, x, y),
         (Backend::Sni(it), 2) => sni::secondary(&it, x, y),
         (Backend::Sni(it), 3) => sni::context_menu(&it, x, y),
-        (Backend::XEmbed(win), b @ 1..=3) => xembed::click(win, b as u8, x, y),
         (Backend::Builtin(f), 1) => f(&anchor),
         _ => {}
     }
@@ -401,13 +396,6 @@ fn click(id: &str, e: &gdk::EventButton, w: &gtk::Widget, overflow: bool) {
 fn scroll(id: &str, delta: i32, horizontal: bool) {
     match backend_of(id) {
         Some(Backend::Sni(it)) => sni::scroll(&it, delta, horizontal),
-        Some(Backend::XEmbed(win)) => {
-            // X buttons 4/5 (wheel up/down), 6/7 (left/right)
-            let b = match (horizontal, delta > 0) { (false, true) => 4, (false, false) => 5, (true, false) => 6, (true, true) => 7 };
-            let (x, y) = gdk::Display::default().and_then(|d| d.default_seat()).and_then(|s| s.pointer())
-                .map(|p| { let (_, x, y) = p.position(); (x, y) }).unwrap_or((0, 0));
-            for _ in 0..delta.unsigned_abs().min(10) { xembed::click(win, b, x, y); }
-        }
         _ => {}
     }
 }

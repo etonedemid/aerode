@@ -279,7 +279,7 @@ fn parse(text: &str) -> Vec<Out> {
 /// Ask xrandr off the GTK thread (AERODE_XRANDR_FILE replays a saved `xrandr --prop` for testing).
 fn query(done: impl FnOnce(Vec<Out>) + 'static) {
     if let Ok(f) = std::env::var("AERODE_XRANDR_FILE") { let t = std::fs::read_to_string(f).unwrap_or_default(); glib::idle_add_local_once(move || done(parse(&t))); return; }
-    util::output_async(vec!["xrandr".into(), "--prop".into()], move |o| done(parse(&o.unwrap_or_default())));
+    util::output_async(vec!["aerode-xrandr".into(), "--prop".into()], move |o| done(parse(&o.unwrap_or_default())));
 }
 
 fn pending_of(o: &Out) -> Pending {
@@ -302,7 +302,7 @@ fn hertz(rate: &str, all: &[String]) -> String {
 }
 
 fn xrandr_cmd(outs: &[Out], pend: &[Pending]) -> Vec<String> {
-    let mut cmd = vec!["xrandr".to_string()];
+    let mut cmd = vec!["aerode-xrandr".to_string()];
     let minx = pend.iter().filter(|p| p.on).map(|p| p.x).min().unwrap_or(0);
     let miny = pend.iter().filter(|p| p.on).map(|p| p.y).min().unwrap_or(0);
     for (o, p) in outs.iter().zip(pend) {
@@ -732,12 +732,13 @@ impl ResUi {
             for m in 0..display.n_monitors() {
                 if let Some(mon) = display.monitor(m) { if mon.model().map(|s| s == o.name).unwrap_or(false) { let g = mon.geometry(); geo = (g.x(), g.y(), g.width(), g.height()); } }
             }
-            let win = gtk::Window::new(gtk::WindowType::Popup);
+            let win = gtk::Window::new(gtk::WindowType::Toplevel);
+            aerode::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-identify", gtk_layer_shell::KeyboardMode::None);
             win.set_app_paintable(true);
             aerode::glass::enable_rgba(win.upcast_ref());
             let size = 220;
             win.set_default_size(size, size);
-            win.move_(geo.0 + (geo.2 - size) / 2, geo.1 + (geo.3 - size) / 2);
+            aerode::shellwin::place(&win, geo.0 + (geo.2 - size) / 2, geo.1 + (geo.3 - size) / 2);
             let n = (i + 1).to_string();
             win.connect_draw(move |w, cr| {
                 cr.set_operator(gtk::cairo::Operator::Source);
@@ -1055,7 +1056,7 @@ DP-2 disconnected (normal left inverted right x axis y axis)
         let p: Vec<Pending> = o.iter().map(pending_of).collect();
         assert_eq!(rect_size(&o[1], &p[1]), (1080, 1920));
         let cmd = xrandr_cmd(&o, &p).join(" ");
-        assert_eq!(cmd, "xrandr --output DP-1 --mode 2560x1440 --rate 143.97 --rotate normal --pos 0x0 --primary --output HDMI-1 --mode 1920x1080 --rate 59.94 --rotate left --pos 2560x0");
+        assert_eq!(cmd, "aerode-xrandr --output DP-1 --mode 2560x1440 --rate 143.97 --rotate normal --pos 0x0 --primary --output HDMI-1 --mode 1920x1080 --rate 59.94 --rotate left --pos 2560x0");
         assert_eq!(hertz("59.94", &o[1].modes[0].rates), "59 Hertz");
         assert_eq!(hertz("60.00", &o[1].modes[0].rates), "60 Hertz");
         assert_eq!(hertz("143.97", &o[0].modes[0].rates), "144 Hertz");

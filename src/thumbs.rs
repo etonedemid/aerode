@@ -20,9 +20,6 @@ use gtk::gdk::prelude::GdkContextExt;
 use gtk::gdk_pixbuf::Pixbuf;
 use gtk::glib;
 use gtk::prelude::*;
-use x11rb::connection::Connection;
-use x11rb::protocol::composite::ConnectionExt as _;
-use x11rb::protocol::xproto::{self, ConnectionExt as _};
 
 use crate::glass;
 
@@ -50,7 +47,7 @@ pub struct Win {
 struct State {
     popup: gtk::Window,
     area: gtk::DrawingArea,
-    wm: RefCell<Option<Rc<crate::x11::Wm>>>,
+    wm: RefCell<Option<Rc<crate::wmclient::Wm>>>,
     wins: RefCell<Vec<Win>>,
     anchor: RefCell<Option<gtk::Widget>>,
     /// item under the pointer, and whether it is on its close button
@@ -64,25 +61,6 @@ struct State {
     peeking: Cell<bool>,
     /// last thumbnail of every window (minimised windows have no live image)
     cache: RefCell<HashMap<u32, cairo::ImageSurface>>,
-    x: RefCell<Option<X>>,
-}
-
-struct X {
-    conn: x11rb::rust_connection::RustConnection,
-    root: u32,
-    check_atom: u32,
-    peek_atom: u32,
-    /// XRender picture formats (rgb24, argb32): thumbnails are scaled on the server
-    formats: Option<(u32, u32)>,
-}
-
-/// The standard RGB24 and ARGB32 picture formats.
-fn render_formats(conn: &x11rb::rust_connection::RustConnection) -> Option<(u32, u32)> {
-    use x11rb::protocol::render::{ConnectionExt as _, PictType};
-    let r = conn.render_query_pict_formats().ok()?.reply().ok()?;
-    let find = |depth: u8, alpha: u16| r.formats.iter().find(|f| f.type_ == PictType::DIRECT && f.depth == depth
-        && f.direct.red_shift == 16 && f.direct.green_shift == 8 && f.direct.blue_shift == 0 && f.direct.alpha_mask == alpha).map(|f| f.id);
-    Some((find(24, 0)?, find(32, 0xff)?))
 }
 
 thread_local! {
@@ -95,26 +73,19 @@ fn cancel(src: &RefCell<Option<glib::SourceId>>) {
 
 fn state() -> Rc<State> {
     if let Some(s) = STATE.with(|s| s.borrow().clone()) { return s; }
-    let popup = gtk::Window::new(gtk::WindowType::Popup);
-    popup.set_type_hint(gdk::WindowTypeHint::Tooltip);
+    let popup = gtk::Window::new(gtk::WindowType::Toplevel);
+    crate::shellwin::init(&popup, gtk_layer_shell::Layer::Overlay, "aerode-glass-r6", gtk_layer_shell::KeyboardMode::None);
     popup.set_app_paintable(true);
     glass::enable_rgba(&popup);
     let area = gtk::DrawingArea::new();
     area.add_events(gdk::EventMask::POINTER_MOTION_MASK | gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::BUTTON_RELEASE_MASK
         | gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
     popup.add(&area);
-    let x = x11rb::connect(None).ok().and_then(|(conn, scr)| {
-        let root = conn.setup().roots[scr].root;
-        let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).ok()?.reply().ok().map(|r| r.atom);
-        let (check_atom, peek_atom) = (atom("_NET_SUPPORTING_WM_CHECK")?, atom("_AERODE_PEEK")?);
-        let formats = render_formats(&conn);
-        Some(X { conn, root, check_atom, peek_atom, formats })
-    });
     let st = Rc::new(State {
         popup, area, wm: RefCell::new(None), wins: RefCell::new(vec![]), anchor: RefCell::new(None),
         hot: Cell::new(None), hot_close: Cell::new(false), list: Cell::new(false),
         show_src: RefCell::new(None), hide_src: RefCell::new(None), peek_src: RefCell::new(None), live_src: RefCell::new(None),
-        peeking: Cell::new(false), cache: RefCell::new(HashMap::new()), x: RefCell::new(x),
+        peeking: Cell::new(false), cache: RefCell::new(HashMap::new()),
     });
     {
         let s = st.clone();
@@ -148,7 +119,7 @@ fn state() -> Rc<State> {
 // ---------------------------------------------------------------- public API (the taskbar)
 
 /// The pointer entered a running taskbar button.
-pub fn hover(wm: &Rc<crate::x11::Wm>, anchor: &gtk::Widget, wins: Vec<Win>) {
+pub fn hover(wm: &Rc<crate::wmclient::Wm>, anchor: &gtk::Widget, wins: Vec<Win>) {
     let st = state();
     cancel(&st.hide_src);
     cancel(&st.show_src);
@@ -167,7 +138,7 @@ pub fn hover(wm: &Rc<crate::x11::Wm>, anchor: &gtk::Widget, wins: Vec<Win>) {
 }
 
 /// Show the thumbnails right away (a click on a button that groups several windows).
-pub fn show_now(wm: &Rc<crate::x11::Wm>, anchor: &gtk::Widget, wins: Vec<Win>) {
+pub fn show_now(wm: &Rc<crate::wmclient::Wm>, anchor: &gtk::Widget, wins: Vec<Win>) {
     let st = state();
     cancel(&st.hide_src);
     cancel(&st.show_src);
@@ -215,15 +186,8 @@ fn schedule_hide(st: &Rc<State>) {
     }));
 }
 
-fn send_peek(st: &State, target: u32, on: bool) {
-    let x = st.x.borrow();
-    let Some(x) = x.as_ref() else { return };
-    let check = x.conn.get_property(false, x.root, x.check_atom, xproto::AtomEnum::WINDOW, 0, 1).ok()
-        .and_then(|c| c.reply().ok()).and_then(|r| r.value32().and_then(|mut v| v.next())).unwrap_or(0);
-    if check == 0 { return; }
-    let ev = xproto::ClientMessageEvent::new(32, check, x.peek_atom, [target, on as u32, 0, 0, 0]);
-    let _ = x.conn.send_event(false, check, xproto::EventMask::NO_EVENT, ev);
-    let _ = x.conn.flush();
+fn send_peek(_st: &State, target: u32, on: bool) {
+    crate::wmipc::send(crate::wmipc::Req::Peek { id: target, on });
 }
 
 /// Peek at `win` (None: stop peeking).
@@ -267,14 +231,14 @@ fn open(st: &Rc<State>, anchor: &gtk::Widget, wins: Vec<Win>) {
     st.area.set_size_request(w as i32, h as i32);
     st.popup.resize(w as i32, h as i32);
     // centred above the button, on its monitor
-    let (ax, ay) = anchor.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
+    let (ax, ay) = crate::shellwin::gdk_origin(anchor);
     let al = anchor.allocation();
     let (bx, by) = if anchor.has_window() { (ax, ay) } else { (ax + al.x(), ay + al.y()) };
     let mon = anchor.display().monitor_at_point(bx + al.width() / 2, by).map(|m| m.geometry());
     let (mx, mw) = mon.map(|g| (g.x(), g.width())).unwrap_or((0, 1920));
     let x = (bx + al.width() / 2 - w as i32 / 2).clamp(mx + 2, (mx + mw - w as i32 - 2).max(mx + 2));
     let y = by - h as i32 - 4;
-    st.popup.move_(x, y);
+    crate::shellwin::place(&st.popup, x, y);
     st.popup.show_all();
     st.area.queue_draw();
     // live: refresh the thumbnails while the popup is up
@@ -355,90 +319,20 @@ fn click(st: &Rc<State>, pos: (f64, f64), button: u32) {
 
 // ---------------------------------------------------------------- capture
 
-/// Grab the window's current image into the thumbnail cache.
+/// Ask the compositor for the window's current image, frame included (Win7's thumbnails have the
+/// glass caption too), scaled into the thumbnail box.
 fn capture(st: &State, win: u32) {
-    let x = st.x.borrow();
-    let Some(x) = x.as_ref() else { return };
-    // the WM frame (the top-level) has the glass caption too, like Win7's thumbnails
-    let top = x.conn.query_tree(win).ok().and_then(|c| c.reply().ok())
-        .map(|t| if t.parent != t.root && t.parent != 0 { t.parent } else { win }).unwrap_or(win);
-    let Some(g) = x.conn.get_geometry(top).ok().and_then(|c| c.reply().ok()) else { return };
-    let (w, h) = (g.width as i32, g.height as i32);
-    if w < 2 || h < 2 { return; }
-    // with a compositor every top-level has an off-screen pixmap; without one, copy the screen
-    let k = (THUMB_W / w as f64).min(THUMB_H / h as f64).min(1.0);
-    let (tw, th) = ((w as f64 * k).round().max(1.0) as i32, (h as f64 * k).round().max(1.0) as i32);
-    if let Some(small) = capture_scaled(x, top, g.depth, w, h, tw, th) {
+    let req = crate::wmipc::Req::Thumb { id: win, w: THUMB_W as i32, h: THUMB_H as i32 };
+    if let Some(small) = crate::wmipc::call(&req).and_then(|v| crate::wmipc::read_image(&v)) {
         st.cache.borrow_mut().insert(win, small);
-        return;
     }
-    let pix = x.conn.generate_id().ok();
-    let named = pix.map(|p| x.conn.composite_name_window_pixmap(top, p).ok().map(|c| c.check().is_ok()).unwrap_or(false)).unwrap_or(false);
-    let drawable = if named { pix.unwrap() } else { top };
-    let img = x.conn.get_image(xproto::ImageFormat::Z_PIXMAP, drawable, 0, 0, w as u16, h as u16, !0).ok().and_then(|c| c.reply().ok());
-    if named { let _ = x.conn.free_pixmap(pix.unwrap()); }
-    let _ = x.conn.flush();
-    let Some(img) = img else { return };
-    let argb = img.depth == 32;
-    let fmt = if argb { cairo::Format::ARgb32 } else { cairo::Format::Rgb24 };
-    let stride = (w * 4) as usize;
-    if img.data.len() < stride * h as usize { return; }
-    let Ok(full) = cairo::ImageSurface::create_for_data(img.data, fmt, w, h, stride as i32) else { return };
-    // scale into the 200 × 120 box once, here, instead of on every draw
-    let Ok(small) = cairo::ImageSurface::create(cairo::Format::ARgb32, tw, th) else { return };
-    {
-        let Ok(cr) = cairo::Context::new(&small) else { return };
-        cr.scale(k, k);
-        cr.set_source_surface(&full, 0.0, 0.0).ok();
-        cr.source().set_filter(cairo::Filter::Good);
-        cr.paint().ok();
-    }
-    st.cache.borrow_mut().insert(win, small);
-}
-
-/// The window scaled to tw × th by the X server (XRender, "good" filter), so only the thumbnail
-/// crosses the wire – a 4K window would otherwise be 33 MB per refresh.
-fn capture_scaled(x: &X, top: u32, depth: u8, w: i32, h: i32, tw: i32, th: i32) -> Option<cairo::ImageSurface> {
-    use x11rb::protocol::render::{ConnectionExt as _, CreatePictureAux, PictOp, Transform};
-    let (rgb24, argb32) = x.formats?;
-    let c = &x.conn;
-    let src_fmt = match depth { 32 => argb32, 24 => rgb24, _ => return None };
-    // the compositor's pixmap when there is one, else the window itself with its children
-    let pix = c.generate_id().ok()?;
-    let named = c.composite_name_window_pixmap(top, pix).ok().map(|ck| ck.check().is_ok()).unwrap_or(false);
-    let src_draw = if named { pix } else { top };
-    let (src, dst, dst_pix) = (c.generate_id().ok()?, c.generate_id().ok()?, c.generate_id().ok()?);
-    let fx = |v: f64| (v * 65536.0).round() as i32;
-    let (sx, sy) = (w as f64 / tw as f64, h as f64 / th as f64);
-    let ok = (|| -> Option<()> {
-        c.render_create_picture(src, src_draw, src_fmt, &CreatePictureAux::new().subwindowmode(xproto::SubwindowMode::INCLUDE_INFERIORS)).ok()?.check().ok()?;
-        c.render_set_picture_transform(src, Transform { matrix11: fx(sx), matrix12: 0, matrix13: 0, matrix21: 0, matrix22: fx(sy), matrix23: 0, matrix31: 0, matrix32: 0, matrix33: fx(1.0) }).ok()?;
-        c.render_set_picture_filter(src, b"good", &[]).ok()?;
-        c.create_pixmap(32, dst_pix, x.root, tw as u16, th as u16).ok()?.check().ok()?;
-        c.render_create_picture(dst, dst_pix, argb32, &CreatePictureAux::new()).ok()?;
-        c.render_composite(PictOp::SRC, src, x11rb::NONE, dst, 0, 0, 0, 0, 0, 0, tw as u16, th as u16).ok()?;
-        Some(())
-    })();
-    let img = ok.and_then(|_| c.get_image(xproto::ImageFormat::Z_PIXMAP, dst_pix, 0, 0, tw as u16, th as u16, !0).ok()?.reply().ok());
-    let _ = c.render_free_picture(src);
-    let _ = c.render_free_picture(dst);
-    let _ = c.free_pixmap(dst_pix);
-    if named { let _ = c.free_pixmap(pix); }
-    let _ = c.flush();
-    let img = img?;
-    let stride = (tw * 4) as usize;
-    if img.data.len() < stride * th as usize { return None; }
-    let mut data = img.data;
-    // a 24-bit source leaves the alpha byte undefined: make it opaque
-    if depth != 32 { for px in data.chunks_exact_mut(4) { px[3] = 255; } }
-    cairo::ImageSurface::create_for_data(data, cairo::Format::ARgb32, tw, th, stride as i32).ok()
 }
 
 // ---------------------------------------------------------------- drawing
 
 fn draw(st: &State, area: &gtk::DrawingArea, cr: &cairo::Context) {
     let (w, h) = (area.allocated_width() as f64, area.allocated_height() as f64);
-    let (sx, sy) = area.window().map(|gw| { let (_, x, y) = gw.origin(); (x as f64, y as f64) }).unwrap_or((0.0, 0.0));
+    let (sx, sy) = { let (x, y) = crate::shellwin::gdk_origin(area); (x as f64, y as f64) };
     glass::paint_glass(cr, w, h, sx, sy, 6.0, true);
     let wins = st.wins.borrow();
     let layout = pangocairo::functions::create_layout(cr);

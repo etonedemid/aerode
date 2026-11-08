@@ -251,11 +251,10 @@ impl Slider {
 
     /// TBS_TOOLTIPS: the position beside the thumb while dragging (left of a vertical trackbar).
     fn show_tip(&self) {
-        let Some(gw) = self.area.window() else { return };
         let mut tip = self.tip.borrow_mut();
         let (win, lbl) = tip.get_or_insert_with(|| {
-            let win = gtk::Window::new(gtk::WindowType::Popup);
-            win.set_type_hint(gdk::WindowTypeHint::Tooltip);
+            let win = gtk::Window::new(gtk::WindowType::Toplevel);
+            crate::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-tip", gtk_layer_shell::KeyboardMode::None);
             win.style_context().add_class("vol-tip");
             let lbl = gtk::Label::new(None);
             win.add(&lbl);
@@ -263,13 +262,13 @@ impl Slider {
         });
         lbl.set_text(&self.value.get().to_string());
         // a DrawingArea has its own GdkWindow: its origin is the widget's top-left on screen
-        let (_, ox, oy) = gw.origin();
+        let (ox, oy) = crate::shellwin::gdk_origin(&self.area);
         let w = self.area.allocated_width();
         win.show_all();
         let (_, nat) = win.preferred_size();
         let x = ox + ((w - 26) / 2).max(0) - nat.width - 2;
         let y = oy + self.thumb_y() as i32 - nat.height / 2;
-        win.move_(x, y);
+        crate::shellwin::place(win, x, y);
     }
 
     fn hide_tip(&self) { if let Some((w, _)) = self.tip.borrow_mut().take() { unsafe { w.destroy(); } } }
