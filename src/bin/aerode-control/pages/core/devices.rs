@@ -6,6 +6,11 @@
 //! Properties sheet; Add a device (Bluetooth scan and pair), Add a printer, See what's printing.
 use super::*;
 
+/// A queued option change in the Printing Preferences sheet.
+type SetOption = Rc<dyn Fn(&str, &str)>;
+/// A self-rescheduling round of the Bluetooth device scan.
+type ScanTask = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Device {
     /// computer | monitor | keyboard | mouse | audio | camera | storage | bluetooth | printer | usb
@@ -691,7 +696,7 @@ fn preferences(parent: Option<&gtk::Window>, printer: &str, shown: &str) {
     let opts = ppd_options(&sh(&["lpoptions", "-p", printer, "-l"]));
     let cur = sh(&["lpoptions", "-p", printer]);
     let changed: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(vec![]));
-    let set: Rc<dyn Fn(&str, &str)> = { let (c, d) = (changed.clone(), d.clone()); Rc::new(move |k: &str, v: &str| { d.set_response_sensitive(gtk::ResponseType::Apply, true); let mut c = c.borrow_mut(); c.retain(|(x, _)| x != k); c.push((k.to_string(), v.to_string())); }) };
+    let set: SetOption = { let (c, d) = (changed.clone(), d.clone()); Rc::new(move |k: &str, v: &str| { d.set_response_sensitive(gtk::ResponseType::Apply, true); let mut c = c.borrow_mut(); c.retain(|(x, _)| x != k); c.push((k.to_string(), v.to_string())); }) };
     let nb = gtk::Notebook::new();
     let grid = || { let g = gtk::Grid::new(); g.set_row_spacing(10); g.set_column_spacing(12); g.set_border_width(12); g };
     let row = |g: &gtk::Grid, r: i32, t: &str, c: &gtk::ComboBoxText| { g.attach(&label(t, ""), 0, r, 1, 1); c.set_hexpand(true); g.attach(c, 1, r, 1, 1); };
@@ -871,7 +876,7 @@ fn add_device(ui: &Rc<Ui>) {
     { let n = next.clone(); tv.selection().connect_changed(move |s| n.set_sensitive(s.selected().is_some())); }
     let open = Rc::new(Cell::new(true));
     // scan in rounds while the dialog is open
-    let scan: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let scan: ScanTask = Rc::new(RefCell::new(None));
     let f: Rc<dyn Fn()> = { let (store, open, scan, sp, st) = (store.clone(), open.clone(), scan.clone(), sp.clone(), st.clone()); Rc::new(move || {
         let (store, open, scan, sp, st) = (store.clone(), open.clone(), scan.clone(), sp.clone(), st.clone());
         bg(|| {
@@ -1148,7 +1153,7 @@ fn port_page(ui: &Rc<Ui>, wz: &Rc<Wizard>) {
     let mut ports: Vec<(String, String)> = (0..4).filter(|i| std::path::Path::new(&format!("/dev/lp{i}")).exists()).map(|i| (format!("parallel:/dev/lp{i}"), format!("LPT{}: (Printer Port)", i + 1))).collect();
     for e in std::fs::read_dir("/dev/usb").into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
-        if n.starts_with("lp") { ports.push((format!("file:/dev/usb/{n}"), format!("USB{:03} (Virtual printer port for USB)", n[2..].parse::<u32>().unwrap_or(0) + 1))); }
+        if let Some(r) = n.strip_prefix("lp") { ports.push((format!("file:/dev/usb/{n}"), format!("USB{:03} (Virtual printer port for USB)", r.parse::<u32>().unwrap_or(0) + 1))); }
     }
     ports.push(("file:/dev/null".into(), "FILE: (Print to File)".into()));
     let port_list: Vec<(&str, &str)> = ports.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
