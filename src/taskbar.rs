@@ -8,6 +8,8 @@ use std::rc::Rc;
 use crate::x11::{Client, Wm};
 use crate::{config, flyouts, glass, msstyles, shellstyle, util};
 
+type MenuItems = Vec<(String, Option<Rc<dyn Fn()>>)>;
+
 pub struct Group {
     pub key: String,
     pub app: Option<gio::AppInfo>,
@@ -473,7 +475,7 @@ impl Taskbar {
 
     /// The taskbar's right-click menu (Win7): window arrangement, Show the desktop, Task Manager,
     /// Lock the taskbar, Properties. A leading ✓ marks a checked item.
-    pub fn menu_items(self: &Rc<Self>) -> Vec<(String, Option<Rc<dyn Fn()>>)> {
+    pub fn menu_items(self: &Rc<Self>) -> MenuItems {
         let wm = self.wm.clone();
         let arrange = |how: u8| -> Option<Rc<dyn Fn()>> {
             let wm = wm.clone();
@@ -717,7 +719,7 @@ fn dominant_color(pb: &Pixbuf) -> Option<[f64; 3]> {
     let (mut wsum, mut c) = (0.0, [0.0; 3]);
     for i in around(best) {
         wsum += bins[i].0;
-        for j in 0..3 { c[j] += bins[i].1[j]; }
+        for (j, &v) in bins[i].1.iter().enumerate() { c[j] += v; }
     }
     // a few coloured pixels in a grey icon don't make it coloured
     if wsum <= 0.0 || wsum < opaque * 0.03 { return None; }
