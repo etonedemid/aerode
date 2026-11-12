@@ -3,6 +3,8 @@ use super::*;
 use aerode::startmenu::{start_item, POWER_ACTIONS, START_ITEMS};
 use std::collections::HashMap;
 
+type StartMenuWidgets = Rc<RefCell<Vec<(String, &'static str, gtk::ToggleButton)>>>;
+
 pub fn page_taskbar(cp: &Rc<Cp>) -> gtk::Widget {
     cp.side_link("Personalization", "personalization");
     let o = config::get().taskbar;
@@ -177,7 +179,7 @@ fn customize_start(parent: &gtk::Window, items: &Rc<RefCell<HashMap<String, Stri
         "recent" => "document-open-recent", "run" => "system-run", "videos" => "folder-videos", "searchcp" => "system-search", _ => "",
     };
     // (key, the value each widget stands for, widget)
-    let widgets: Rc<RefCell<Vec<(String, &'static str, gtk::ToggleButton)>>> = Rc::new(RefCell::new(vec![]));
+    let widgets: StartMenuWidgets = Rc::new(RefCell::new(vec![]));
     let fill = {
         let (list, widgets, items) = (list.clone(), widgets.clone(), items.clone());
         move |use_defaults: bool| {
