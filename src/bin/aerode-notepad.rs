@@ -709,9 +709,9 @@ impl App {
             let page = page as usize;
             let Some(&(first, top)) = pages.get(page) else { return };
             let last = pages.get(page + 1).map(|x| x.0).unwrap_or(baselines.len());
-            for li in first..last {
-                let Some(line) = layout.line_readonly(li as i32) else { continue };
-                cr.move_to(0.0, header + (baselines[li] - top) as f64 / pango::SCALE as f64);
+            for (li, &base) in baselines[first..last].iter().enumerate() {
+                let Some(line) = layout.line_readonly((first + li) as i32) else { continue };
+                cr.move_to(0.0, header + (base - top) as f64 / pango::SCALE as f64);
                 pangocairo::functions::show_layout_line(&cr, &line);
             }
         });
