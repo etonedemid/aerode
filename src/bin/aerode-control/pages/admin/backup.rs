@@ -458,7 +458,7 @@ fn restore(ui: &Rc<Ui>, all: bool) {
         for it in items {
             let src = if all { format!("{dest}/") } else { it.clone() };
             let rel = Path::new(&src).strip_prefix(&dest).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            let to = match &target { Some(t) => if all { format!("{t}/") } else { format!("{t}/") }, None => { let p = Path::new(&home_s).join(&rel); format!("{}/", p.parent().unwrap_or(Path::new(&home_s)).display()) } };
+            let to = match &target { Some(t) => format!("{t}/"), None => { let p = Path::new(&home_s).join(&rel); format!("{}/", p.parent().unwrap_or(Path::new(&home_s)).display()) } };
             let to = if all && target.is_none() { format!("{home_s}/") } else { to };
             let (ok, out) = run(&["rsync", "-a", "--update", &src, &to]);
             if !ok { errs += &out; }
