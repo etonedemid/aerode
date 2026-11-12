@@ -84,8 +84,7 @@ fn authenticate(ui: &mut Ui) -> i32 {
         let mut failed_msg = String::new();
         let mut cancelled = false;
         let mut answered = 0;
-        loop {
-            let Some((ty, msg)) = read_packet(ui, &mut out, timeout) else { break };
+        while let Some((ty, msg)) = read_packet(ui, &mut out, timeout) {
             match ty {
                 b'i' => { ui.message = msg; ui.draw_dynamic(); }
                 b'e' => { failed_msg = msg; }
