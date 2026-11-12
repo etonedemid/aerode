@@ -21,7 +21,6 @@ pub const RT_GROUP_ICON: u16 = 14;
 
 pub struct Pe {
     data: Vec<u8>,
-    rsrc_rva: u32,
     rsrc_off: usize,
     sections: Vec<(u32, u32, u32)>, // va, size, raw offset
 }
@@ -51,7 +50,7 @@ impl Pe {
             let s = sec + i * 40;
             sections.push((u32le(&data, s + 12), u32le(&data, s + 8).max(u32le(&data, s + 16)), u32le(&data, s + 20)));
         }
-        let mut p = Pe { data, rsrc_rva, rsrc_off: 0, sections };
+        let mut p = Pe { data, rsrc_off: 0, sections };
         p.rsrc_off = p.rva_to_off(rsrc_rva).context("no resource section")?;
         Ok(p)
     }
