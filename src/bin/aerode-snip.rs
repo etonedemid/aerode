@@ -14,6 +14,8 @@ use std::rc::Rc;
 
 use aerode::{config, theme, util, x11::Wm};
 
+type HoverRect = Rc<Cell<Option<(i32, i32, i32, i32)>>>;
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind { Free, Rect, Window, Full }
 
@@ -107,7 +109,7 @@ fn select(kind: Kind, shot: Pixbuf, tool: bool, done: Rc<dyn Fn(Option<Pixbuf>)>
     win.add(&area);
     let pts: Rc<RefCell<Vec<(f64, f64)>>> = Default::default();
     let dragging = Rc::new(Cell::new(false));
-    let hover: Rc<Cell<Option<(i32, i32, i32, i32)>>> = Default::default();
+    let hover: HoverRect = Default::default();
     let rects = Rc::new(if kind == Kind::Window { window_rects() } else { vec![] });
     // the window under (x, y); outside every window the desktop, i.e. the whole screen (Win7 snips the desktop window)
     let window_at = { let rects = rects.clone(); move |x: f64, y: f64| rects.iter().find(|r| x as i32 >= r.0 && y as i32 >= r.1 && (x as i32) < r.0 + r.2 && (y as i32) < r.1 + r.3).copied().unwrap_or((0, 0, sw, sh)) };
