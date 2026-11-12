@@ -352,7 +352,7 @@ fn overview(m: &Rc<Mmc>) {
             let mut by: std::collections::BTreeMap<(String, u32), Vec<&Ev>> = Default::default();
             for e in &these { by.entry((e.source.clone(), e.id)).or_default().push(e); }
             let mut groups: Vec<_> = by.into_iter().collect();
-            groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+            groups.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
             for ((src, id), list) in groups.into_iter().take(200) {
                 let c = counts(&list);
                 let log = if list[0].category == "Package" || list[0].source == "ALPM" || list[0].source == "PACMAN" { "Setup" } else if list[0].user == "SYSTEM" || list[0].user == "N/A" { "System" } else { "Application" };
@@ -709,8 +709,7 @@ fn filter_dialog(st: &Rc<State>) {
     d.content_area().pack_start(&nb, true, true, 0);
     d.show_all();
     if d.run() == gtk::ResponseType::Ok {
-        let mut f = Filter::default();
-        f.since = logged.active_id().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let mut f = Filter { since: logged.active_id().and_then(|s| s.parse().ok()).unwrap_or(0), ..Filter::default() };
         for (i, c) in checks.iter().enumerate() { f.levels[i] = c.is_active(); }
         f.sources = if by_src.is_active() { srcs.text().to_string() } else { String::new() };
         f.ids = ids.text().to_string();
@@ -896,10 +895,9 @@ mod tests {
     }
     #[test]
     fn filter_ids() {
-        let mut f = Filter::default();
-        f.ids = "1,3,5-99,-76".into();
-        let mut e = Ev::default();
-        e.id = 76; assert!(!f.matches(&e));
+        let mut f = Filter { ids: "1,3,5-99,-76".into(), ..Filter::default() };
+        let mut e = Ev { id: 76, ..Ev::default() };
+        assert!(!f.matches(&e));
         e.id = 50; assert!(f.matches(&e));
         e.id = 2; assert!(!f.matches(&e));
         f.levels[1] = true;
