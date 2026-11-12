@@ -10,6 +10,8 @@ use super::super::super::{link, text, title, Cp};
 use super::*;
 use aerode::config;
 
+type ActionButton = (String, bool, Rc<dyn Fn()>);
+
 #[derive(Clone, Default, Debug)]
 pub struct Status {
     pub fw: super::firewall::Fw,
@@ -75,7 +77,7 @@ pub fn gather() -> Status {
 }
 
 /// A message: kind key (for "Turn off messages about …"), important?, title, text, button.
-pub struct Msg { pub key: &'static str, pub topic: &'static str, pub red: bool, pub title: String, pub text: String, pub button: Option<(String, bool, Rc<dyn Fn()>)>, pub extra: Option<(String, Rc<dyn Fn()>)> }
+pub struct Msg { pub key: &'static str, pub topic: &'static str, pub red: bool, pub title: String, pub text: String, pub button: Option<ActionButton>, pub extra: Option<(String, Rc<dyn Fn()>)> }
 
 /// Messages for the current status (also used for the flag in the notification area).
 pub fn messages(cp: &Rc<Cp>, s: &Status, refresh: Rc<dyn Fn()>) -> (Vec<Msg>, Vec<Msg>) {
@@ -309,7 +311,7 @@ fn message(m: Msg, refresh: Rc<dyn Fn()>) -> gtk::Widget {
 
 fn status_rows_security(s: &Status) -> Vec<(String, String, String)> {
     let mut v = vec![];
-    v.push(("Network firewall".into(), if s.fw.on { "On".into() } else if !s.fw.vendor.is_empty() { "On".into() } else { "Off".into() },
+    v.push(("Network firewall".into(), if s.fw.on || !s.fw.vendor.is_empty() { "On".into() } else { "Off".into() },
         if s.fw.on { format!("Windows Firewall ({}) is actively protecting your computer.", s.fw.backend) } else if !s.fw.vendor.is_empty() { format!("{} is actively protecting your computer.", s.fw.vendor) } else if s.fw_installed { "Windows Firewall is turned off.".into() } else { "No firewall is installed.".into() }));
     v.push(("Windows Update".into(), if s.update_mode == "never" { "Off".into() } else { "On".into() }, if s.update_mode == "never" { "Windows Update will not check for updates.".into() } else { "Windows will check for updates once a day and let you choose which to install.".into() }));
     v.push(("Virus protection".into(), match s.clamav { Some(true) => "On".into(), Some(false) => "Off".into(), None => "Not found".into() },
