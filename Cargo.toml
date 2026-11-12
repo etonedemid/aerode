@@ -24,3 +24,8 @@ portable-pty = "0.8"
 opt-level = 3
 lto = "thin"
 strip = true
+
+[lints.clippy]
+# house style: several short statements on one line, and cairo draw helpers take (cr, x, y, w, h, ...)
+possible_missing_else = "allow"
+too_many_arguments = "allow"

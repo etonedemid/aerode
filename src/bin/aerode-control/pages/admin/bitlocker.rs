@@ -9,6 +9,8 @@ use super::super::super::{link, section, text, title, Cp};
 use super::diskmgmt::{self, Disk, Vol};
 use super::*;
 
+type VolState = Vec<(Vol, bool)>;
+
 const SYSTEM: [&str; 6] = ["/", "/boot", "/boot/efi", "/efi", "/home", "/usr"];
 
 fn mounts(v: &Vol) -> Vec<String> { v.mounts.iter().cloned().chain(v.inner.iter().flat_map(|i| i.mounts.clone())).filter(|m| !m.is_empty() && !m.starts_with('[')).collect() }
@@ -29,7 +31,7 @@ fn fill(cp: &Rc<Cp>, holder: &gtk::Box, disks: Vec<Disk>) {
     v.pack_start(&title("Help protect your files and folders by encrypting your drives"), false, false, 0);
     v.pack_start(&text("BitLocker Drive Encryption helps prevent unauthorized access to any files stored on the drives shown below. You are able to use the computer normally, but unauthorized users cannot read or use your files."), false, false, 0);
     v.pack_start(&link("What should I know about BitLocker before I turn it on?", || { util::open_uri("https://wiki.archlinux.org/title/Dm-crypt"); }), false, false, 0);
-    let (mut fixed, mut removable): (Vec<(Vol, bool)>, Vec<(Vol, bool)>) = (vec![], vec![]);
+    let (mut fixed, mut removable): (VolState, VolState) = (vec![], vec![]);
     for d in disks.iter().filter(|d| !d.rom) {
         let vols: Vec<Vol> = if let Some(w) = &d.whole { vec![w.clone()] } else { d.parts.iter().filter(|p| !p.fstype.is_empty() && p.fstype != "swap" && !matches!(p.parttype.as_str(), "0x5" | "0xf" | "0x85")).cloned().collect() };
         for vol in vols { if d.removable { removable.push((vol, true)) } else { fixed.push((vol, false)) } }
