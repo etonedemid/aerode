@@ -12,6 +12,9 @@ use aerode::{config, util};
 use crate::{link, section, text, title, Cp};
 use super::common::*;
 
+/// A list of ("id", "name") pairs.
+type DeviceList = Vec<(String, String)>;
+
 /// How a problem gets repaired.
 #[derive(Clone)]
 pub(super) enum Fix {
@@ -60,7 +63,7 @@ pub(super) struct Troubleshooter {
     /// "Explore additional options" opens this Control Panel page
     more: &'static str,
     /// devices to choose from first ("Which device do you want to troubleshoot?"): (id, name)
-    devices: Option<fn() -> Vec<(String, String)>>,
+    devices: Option<fn() -> DeviceList>,
 }
 
 const ALL: &[Troubleshooter] = &[
