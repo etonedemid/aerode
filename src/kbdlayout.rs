@@ -15,6 +15,9 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::config;
 
+/// The XKB catalogue: layouts (code, description) and variants (layout, variant, description).
+type Catalog = (Vec<(String, String)>, Vec<(String, String, String)>);
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Layout {
     pub layout: String,
@@ -55,8 +58,7 @@ fn rules_file() -> Option<String> {
     ["/usr/share/X11/xkb/rules/evdev.lst", "/usr/share/X11/xkb/rules/base.lst"].iter().find_map(|p| std::fs::read_to_string(p).ok())
 }
 
-/// The XKB catalogue: layouts (code, description) and variants (layout, variant, description).
-pub fn catalog() -> (Vec<(String, String)>, Vec<(String, String, String)>) {
+pub fn catalog() -> Catalog {
     let (mut layouts, mut variants) = (vec![], vec![]);
     let Some(txt) = rules_file() else { return (layouts, variants) };
     let mut section = "";
