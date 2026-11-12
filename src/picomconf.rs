@@ -255,12 +255,13 @@ fn fade_script(triggers: &[&str], secs: f64, appear: bool) -> String {
 /// The generated config: `base` included, its old-style rules as window rules, then the animations.
 pub fn generate(base: &Path, bar: Bar, fx: Effects) -> String {
     let base_txt = std::fs::read_to_string(base).unwrap_or_default();
-    let mut rules: Vec<String> = vec![];
     // ---- the old-style rules of the shipped config, which picom 12 ignores once `rules` exists
-    rules.push(group("window_type = 'tooltip'", "opacity = 0.97;"));
-    rules.push(group("window_type = 'popup_menu' || window_type = 'dropdown_menu'", "shadow = true;"));
-    rules.push(group("window_type = 'desktop' || window_type = 'dock' || window_type = 'dnd' || _GTK_FRAME_EXTENTS@ || class_g = 'i3lock'", "shadow = false;"));
-    rules.push(group("!_AERODE_GLASS@ || window_type = 'desktop' || window_type = 'tooltip' || class_g = 'i3lock'", "blur-background = false;"));
+    let mut rules: Vec<String> = vec![
+        group("window_type = 'tooltip'", "opacity = 0.97;"),
+        group("window_type = 'popup_menu' || window_type = 'dropdown_menu'", "shadow = true;"),
+        group("window_type = 'desktop' || window_type = 'dock' || window_type = 'dnd' || _GTK_FRAME_EXTENTS@ || class_g = 'i3lock'", "shadow = false;"),
+        group("!_AERODE_GLASS@ || window_type = 'desktop' || window_type = 'tooltip' || class_g = 'i3lock'", "blur-background = false;"),
+    ];
     // the user's own exclusions (picom 12 would drop them silently)
     if let Some(extra) = extra_conditions(&base_txt, "shadow-exclude") { rules.push(group(&extra, "shadow = false;")); }
     if let Some(extra) = extra_conditions(&base_txt, "fade-exclude") { rules.push(group(&extra, "fade = false;")); }
