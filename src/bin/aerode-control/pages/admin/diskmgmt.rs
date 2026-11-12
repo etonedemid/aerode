@@ -130,7 +130,7 @@ pub fn regions(d: &Disk) -> Vec<Region> {
 /// "NTFS", "FAT32", "EXT4"… (Win7 shows file systems in capitals).
 pub fn fs_name(v: &Vol) -> String {
     match v.fstype.as_str() {
-        "vfat" => if v.fssize.unwrap_or(v.size) > 32 * 1024 * MIB { "FAT32".into() } else { "FAT32".into() },
+        "vfat" => "FAT32".into(),
         "crypto_LUKS" => match v.inner.iter().find(|i| !i.fstype.is_empty()) { Some(i) => format!("{} (BitLocker Encrypted)", fs_name(i)), None => "BitLocker Encrypted".into() },
         "swap" => "Linux swap".into(),
         "LVM2_member" => "LVM".into(),
