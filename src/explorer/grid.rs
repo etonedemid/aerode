@@ -12,6 +12,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
+type Callback = Rc<dyn Fn(i32)>;
+type Tip = Box<dyn Fn(i32) -> Option<String>>;
+
 const M: f64 = 6.0;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -63,9 +66,9 @@ pub struct Grid {
     band: RefCell<Option<Band>>,
     rename: RefCell<Option<Rename>>,
     autoscroll: RefCell<Option<glib::SourceId>>,
-    activated: RefCell<Vec<Rc<dyn Fn(i32)>>>,
+    activated: RefCell<Vec<Callback>>,
     changed: RefCell<Vec<Rc<dyn Fn()>>>,
-    tooltip: RefCell<Option<Box<dyn Fn(i32) -> Option<String>>>>,
+    tooltip: RefCell<Option<Tip>>,
     line_h: Cell<f64>,
     /// item to keep in view across the next re-layout (a scroll bar coming or going reflows)
     keep_visible: Cell<i32>,
@@ -466,7 +469,7 @@ impl Grid {
     pub fn set_tooltip_fn(&self, f: impl Fn(i32) -> Option<String> + 'static) { *self.tooltip.borrow_mut() = Some(Box::new(f)); }
 
     fn activate(&self, i: i32) {
-        let cbs: Vec<Rc<dyn Fn(i32)>> = self.activated.borrow().clone();
+        let cbs: Vec<Callback> = self.activated.borrow().clone();
         for c in cbs { c(i); }
     }
 
