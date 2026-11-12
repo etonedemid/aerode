@@ -2,6 +2,8 @@
 use super::*;
 use aerode::config::FolderOptions;
 
+type OptionLoaders = Rc<RefCell<Vec<Box<dyn Fn(&FolderOptions)>>>>;
+
 /// View > Advanced settings, in the Win7 order. Rows: ("folder", label, "") opens a group,
 /// ("check", label, key), ("radio", label, "key=value") – radios of one key form a group.
 const ADVANCED: &[(&str, &str, &str)] = &[
@@ -69,7 +71,7 @@ pub fn page_folderoptions(cp: &Rc<Cp>) -> gtk::Widget {
     let opts = Rc::new(RefCell::new(config::get().folder));
     let sheet = Sheet::new(cp);
     // every control is re-read from `opts` by `load`, so Restore Defaults just resets `opts`
-    let loaders: Rc<RefCell<Vec<Box<dyn Fn(&FolderOptions)>>>> = Rc::new(RefCell::new(vec![]));
+    let loaders: OptionLoaders = Rc::new(RefCell::new(vec![]));
     let d = sheet.dirty();
 
     // ---------------------------------------------------------------- General
