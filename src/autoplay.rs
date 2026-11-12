@@ -96,9 +96,8 @@ pub fn choices(m: &Media, for_settings: bool) -> Vec<Choice> {
     for ct in m.content {
         for app in gio::AppInfo::all_for_type(ct) { add(app, m.content_verb); }
     }
-    if !m.player.is_empty() {
-        if let Some(app) = gio::AppInfo::default_for_type(m.player, false) { add(app, m.player_verb); }
-    }
+    if !m.player.is_empty()
+        && let Some(app) = gio::AppInfo::default_for_type(m.player, false) { add(app, m.player_verb); }
     if m.key == "software" {
         v.insert(0, Choice { id: "run".into(), main: "Install or run program from your media".into(), note: String::new(), app: None, icon: "system-run" });
     }
@@ -157,7 +156,7 @@ pub fn watch() {
         if v.get_mount().is_none() && v.can_mount() && v.should_automount() && !util::which("udiskie") {
             let op = gtk::MountOperation::new(None::<&gtk::Window>);
             v.mount(gio::MountMountFlags::NONE, Some(&op), gio::Cancellable::NONE, |r| {
-                if let Err(e) = r { if !e.matches(gio::IOErrorEnum::FailedHandled) { eprintln!("aerode: could not mount: {e}"); } }
+                if let Err(e) = r && !e.matches(gio::IOErrorEnum::FailedHandled) { eprintln!("aerode: could not mount: {e}"); }
             });
         }
     });
@@ -211,10 +210,10 @@ fn autoplay(t: Target, types: Vec<String>, device: bool) {
     let mut key: Option<&'static str> = direct.iter().find(|(ct, _)| has(ct)).map(|(_, k)| *k);
     if key.is_none() && has("x-content/audio-cdda") {
         // an audio CD with a data session too is an "enhanced" one
-        key = Some(if path.as_deref().map(|p| dir_has_files(p)).unwrap_or(false) { "enhancedaudiocd" } else { "audiocd" });
+        key = Some(if path.as_deref().map(dir_has_files).unwrap_or(false) { "enhancedaudiocd" } else { "audiocd" });
     }
     if key.is_none() && has("x-content/video-dvd") {
-        key = Some(if path.as_deref().map(|p| extra_on_dvd(p)).unwrap_or(false) { "enhanceddvdmovie" } else { "dvdmovie" });
+        key = Some(if path.as_deref().map(extra_on_dvd).unwrap_or(false) { "enhanceddvdmovie" } else { "dvdmovie" });
     }
     if key.is_none() && (device || t.uri.starts_with("mtp:") || t.uri.starts_with("gphoto2:")) { key = Some("devices"); }
     if key.is_none() && (has("x-content/unix-software") || has("x-content/win32-software") || has("x-content/software") || path.as_deref().and_then(autorun).is_some()) {

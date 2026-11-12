@@ -380,12 +380,11 @@ fn player_thread(rx: mpsc::Receiver<Req>) {
                 }
             }
         }
-        if cur.is_none() {
-            if let Some(i) = retries.iter().position(|r| Instant::now() >= r.0) {
+        if cur.is_none()
+            && let Some(i) = retries.iter().position(|r| Instant::now() >= r.0) {
                 let (_, req, player) = retries.remove(i);
                 cur = start(req, player);
             }
-        }
         let Some(req) = msg else { continue };
         if last.as_ref().map(|(f, t)| *f == req.file && t.elapsed() < DEDUP).unwrap_or(false) { continue; }
         last = Some((req.file.clone(), Instant::now()));
@@ -739,7 +738,7 @@ pub fn start_watchers() {
     });
     let mut tick = move || {
         ticks = ticks.wrapping_add(1);
-        if !live || ticks % 5 == 0 { check(); }
+        if !live || ticks.is_multiple_of(5) { check(); }
         if let Some(b) = crate::sys::battery() {
             let (w, ev) = battery_alarm(warned, b.status == "Discharging", b.percent as i64);
             warned = w;

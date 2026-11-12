@@ -336,9 +336,8 @@ impl Worker {
         if self.cancelled() { return; }
         let Ok(m) = std::fs::symlink_metadata(src) else { return };
         self.prog.total_items += 1;
-        if let Some(t) = mirror {
-            if let Ok(tm) = std::fs::symlink_metadata(t) { if !(m.is_dir() && tm.is_dir()) { self.conflicts_left += 1; } }
-        }
+        if let Some(t) = mirror
+            && let Ok(tm) = std::fs::symlink_metadata(t) && !(m.is_dir() && tm.is_dir()) { self.conflicts_left += 1; }
         if m.is_dir() {
             if let Ok(rd) = std::fs::read_dir(src) {
                 for e in rd.flatten() {
@@ -371,7 +370,7 @@ impl Worker {
                 self.discover(s, mirror);
             } else {
                 self.prog.total_items += 1;
-                if let (Ok(sm), Ok(tm)) = (std::fs::symlink_metadata(s), std::fs::symlink_metadata(d)) { if !(sm.is_dir() && tm.is_dir()) && s != d { self.conflicts_left += 1; } }
+                if let (Ok(sm), Ok(tm)) = (std::fs::symlink_metadata(s), std::fs::symlink_metadata(d)) && !(sm.is_dir() && tm.is_dir()) && s != d { self.conflicts_left += 1; }
             }
         }
         self.prog.calculating = false;
@@ -500,9 +499,8 @@ impl Worker {
                     }
                 }
             }
-            if self.kind == Kind::Move {
-                if let Err(e) = std::fs::remove_file(src) { let _ = self.on_error("move", src, &e)?; }
-            }
+            if self.kind == Kind::Move
+                && let Err(e) = std::fs::remove_file(src) { let _ = self.on_error("move", src, &e)?; }
             self.prog.done_bytes = base + meta.len();
             self.add_done(1, 0);
         } else {
@@ -674,7 +672,7 @@ fn run_job(kind: JobKind, parent: Option<&gtk::Window>, work: impl FnOnce(&mut W
         let (d2, fired) = (dlg.clone(), Rc::new(Cell::new(false)));
         let f2 = fired.clone();
         let mut show_timer = Some(glib::timeout_add_local_once(Duration::from_millis(700), move || { f2.set(true); d2.show(); }));
-        let mut stop_timer = move || if let Some(t) = show_timer.take() { if !fired.get() { t.remove(); } };
+        let mut stop_timer = move || if let Some(t) = show_timer.take() && !fired.get() { t.remove(); };
         while let Ok(m) = rx.recv().await {
             match m {
                 ToGui::Progress(p) => dlg.update(&p, started),
@@ -903,7 +901,7 @@ fn file_card(p: &Path, show_folder: bool) -> gtk::Box {
     let v = gtk::Box::new(gtk::Orientation::Vertical, 1);
     let m = std::fs::symlink_metadata(p).ok();
     let mut lines = vec![display_name(p)];
-    if show_folder { if let Some(par) = p.parent() { lines.push(format!("{} ({})", display_name(par), par.display())); } }
+    if show_folder && let Some(par) = p.parent() { lines.push(format!("{} ({})", display_name(par), par.display())); }
     if let Some(m) = &m {
         if !m.is_dir() { lines.push(format!("Size: {}", util::human_size(m.len()))); }
         lines.push(format!("Date modified: {}", fmt_mtime(m)));
@@ -1057,7 +1055,7 @@ fn ask_dialog(q: Question, parent: Option<&gtk::Window>, reply: impl FnOnce((Ans
         Question::NoTrash { path } => {
             let (d, c) = dialog(if path.is_dir() { "Delete Folder" } else { "Delete File" }, parent);
             c.pack_start(&heading(&format!("This {} can't be moved to the Recycle Bin.", if path.is_dir() { "folder" } else { "file" })), false, false, 0);
-            let t = gtk::Label::new(Some(&format!("Do you want to permanently delete it?")));
+            let t = gtk::Label::new(Some("Do you want to permanently delete it?"));
             t.set_xalign(0.0);
             c.pack_start(&t, false, false, 0);
             c.pack_start(&file_card(&path, false), false, false, 4);

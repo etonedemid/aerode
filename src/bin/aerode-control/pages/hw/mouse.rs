@@ -115,7 +115,7 @@ fn cursor_themes() -> Vec<(String, String, std::path::PathBuf)> {
             out.push((id, name, p));
         }
     }
-    out.sort_by(|a, b| (!a.0.starts_with("Aerode"), a.1.to_lowercase()).cmp(&(!b.0.starts_with("Aerode"), b.1.to_lowercase())));
+    out.sort_by_key(|a| (!a.0.starts_with("Aerode"), a.1.to_lowercase()));
     out
 }
 

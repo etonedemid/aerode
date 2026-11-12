@@ -3,7 +3,6 @@
 //! /var/log/pacman.log, System = the system journal; Applications and Services Logs ▸ Kernel;
 //! Custom Views ▸ Administrative Events = every Critical/Error/Warning. Events load on a worker
 //! thread, newest first, a page at a time (more as you scroll), only when a log is opened.
-use gtk::prelude::*;
 use gtk::{gdk_pixbuf::Pixbuf, glib};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -115,6 +114,7 @@ pub fn parse_pacman(line: &str, host: &str) -> Option<Ev> {
 }
 
 #[derive(Clone)]
+#[derive(Default)]
 struct Filter {
     /// seconds back from now; 0 = any time
     since: i64,
@@ -124,7 +124,6 @@ struct Filter {
     category: String,
     user: String,
 }
-impl Default for Filter { fn default() -> Self { Filter { since: 0, levels: [false; 5], sources: String::new(), ids: String::new(), category: String::new(), user: String::new() } } }
 impl Filter {
     fn active(&self) -> bool { self.since > 0 || self.levels.iter().any(|l| *l) || !self.sources.trim().is_empty() || !self.ids.trim().is_empty() || !self.category.trim().is_empty() || !self.user.trim().is_empty() }
     fn matches(&self, e: &Ev) -> bool {
@@ -258,7 +257,7 @@ fn logs_summary(m: &Rc<Mmc>, what: &str) {
     let logs: Vec<&str> = match what { "Custom Views" => vec!["Administrative Events"], "Windows Logs" => vec!["Application", "Security", "Setup", "System", "Forwarded Events"], _ => vec!["Kernel"] };
     let pb = pix(&["aerode-ev-log", "text-x-generic"], 16);
     for l in &logs { store.insert_with_values(None, &[(0, &pb), (1, l), (2, &if *l == "Administrative Events" { "Custom View" } else { "Administrative" }), (3, &""), (4, &"")]); }
-    { let me = Rc::downgrade(m); tv.connect_row_activated(move |tv, p, _| { if let (Some(m), Some(md)) = (me.upgrade(), tv.model()) { if let Some(it) = md.iter(p) { m.select(&format!("ev:log:{}", sval(&md, &it, 1))); } } }); }
+    { let me = Rc::downgrade(m); tv.connect_row_activated(move |tv, p, _| { if let (Some(m), Some(md)) = (me.upgrade(), tv.model()) && let Some(it) = md.iter(p) { m.select(&format!("ev:log:{}", sval(&md, &it, 1))); } }); }
     m.set_center(&v);
     let mm = m.clone();
     m.set_actions(vec![(what.into(), vec![act("Refresh", mmc::I_REFRESH, move || mm.refresh())])]);
@@ -419,12 +418,12 @@ fn new_state(m: &Rc<Mmc>) -> Rc<State> {
     let st = Rc::new(State { m: m.clone(), log: RefCell::new(String::new()), filter: RefCell::new(Filter::default()), events: RefCell::new(vec![]), store, view, header, title, busy: Cell::new(false), more: Cell::new(false), epoch: Cell::new(0), details, holder });
     // lazy paging: when the list is scrolled to the end, load older events
     { let st2 = Rc::downgrade(&st); sw.vadjustment().connect_value_changed(move |a| {
-        if a.value() + a.page_size() >= a.upper() - 40.0 { if let Some(st) = st2.upgrade() { if st.more.get() && !st.busy.get() { load(&st, true); } } }
+        if a.value() + a.page_size() >= a.upper() - 40.0 && let Some(st) = st2.upgrade() && st.more.get() && !st.busy.get() { load(&st, true); }
     }); }
     { let st2 = Rc::downgrade(&st); st.view.selection().connect_changed(move |_| if let Some(st) = st2.upgrade() { show_details(&st); update_actions(&st); }); }
-    { let st2 = Rc::downgrade(&st); st.view.connect_row_activated(move |_, _, _| if let Some(st) = st2.upgrade() { if let Some(e) = selected(&st) { properties(&st, &e); } }); }
+    { let st2 = Rc::downgrade(&st); st.view.connect_row_activated(move |_, _, _| if let Some(st) = st2.upgrade() && let Some(e) = selected(&st) { properties(&st, &e); }); }
     { let st2 = Rc::downgrade(&st); st.view.connect_button_press_event(move |tv, ev| {
-        if ev.button() == 3 { if let (Some(st), Some((Some(p), _, _, _))) = (st2.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); st.m.popup_actions(ev); return glib::Propagation::Stop; } }
+        if ev.button() == 3 && let (Some(st), Some((Some(p), _, _, _))) = (st2.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); st.m.popup_actions(ev); return glib::Propagation::Stop; }
         glib::Propagation::Proceed
     }); }
     st
@@ -624,7 +623,7 @@ fn update_actions(st: &Rc<State>) {
         groups.push((format!("Event {}, {}", ev.id, ev.source), vec![
             act("Event Properties", mmc::I_PROPS, move || if let Some(st) = a() { properties(&st, &ev2) }),
             act_off("Attach Task To This Event..."),
-            act("Copy", mmc::I_COPY, move || if let Some(st) = b() { if let Some(e) = selected(&st) { copy(&as_text(&e, &st.log.borrow())); } }),
+            act("Copy", mmc::I_COPY, move || if let Some(st) = b() && let Some(e) = selected(&st) { copy(&as_text(&e, &st.log.borrow())); }),
             act("Save Selected Events...", mmc::I_SAVE, move || if let Some(st) = c() { save_all(&st, true) }),
             act("Refresh", mmc::I_REFRESH, move || if let Some(st) = d() { load(&st, false) }),
             act_off("Help ▸"),

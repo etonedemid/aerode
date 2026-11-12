@@ -491,12 +491,11 @@ pub fn themed_tray_button(b: &gtk::Button) {
     b.style_context().add_class("w7tray");
     b.connect_draw(|w, cr| {
         let s = hover_state(w.upcast_ref());
-        if s > 1 {
-            if let Some(pb) = theme_frame("TrayNotify::Toolbar", 1, s) {
+        if s > 1
+            && let Some(pb) = theme_frame("TrayNotify::Toolbar", 1, s) {
                 let m = crate::glass::theme().and_then(|t| t.margins("TrayNotify::Toolbar", 1, 0, 3601)).unwrap_or([2, 2, 14, 14]);
                 nine_slice(cr, &pb, w.allocated_width() as f64, w.allocated_height() as f64, m);
             }
-        }
         glib::Propagation::Proceed
     });
 }

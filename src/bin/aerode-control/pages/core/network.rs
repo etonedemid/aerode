@@ -125,13 +125,12 @@ pub fn gather() -> Net {
                     _ => {}
                 }
             }
-            if d.wifi() && d.up() {
-                if let Some(w) = wifi.lines().map(aerode::sys::nm_split).find(|w| w.first().map(|s| s == "*").unwrap_or(false)) {
+            if d.wifi() && d.up()
+                && let Some(w) = wifi.lines().map(aerode::sys::nm_split).find(|w| w.first().map(|s| s == "*").unwrap_or(false)) {
                     d.ssid = w.get(1).cloned().unwrap_or_default();
                     d.signal = w.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
                     d.rate = w.get(4).cloned().unwrap_or_default();
                 }
-            }
             if !d.uuid.is_empty() { d.zone = sh(&["nmcli", "-t", "-g", "connection.zone", "connection", "show", &d.uuid]).trim().to_string(); }
             net.devs.push(d);
         }
@@ -362,7 +361,7 @@ fn full_map(cp: &Rc<Cp>) {
             if f.len() < 6 || f[3] == "00:00:00:00:00:00" { continue; }
             let name = if gws.iter().any(|g| g == f[0]) { "Gateway".to_string() } else {
                 // reverse lookup is quick on a LAN (mDNS/router DNS); keep the address when it fails
-                (f[0].parse::<std::net::IpAddr>().ok()).and_then(|ip| dns_name(ip)).unwrap_or_else(|| "Computer".into())
+                (f[0].parse::<std::net::IpAddr>().ok()).and_then(dns_name).unwrap_or_else(|| "Computer".into())
             };
             rows.push((name, f[0].to_string(), f[3].to_uppercase(), f[5].to_string()));
         }
@@ -403,7 +402,7 @@ fn vpn_plugins() -> Vec<(String, String)> {
         for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
             let Ok(t) = std::fs::read_to_string(e.path()) else { continue };
             let get = |k: &str| t.lines().find_map(|l| l.strip_prefix(k)).map(|s| s.trim().to_string());
-            if let (Some(svc), Some(name)) = (get("service="), get("name=")) { if !v.iter().any(|(s, _): &(String, String)| *s == svc) { v.push((svc, name.to_uppercase())); } }
+            if let (Some(svc), Some(name)) = (get("service="), get("name=")) && !v.iter().any(|(s, _): &(String, String)| *s == svc) { v.push((svc, name.to_uppercase())); }
         }
     }
     v
@@ -1195,7 +1194,7 @@ fn status_dialog(cp: &Rc<Cp>, d: &Dev, name: &str) {
     if d.wifi() { rows.push(("SSID:", d.ssid.clone())); }
     if let Some(t) = lease_obtained(d) { rows.push(("Duration:", { let s = (chrono::Local::now().timestamp() - t).max(0); format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) })); }
     rows.push(("Speed:", speed(d)));
-    if d.wifi() { rows.push(("Signal Quality:", format!("{}  ({}%)", "▮".repeat(((d.signal + 19) / 20) as usize) + &"▯".repeat(5 - ((d.signal + 19) / 20).min(5) as usize), d.signal))); }
+    if d.wifi() { rows.push(("Signal Quality:", format!("{}  ({}%)", "▮".repeat(d.signal.div_ceil(20) as usize) + &"▯".repeat(5 - d.signal.div_ceil(20).min(5) as usize), d.signal))); }
     for (i, (k, v)) in rows.iter().enumerate() {
         g.attach(&label(k, ""), 0, i as i32, 1, 1);
         g.attach(&label(v, ""), 1, i as i32, 1, 1);

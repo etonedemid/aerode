@@ -344,13 +344,12 @@ impl Wm {
         // the root size changes with RandR; the connection setup data does not
         if let Ok(Ok(g)) = self.conn.get_geometry(self.root).map(|c| c.reply()) { self.root_size = (g.width as i32, g.height as i32); }
         let mut mons = vec![];
-        if let Ok(r) = self.conn.randr_get_monitors(self.root, true).map(|c| c.reply()) {
-            if let Ok(r) = r {
+        if let Ok(r) = self.conn.randr_get_monitors(self.root, true).map(|c| c.reply())
+            && let Ok(r) = r {
                 for m in r.monitors {
                     mons.push(Rect { x: m.x as i32, y: m.y as i32, w: m.width as i32, h: m.height as i32 });
                 }
             }
-        }
         // mirrored outputs report the same rectangle twice; a monitor split into virtual ones
         // (xrandr --setmonitor, ultrawides) keeps its whole-output monitor next to the parts
         let mut uniq: Vec<Rect> = vec![];
@@ -449,9 +448,8 @@ impl Wm {
         for n in &names {
             for d in &dirs {
                 let p = d.join(format!("{n}.png"));
-                if let Ok(mut f) = std::fs::File::open(&p) {
-                    if let Ok(img) = cairo::ImageSurface::create_from_png(&mut f) { return Some(img); }
-                }
+                if let Ok(mut f) = std::fs::File::open(&p)
+                    && let Ok(img) = cairo::ImageSurface::create_from_png(&mut f) { return Some(img); }
             }
         }
         None
@@ -1581,7 +1579,7 @@ impl Wm {
                 if let Some(c) = self.clients.get(&e.window) {
                     let w = c.win;
                     if c.minimized { self.unminimize(w); self.focus(w); }
-                    else if c.frame.is_none() { if self.should_show(c) { self.clients.get_mut(&w).unwrap().wm_hidden = false; self.conn.map_window(w)?; } }
+                    else if c.frame.is_none() && self.should_show(c) { self.clients.get_mut(&w).unwrap().wm_hidden = false; self.conn.map_window(w)?; }
                 } else { self.manage(e.window); }
             }
             Event::UnmapNotify(e) => {
@@ -1603,11 +1601,10 @@ impl Wm {
             Event::ButtonRelease(e) => self.button_release(e),
             Event::MotionNotify(e) => self.motion(e),
             Event::LeaveNotify(e) => {
-                if let Some(w) = self.frames.get(&e.event).copied() {
-                    if self.clients.get(&w).map(|c| c.hover.is_some()).unwrap_or(false) && self.drag.is_none() {
+                if let Some(w) = self.frames.get(&e.event).copied()
+                    && self.clients.get(&w).map(|c| c.hover.is_some()).unwrap_or(false) && self.drag.is_none() {
                         self.set_hover(w, None);
                     }
-                }
             }
             Event::KeyPress(e) => self.key(e, true),
             Event::KeyRelease(e) => self.key(e, false),
@@ -1940,12 +1937,11 @@ impl Wm {
     }
 
     fn end_drag(&mut self) {
-        if let Some((w, Drag::Resize { .. })) = self.drag {
-            if let Some(c) = self.clients.get_mut(&w) {
+        if let Some((w, Drag::Resize { .. })) = self.drag
+            && let Some(c) = self.clients.get_mut(&w) {
                 c.sync_wait = None;
                 if let Some(g) = c.resize_pending.take() { self.configure(w, g); }
             }
-        }
         if let Some((w, Drag::Move { .. })) = self.drag { self.finish_move(w); }
         if let Some((w, Drag::Button { .. })) = self.drag {
             if let Some(c) = self.clients.get_mut(&w) { c.pressed = None; }
@@ -2019,8 +2015,8 @@ impl Wm {
             }
             Drag::Move { .. } => {
                 let wa = self.snap_wa.take();
-                if let Some(side) = self.drop_snap_preview() {
-                    if self.clients.contains_key(&w) {
+                if let Some(side) = self.drop_snap_preview()
+                    && self.clients.contains_key(&w) {
                         match (side, wa) {
                             (0, Some(wa)) => { self.anim_geom(w); self.maximize_in(w, wa) }
                             (s, Some(wa)) => { self.anim_geom(w); self.snap_in(w, s, wa) }
@@ -2028,7 +2024,6 @@ impl Wm {
                             (s, None) => self.snap(w, s),
                         }
                     }
-                }
             }
             Drag::Resize { start, .. } => {
                 // the top/bottom border dragged to the screen edge: vertical maximise; restoring
@@ -2038,7 +2033,7 @@ impl Wm {
                     self.snap_wa = None;
                     if let Some(c) = self.clients.get_mut(&w) { c.snapped = None; c.maximized = false; }
                     self.snap(w, 2);
-                    if let Some(c) = self.clients.get_mut(&w) { if c.snapped == Some(2) { c.restore = Some(start); } }
+                    if let Some(c) = self.clients.get_mut(&w) && c.snapped == Some(2) { c.restore = Some(start); }
                 }
             }
         }
@@ -2053,7 +2048,7 @@ impl Wm {
             let snap = self.snap_preview.map(|s| s.1);
             let is_move = matches!(self.drag, Some((_, Drag::Move { .. })));
             self.end_drag();
-            if is_move { if let Some(side) = snap { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } } }
+            if is_move && let Some(side) = snap { match side { 0 => self.set_maximized(w, true), s => self.snap(w, s) } }
             self.snap_wa = None;
             self.redraw(w);
             return;
@@ -2482,7 +2477,7 @@ impl Wm {
         let fading: Vec<u32> = self.clients.iter().filter(|(_, c)| c.focus_fade.is_some()).map(|(w, _)| *w).collect();
         for &w in &fading {
             self.redraw(w);
-            if let Some(c) = self.clients.get_mut(&w) { if c.focus_fade.map(|t| t.done(now)).unwrap_or(true) { c.focus_fade = None; } }
+            if let Some(c) = self.clients.get_mut(&w) && c.focus_fade.map(|t| t.done(now)).unwrap_or(true) { c.focus_fade = None; }
         }
         let glowing: Vec<u32> = self.clients.iter().filter(|(w, c)| !c.glow.0.is_empty() && !fading.contains(w)).map(|(w, _)| *w).collect();
         for w in glowing { self.redraw_buttons(w); }
@@ -2554,15 +2549,14 @@ impl Wm {
             // Win+Home works like Aero Shake: minimise the others, press again to bring them back
             MinimizeOthers => { if act != 0 { self.aero_shake(act); } }
             MaximizeVert => {
-                if let Some(c) = self.clients.get(&act) {
-                    if is_app(c) && c.resizable && c.snapped != Some(2) { self.snap(act, 2); }
-                }
+                if let Some(c) = self.clients.get(&act)
+                    && is_app(c) && c.resizable && c.snapped != Some(2) { self.snap(act, 2); }
             }
             MonitorLeft | MonitorRight => { if act != 0 { self.move_to_monitor(act, if matches!(action, MonitorLeft) { -1 } else { 1 }); } }
             SwitchNext | SwitchPrev => {
                 if self.switcher.is_none() {
                     let wins = self.switch_order();
-                    if wins.len() < 1 { return; }
+                    if wins.is_empty() { return; }
                     let held = e.state;
                     self.switcher = switcher::Switcher::new(self, wins, u16::from(held));
                     let _ = self.conn.grab_keyboard(false, self.root, e.time, GrabMode::ASYNC, GrabMode::ASYNC);

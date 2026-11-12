@@ -8,9 +8,9 @@ use crate::taskbar::Taskbar;
 use crate::{config, sys, util};
 
 thread_local! {
-    static OPEN: RefCell<Option<gtk::Window>> = RefCell::new(None);
+    static OPEN: RefCell<Option<gtk::Window>> = const { RefCell::new(None) };
     /// when a flyout last closed by itself (focus loss / Esc)
-    static CLOSED_AT: std::cell::Cell<Option<std::time::Instant>> = std::cell::Cell::new(None);
+    static CLOSED_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
     /// set while an icon is dragged out of / into a flyout (the drag grab takes the focus)
     static KEEP_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -235,7 +235,7 @@ fn clock(tb: &Rc<Taskbar>) {
     let last_off = std::cell::Cell::new((crate::tzinfo::local_zone(), chrono::Local::now().offset().local_minus_utc()));
     glib::timeout_add_seconds_local(1, move || {
         ticks.set(ticks.get() + 1);
-        if ticks.get() % 60 == 0 {
+        if ticks.get().is_multiple_of(60) {
             refresh_extra();
             let now = (crate::tzinfo::local_zone(), chrono::Local::now().offset().local_minus_utc());
             let before = last_off.replace(now.clone());
@@ -419,7 +419,7 @@ fn network(tb: &Rc<Taskbar>) {
     refresh();
     // NetworkManager reports connection changes; Wi-Fi signal strength still needs the slow poll
     let r = refresh.clone();
-    let events = util::watch_lines(&["nmcli", "monitor"], |_| true, std::time::Duration::from_millis(300), move || r());
+    let events = util::watch_lines(&["nmcli", "monitor"], |_| true, std::time::Duration::from_millis(300), r);
     { let r = refresh.clone(); glib::timeout_add_seconds_local(if events { 30 } else { 5 }, move || { r(); glib::ControlFlow::Continue }); }
     b.connect_clicked(move |b| {
         if close_open() { return; }

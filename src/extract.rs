@@ -542,17 +542,16 @@ fn extract_orb(root: &Path, data: &Path) {
         let dir = data.join("clock");
         let _ = std::fs::create_dir_all(&dir);
         for n in td.names("PNGFILE") {
-            if let ResId::Id(i) = n { if let Some(d) = td.get("PNGFILE", i) { let _ = std::fs::write(dir.join(format!("{i}.png")), d); } }
+            if let ResId::Id(i) = n && let Some(d) = td.get("PNGFILE", i) { let _ = std::fs::write(dir.join(format!("{i}.png")), d); }
         }
     }
     // dump every bitmap in explorer.exe too (taskbar/start menu pieces) for the renderer
     let dir = data.join("explorer");
     for id in pe.names(pe::RT_BITMAP) {
-        if let ResId::Id(i) = id {
-            if let Some(img) = pe.get(pe::RT_BITMAP, i).and_then(|d| pe::decode_dib(d, false).ok()) {
+        if let ResId::Id(i) = id
+            && let Some(img) = pe.get(pe::RT_BITMAP, i).and_then(|d| pe::decode_dib(d, false).ok()) {
                 let _ = save_png(&img, &dir.join(format!("{i}.png")));
             }
-        }
     }
     if data.join("orb.png").exists() { println!("· start orb extracted"); }
 }
@@ -721,9 +720,8 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
         if let Some(img0) = find_ci(&data.join("wallpapers"), "Windows/img0.jpg") { std::fs::copy(img0, data.join("wallpaper.jpg"))?; }
         println!("· wallpapers copied");
     }
-    if let Some(bg) = find_ci(root, "Windows/System32/oobe/background.bmp").or_else(|| find_ci(root, "Windows/Web/Screen/img100.jpg")) {
-        if let Ok(img) = image::open(&bg) { let _ = img.save(data.join("lockscreen.png")); }
-    }
+    if let Some(bg) = find_ci(root, "Windows/System32/oobe/background.bmp").or_else(|| find_ci(root, "Windows/Web/Screen/img100.jpg"))
+        && let Ok(img) = image::open(&bg) { let _ = img.save(data.join("lockscreen.png")); }
     copy_sounds(root, data)?;
     if let Some(t) = find_ci(root, "Windows/Resources/Themes/aero") {
         copy_tree(&t, &data.join("theme"));
@@ -740,7 +738,7 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
             if let Ok(img) = image::open(p) { let _ = img.save(av.join(format!("{}.png", p.file_stem().unwrap().to_string_lossy()))); }
         }
         let pick = all.iter().find(|p| p.to_string_lossy().to_lowercase().contains("usertile")).or_else(|| all.first());
-        if let Some(p) = pick { if let Ok(img) = image::open(p) { let _ = img.save(data.join("avatar.png")); } }
+        if let Some(p) = pick && let Ok(img) = image::open(p) { let _ = img.save(data.join("avatar.png")); }
     }
     Ok(())
 }
@@ -812,11 +810,9 @@ pub fn run(args: &[String]) -> Result<()> {
         let th = crate::msstyles::Theme::open(&src)?;
         for p in th.props.iter().filter(|p| p.class.eq_ignore_ascii_case(&class)) {
             println!("part {:>2} state {:>2} prop {:>5} type {:>3} = {:?}", p.part, p.state, p.name, p.ty, p.value);
-            if p.name == crate::msstyles::IMAGEFILE || p.name == crate::msstyles::IMAGEFILE1 {
-                if let crate::msstyles::Value::Image(id) = p.value {
-                    if let Some(img) = th.image_res(id) { save_png(&img, &out.join(format!("{class}_{}_{}_{id}.png", p.part, p.state)))?; }
-                }
-            }
+            if (p.name == crate::msstyles::IMAGEFILE || p.name == crate::msstyles::IMAGEFILE1)
+                && let crate::msstyles::Value::Image(id) = p.value
+                    && let Some(img) = th.image_res(id) { save_png(&img, &out.join(format!("{class}_{}_{}_{id}.png", p.part, p.state)))?; }
         }
         return Ok(());
     }

@@ -79,7 +79,7 @@ impl Theme {
     pub fn open(path: &Path) -> anyhow::Result<Theme> {
         let pe = Pe::open(path)?;
         let cmap = pe.get("CMAP", "CMAP").ok_or_else(|| anyhow::anyhow!("no CMAP"))?;
-        let u: Vec<u16> = cmap.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let u: Vec<u16> = cmap.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         let classes: Vec<String> = u.split(|c| *c == 0).filter(|s| !s.is_empty()).map(String::from_utf16_lossy).collect();
         let v = pe.get("VARIANT", "NORMAL").ok_or_else(|| anyhow::anyhow!("no VARIANT"))?.to_vec();
         let mut props = vec![];
@@ -102,7 +102,7 @@ impl Theme {
                 T_RECT => Value::Rect([i(0), i(1), i(2), i(3)]),
                 T_POSITION => Value::Pos([i(0), i(1)]),
                 T_FILENAME => Value::Image(i(0) as u16),
-                T_STRING => Value::Str(String::from_utf16_lossy(&d.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|c| *c != 0).collect::<Vec<_>>())),
+                T_STRING => Value::Str(String::from_utf16_lossy(&d.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|c| *c != 0).collect::<Vec<_>>())),
                 T_INTLIST => { let n = i(0).max(0) as usize; Value::IntList((1..=n).map(i).collect()) }
                 _ => Value::Raw(ty, d.to_vec()),
             };

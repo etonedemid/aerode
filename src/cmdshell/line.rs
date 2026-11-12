@@ -113,7 +113,7 @@ impl Editor {
         // a prompt ending on a row's last column leaves the cursor waiting to wrap: wrap it now, so the
         // input starts at column 0 of the next row like on Windows
         let (cols, _) = term_size();
-        if prompt_len > 0 && prompt_len % cols == 0 { out(" \r"); }
+        if prompt_len > 0 && prompt_len.is_multiple_of(cols) { out(" \r"); }
         loop {
             let (cols, _) = term_size();
             let k = read_key()?;
@@ -140,7 +140,7 @@ impl Editor {
                 Key::Left => pos = pos.saturating_sub(1),
                 Key::Right => {
                     // at end of line: copies the next char of the previous command (like F1)
-                    if pos < buf.len() { pos += 1 } else if let Some(prev) = self.history.last() { if let Some(c) = prev.chars().nth(pos) { buf.push(c); pos += 1; } }
+                    if pos < buf.len() { pos += 1 } else if let Some(prev) = self.history.last() && let Some(c) = prev.chars().nth(pos) { buf.push(c); pos += 1; }
                 }
                 Key::Home => pos = 0,
                 Key::End => pos = buf.len(),
@@ -152,7 +152,7 @@ impl Editor {
                 Key::Down => if hist_i + 1 < self.history.len() { hist_i += 1; buf = self.history[hist_i].chars().collect(); pos = buf.len(); },
                 Key::PgUp => if !self.history.is_empty() { hist_i = 0; buf = self.history[0].chars().collect(); pos = buf.len(); },
                 Key::PgDn => if !self.history.is_empty() { hist_i = self.history.len() - 1; buf = self.history[hist_i].chars().collect(); pos = buf.len(); },
-                Key::F(1) => if let Some(prev) = self.history.last() { if let Some(c) = prev.chars().nth(pos) { if pos < buf.len() { buf[pos] = c } else { buf.push(c) } pos += 1; } },
+                Key::F(1) => if let Some(prev) = self.history.last() && let Some(c) = prev.chars().nth(pos) { if pos < buf.len() { buf[pos] = c } else { buf.push(c) } pos += 1; },
                 Key::F(3) => if let Some(prev) = self.history.last() { let rest: Vec<char> = prev.chars().skip(buf.len()).collect(); buf.extend(rest); pos = buf.len(); },
                 Key::F(2) | Key::F(4) => {
                     let f2 = k == Key::F(2);
@@ -179,7 +179,7 @@ impl Editor {
                     if let Some(i) = (0..start).rev().find(|i| self.history[*i].starts_with(&prefix)) { hist_i = i; buf = self.history[i].chars().collect(); }
                 }
                 Key::F(9) => {
-                    if let Some(n) = self.prompt_number("Enter command number: ") { if n < self.history.len() { hist_i = n; buf = self.history[n].chars().collect(); pos = buf.len(); } }
+                    if let Some(n) = self.prompt_number("Enter command number: ") && n < self.history.len() { hist_i = n; buf = self.history[n].chars().collect(); pos = buf.len(); }
                 }
                 Key::Tab | Key::ShiftTab => {
                     let back = k == Key::ShiftTab;
@@ -198,7 +198,7 @@ impl Editor {
     fn move_to(&self, prompt_len: usize, from: usize, to: usize, cols: usize) {
         let r0 = (prompt_len + from) / cols;
         let end = prompt_len + to;
-        let full = to > 0 && end % cols == 0;
+        let full = to > 0 && end.is_multiple_of(cols);
         let r1 = if full { end / cols - 1 } else { end / cols };
         if r1 > r0 { out(&format!("\x1b[{}B", r1 - r0)); } else if r0 > r1 { out(&format!("\x1b[{}A", r0 - r1)); }
         out(&format!("\r\x1b[{}G", if full { cols } else { end % cols + 1 }));
@@ -220,7 +220,7 @@ impl Editor {
         // row (pending wrap)
         let written = buf.len().max(old_len);
         let end = prompt_len + written;
-        let end_row = if written > 0 && end % cols == 0 { end / cols - 1 } else { end / cols };
+        let end_row = if written > 0 && end.is_multiple_of(cols) { end / cols - 1 } else { end / cols };
         let want = (prompt_len + pos) / cols;
         if want > end_row { out(&"\r\n".repeat(want - end_row)); } else if end_row > want { out(&format!("\x1b[{}A", end_row - want)); }
         out(&format!("\r\x1b[{}G", col(prompt_len + pos)));

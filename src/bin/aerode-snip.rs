@@ -555,8 +555,8 @@ impl Editor {
             });
         }
         let mut ok = false;
-        if fc.run() == gtk::ResponseType::Accept {
-            if let Some(mut p) = fc.filename() {
+        if fc.run() == gtk::ResponseType::Accept
+            && let Some(mut p) = fc.filename() {
                 let chosen = fc.filter().and_then(|f| filters.iter().find(|(x, _)| *x == f).map(|x| x.1)).unwrap_or("png");
                 let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
                 let ty = match ext.as_str() { "jpg" | "jpeg" => "jpg", "gif" => "gif", "png" => "png", "mht" | "mhtml" => "mht", "bmp" => "bmp", _ => { p.set_extension(chosen.to_uppercase()); chosen } };
@@ -580,7 +580,6 @@ impl Editor {
                     Err(e) => util::error("The snip could not be saved.", &e),
                 }
             }
-        }
         fc.close();
         ok
     }
@@ -604,7 +603,7 @@ impl Editor {
         self.tool.set(t);
         // Pen, Highlighter and Eraser work like radio buttons; the chosen one looks pressed
         for (k, b) in self.tool_buttons.borrow().iter() {
-            if let Some(tb) = b.downcast_ref::<gtk::ToggleToolButton>() { if tb.is_active() != (*k == t) { tb.set_active(*k == t); } }
+            if let Some(tb) = b.downcast_ref::<gtk::ToggleToolButton>() && tb.is_active() != (*k == t) { tb.set_active(*k == t); }
             if *k == t { b.style_context().add_class("snip-tool-on") } else { b.style_context().remove_class("snip-tool-on") }
         }
         let name = match t { Tool::Pen => "pencil", Tool::Highlighter => "pencil", Tool::Eraser => "crosshair" };

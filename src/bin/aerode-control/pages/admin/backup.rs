@@ -2,7 +2,6 @@
 //! another drive, on a schedule kept as a systemd user timer; Restore = copy back (never deleting,
 //! never overwriting newer files). System images / restore points = Timeshift or Snapper
 //! snapshots (listed, created through pkexec; restoring opens their own tool).
-use gtk::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -18,7 +17,7 @@ const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
 /// When the last backup finished (the stamp file on the backup drive).
 pub fn last_backup(b: &Backup) -> Option<i64> { mtime(&Path::new(&b.dest).join(STAMP)) }
 
-fn hour_label(h: u32) -> String { format!("{}:00 {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" }) }
+fn hour_label(h: u32) -> String { format!("{}:00 {}", if h.is_multiple_of(12) { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" }) }
 
 pub fn schedule_text(b: &Backup) -> String {
     match b.schedule.as_str() {
@@ -38,7 +37,7 @@ pub fn next_run(b: &Backup) -> Option<i64> {
     for i in 0..62 {
         let d = today + Duration::days(i);
         let ok = match b.schedule.as_str() { "daily" => true, "weekly" => d.weekday().num_days_from_sunday() == b.day % 7, "monthly" => d.day() == b.day.clamp(1, 28), _ => return None };
-        if ok { if let Some(t) = at(d) { if t > now || (i == 0 && now.hour() < b.hour) { return Some(t.timestamp()); } } }
+        if ok && let Some(t) = at(d) && (t > now || (i == 0 && now.hour() < b.hour)) { return Some(t.timestamp()); }
     }
     None
 }
@@ -261,7 +260,7 @@ fn view(ui: &Rc<Ui>) {
     }
     rs.pack_start(&link("Select another backup to restore files from", || {
         let fc = gtk::FileChooserNative::new(Some("Select another backup"), None::<&gtk::Window>, gtk::FileChooserAction::SelectFolder, Some("_Open"), Some("_Cancel"));
-        if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { util::explore(&p.to_string_lossy()); } }
+        if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { util::explore(&p.to_string_lossy()); }
     }), false, false, 0);
     { let cp = ui.cp.clone(); rs.pack_start(&link("Recover system settings or your computer", move || cp.open("recovery")), false, false, 0); }
     v.pack_start(&rs, false, false, 0);
@@ -523,7 +522,7 @@ fn wizard(ui: &Rc<Ui>) {
     p1.pack_start(&chosen_l, false, false, 0);
     { let (chosen, cl, d2) = (chosen.clone(), chosen_l.clone(), d.clone()); network.connect_clicked(move |_| {
         let fc = gtk::FileChooserNative::new(Some("Select a backup folder"), Some(&d2), gtk::FileChooserAction::SelectFolder, Some("_Select"), Some("_Cancel"));
-        if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { *chosen.borrow_mut() = p.to_string_lossy().into_owned(); cl.set_text(&format!("Selected: {}", p.display())); } }
+        if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { *chosen.borrow_mut() = p.to_string_lossy().into_owned(); cl.set_text(&format!("Selected: {}", p.display())); }
     }); }
     { let (chosen, cl) = (chosen.clone(), chosen_l.clone()); tv.selection().connect_changed(move |s| if let Some((m, it)) = s.selected() {
         let mp = sval(&m, &it, 3);

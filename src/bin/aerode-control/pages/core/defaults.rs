@@ -127,7 +127,7 @@ fn set_programs_page(cp: &Rc<Cp>, app_id: Option<String>) -> gtk::Widget {
             h.pack_start(&util::app_image(&a, 32), false, false, 0);
             let n = vbox(0);
             n.pack_start(&bold(&a.display_name()), false, false, 0);
-            if let Some(dai) = a.downcast_ref::<gio::DesktopAppInfo>() { if let Some(gn) = dai.generic_name() { n.pack_start(&label(&gn, "dim"), false, false, 0); } }
+            if let Some(dai) = a.downcast_ref::<gio::DesktopAppInfo>() && let Some(gn) = dai.generic_name() { n.pack_start(&label(&gn, "dim"), false, false, 0); }
             h.pack_start(&n, false, false, 0);
             right.pack_start(&h, false, false, 0);
             if let Some(d) = a.description() { let l = label(&d, ""); l.set_max_width_chars(50); right.pack_start(&l, false, false, 0); }
@@ -207,7 +207,7 @@ fn associations_for(cp: &Rc<Cp>, id: &str) -> gtk::Widget {
             let (on, was, t) = (m.value(it, 0).get::<bool>().unwrap_or(false), m.value(it, 5).get::<bool>().unwrap_or(false), sval(m, it, 4));
             if on && !was { let _ = app.set_as_default_for_type(&t); }
             // un-ticking: GIO has no "unset"; the next program that handles the type takes over
-            if !on && was { let _ = gio::AppInfo::reset_type_associations(&t); }
+            if !on && was { gio::AppInfo::reset_type_associations(&t); }
             false
         });
         back(&c, "defaults/set");
@@ -305,7 +305,7 @@ fn assoc_page(cp: &Rc<Cp>) -> gtk::Widget {
             if open_with(win_of(&tv).as_ref(), &name, &mime) {
                 let def = default_name(&mime);
                 // every extension of that type shows the new default
-                store.foreach(|mm, _, i| { if sval(mm, i, 4) == mime { if let Some(ls) = mm.downcast_ref::<gtk::ListStore>() { ls.set(i, &[(3, &def)]); } } false });
+                store.foreach(|mm, _, i| { if sval(mm, i, 4) == mime && let Some(ls) = mm.downcast_ref::<gtk::ListStore>() { ls.set(i, &[(3, &def)]); } false });
                 update();
             }
         })
@@ -344,15 +344,14 @@ fn open_with(parent: Option<&gtk::Window>, name: &str, mime: &str) -> bool {
     { let (d2, ch) = (d.clone(), chosen.clone()); browse.connect_clicked(move |_| {
         let fc = gtk::FileChooserNative::new(Some("Open with..."), Some(&d2), gtk::FileChooserAction::Open, Some("_Open"), Some("_Cancel"));
         let _ = fc.set_current_folder("/usr/bin");
-        if fc.run() == gtk::ResponseType::Accept {
-            if let Some(p) = fc.filename() {
+        if fc.run() == gtk::ResponseType::Accept
+            && let Some(p) = fc.filename() {
                 let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                if let Ok(a) = gio::AppInfo::create_from_commandline(&format!("{} %f", glib::shell_quote(&p).to_string_lossy()), Some(&name), gio::AppInfoCreateFlags::NONE) {
+                if let Ok(a) = gio::AppInfo::create_from_commandline(format!("{} %f", glib::shell_quote(&p).to_string_lossy()), Some(&name), gio::AppInfoCreateFlags::NONE) {
                     *ch.borrow_mut() = Some(a);
                     d2.response(gtk::ResponseType::Ok);
                 }
             }
-        }
     }); }
     { let d2 = d.clone(); w.connect_application_activated(move |_, _| d2.response(gtk::ResponseType::Ok)); }
     d.show_all();

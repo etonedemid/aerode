@@ -3,7 +3,6 @@
 //! and the status rows when a section is expanded. Checks: firewall, pending/old updates,
 //! antivirus (only when ClamAV is installed), polkit agent (UAC), low disk space, failed systemd
 //! units, backup, programs that crashed (coredumps).
-use gtk::prelude::*;
 use gtk::glib;
 use std::rc::Rc;
 

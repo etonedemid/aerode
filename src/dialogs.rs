@@ -68,9 +68,8 @@ pub fn run_dialog() {
         }
         gtk::ResponseType::Other(1) => {
             let fc = gtk::FileChooserNative::new(Some("Browse"), Some(d), gtk::FileChooserAction::Open, Some("Open"), Some("Cancel"));
-            if fc.run() == gtk::ResponseType::Accept {
-                if let Some(p) = fc.filename() { entry.set_text(&glib::shell_quote(&p).to_string_lossy()); }
-            }
+            if fc.run() == gtk::ResponseType::Accept
+                && let Some(p) = fc.filename() { entry.set_text(&glib::shell_quote(&p).to_string_lossy()); }
         }
         _ => d.close(),
     });
@@ -98,7 +97,7 @@ fn collect_images(dir: &PathBuf, out: &mut Vec<PathBuf>, depth: u32) {
     }
 }
 
-thread_local! { static PERS: std::cell::RefCell<Option<gtk::Window>> = std::cell::RefCell::new(None); }
+thread_local! { static PERS: std::cell::RefCell<Option<gtk::Window>> = const { std::cell::RefCell::new(None) }; }
 
 pub fn personalize() {
     if let Some(w) = PERS.with(|p| p.borrow().clone()) { w.present(); return; }
@@ -172,9 +171,8 @@ pub fn personalize() {
             let f = gtk::FileFilter::new();
             f.add_pixbuf_formats();
             fc.add_filter(f);
-            if fc.run() == gtk::ResponseType::Accept {
-                if let Some(p) = fc.filename() { config::update(|c| c.wallpaper = Some(p.to_string_lossy().into_owned())); glass::reload(); }
-            }
+            if fc.run() == gtk::ResponseType::Accept
+                && let Some(p) = fc.filename() { config::update(|c| c.wallpaper = Some(p.to_string_lossy().into_owned())); glass::reload(); }
         });
     }
     nb.append_page(&bg, Some(&gtk::Label::new(Some("Desktop Background"))));

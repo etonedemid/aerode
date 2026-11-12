@@ -96,7 +96,7 @@ fn inputs() -> Vec<Device> {
         let sysfs = get("S: Sysfs=");
         if name.is_empty() || ["Button", "Video Bus", "PC Speaker", "Lid Switch", "HDA ", "HDMI", "Headphone", "Mic", "xtest", "XTEST", "WMI", "Consumer Control", "System Control", "Wireless hotkeys", "ACPI"].iter().any(|s| name.contains(s)) { continue; }
         let usb = sysfs.contains("/usb");
-        let bt = get("P: Phys=").contains(':') && get("B: EV=").is_empty() == false && sysfs.contains("bluetooth");
+        let bt = get("P: Phys=").contains(':') && !get("B: EV=").is_empty() && sysfs.contains("bluetooth");
         let (kind, icon): (&str, Vec<&'static str>) = if h.contains("mouse") {
             ("mouse", if name.to_lowercase().contains("touchpad") { vec!["input-touchpad", "input-mouse"] } else { vec!["input-mouse", "aerode-dev-mouse"] })
         } else if h.contains("kbd") && (h.contains("sysrq") || h.contains("leds")) { ("keyboard", vec!["input-keyboard", "preferences-desktop-keyboard"]) } else { continue };
@@ -175,7 +175,7 @@ fn usb_storage() -> Vec<Device> {
                 status: "This device is working properly.".into(), connected: true, ..Default::default() });
         } else if ty == "part" {
             let mp = field(l, "MOUNTPOINT");
-            if let Some(d) = v.iter_mut().rev().find(|d| name.starts_with(d.id.trim_start_matches("/dev/"))) { if d.mount.is_empty() && !mp.is_empty() { d.mount = mp; } }
+            if let Some(d) = v.iter_mut().rev().find(|d| name.starts_with(d.id.trim_start_matches("/dev/"))) && d.mount.is_empty() && !mp.is_empty() { d.mount = mp; }
         }
     }
     v
@@ -968,7 +968,7 @@ pub fn drivers(out: &str) -> Vec<(String, String, String)> {
         let maker = if ppd == "everywhere" { "Generic".to_string() } else { model.split_whitespace().next().unwrap_or("Generic").to_string() };
         Some((maker, model.to_string(), ppd.to_string()))
     }).collect();
-    v.sort_by(|a, b| (a.0.to_lowercase(), a.1.to_lowercase()).cmp(&(b.0.to_lowercase(), b.1.to_lowercase())));
+    v.sort_by_key(|a| (a.0.to_lowercase(), a.1.to_lowercase()));
     v.dedup_by(|a, b| a.1 == b.1);
     v
 }
@@ -1251,14 +1251,13 @@ fn driver_page(ui: &Rc<Ui>, wz: &Rc<Wizard>, p: NewPrinter) {
             f.add_pattern("*.PPD");
             f.add_pattern("*.ppd.gz");
             fc.add_filter(f);
-            if fc.run() == gtk::ResponseType::Accept {
-                if let Some(path) = fc.filename() {
+            if fc.run() == gtk::ResponseType::Accept
+                && let Some(path) = fc.filename() {
                     let model = path.file_stem().map(|s| s.to_string_lossy().trim_end_matches(".ppd").to_string()).unwrap_or_default();
                     *picked.borrow_mut() = Some((model, format!("ppdfile:{}", path.display())));
                     n.set_sensitive(true);
                     n.clicked();
                 }
-            }
         });
     }
     let (u, w) = (ui.clone(), wz.clone());

@@ -139,7 +139,7 @@ fn load(ask_kwallet: bool) -> Vault {
     }
     kwallet_items(&mut v, ask_kwallet);
     nss_certs(&mut v);
-    v.creds.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    v.creds.sort_by_key(|a| a.name.to_lowercase());
     v
 }
 

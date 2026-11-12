@@ -107,11 +107,11 @@ impl Cp {
             fill(vec![current_account()]);
             if subp.is_empty() {
                 let f = fill.clone();
-                bg(accounts, move |all| f(all));
+                bg(accounts, f);
             }
         } else {
             holder.pack_start(&label("Please wait...", "cp-hint"), false, false, 0);
-            bg(accounts, move |all| fill(all));
+            bg(accounts, fill);
         }
         holder.upcast()
     }
@@ -483,7 +483,7 @@ fn picture_page(cp: &Rc<Cp>, a: &Account, own: bool) -> gtk::Widget {
             f.add_pixbuf_formats();
             fc.add_filter(f);
             if let Some(pics) = glib::user_special_dir(glib::UserDirectory::Pictures) { let _ = fc.set_current_folder(pics); }
-            if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { apply(p); } }
+            if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { apply(p); }
         }), false, false, 0);
     }
     { let c = cp.clone(); cancel.connect_clicked(move |_| back(&c, "users")); }

@@ -204,7 +204,7 @@ impl Cp {
         }
         let dt = vbox(6);
         dt.pack_start(&g, false, false, 0);
-        dt.pack_start(&link("What does the notation mean?", || notation_help()), false, false, 0);
+        dt.pack_start(&link("What does the notation mean?", notation_help), false, false, 0);
         fv.pack_start(&group("Date and time formats", &dt), false, false, 0);
         let eg = gtk::Grid::new();
         eg.set_row_spacing(4);

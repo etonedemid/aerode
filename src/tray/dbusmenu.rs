@@ -119,9 +119,8 @@ fn fill(m: &gtk::Menu, dest: &str, path: &str, nodes: &[Node]) {
                 .or_else(|| n.bytes("icon-data").and_then(|d| png(&d)));
             if let Some(pb) = icon { gutter_icon(&item, pb); }
         }
-        if let Some(acc) = shortcut(n) {
-            if let Some(l) = item.child().and_then(|c| c.downcast::<gtk::AccelLabel>().ok()) { l.set_accel(acc.0, acc.1); }
-        }
+        if let Some(acc) = shortcut(n)
+            && let Some(l) = item.child().and_then(|c| c.downcast::<gtk::AccelLabel>().ok()) { l.set_accel(acc.0, acc.1); }
         if n.s("children-display").as_deref() == Some("submenu") || !n.children.is_empty() {
             let sub = gtk::Menu::new();
             fill(&sub, dest, path, &n.children);
@@ -132,9 +131,8 @@ fn fill(m: &gtk::Menu, dest: &str, path: &str, nodes: &[Node]) {
                 let (d, p, sub) = (d.clone(), p.clone(), sub.clone());
                 glib::spawn_future_local(async move {
                     let Some(conn) = conn() else { return };
-                    if about_to_show(&conn, &d, &p, id).await {
-                        if let Some(n) = layout(&conn, &d, &p, id).await { fill(&sub, &d, &p, &n.children); sub.show_all(); }
-                    }
+                    if about_to_show(&conn, &d, &p, id).await
+                        && let Some(n) = layout(&conn, &d, &p, id).await { fill(&sub, &d, &p, &n.children); sub.show_all(); }
                 });
             });
             { let (d, p) = (dest.to_string(), path.to_string()); sub.connect_hide(move |_| event(&d, &p, id, "closed")); }

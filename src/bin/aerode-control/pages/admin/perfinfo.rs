@@ -2,7 +2,6 @@
 //! Graphics, Gaming graphics, Primary hard disk, 1.0–7.9, base score = lowest) from short, safe
 //! benchmarks on a worker thread: a floating-point loop on every core, a memory copy, the OpenGL
 //! renderer (glxinfo) and a sequential + random read of a temporary file in ~/.cache.
-use gtk::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::rc::Rc;
@@ -70,7 +69,7 @@ pub fn gpu() -> Gpu {
     let ver = g("OpenGL core profile version string:");
     let ver = if ver.is_empty() { g("OpenGL version string:") } else { ver };
     let gl: f64 = ver.split_whitespace().next().and_then(|v| { let p: Vec<&str> = v.split('.').collect(); format!("{}.{}", p.first()?, p.get(1).unwrap_or(&"0")).parse().ok() }).unwrap_or(0.0);
-    let vram = { let v = g("Video memory:"); let v = if v.is_empty() { g("Dedicated video memory:") } else { v }; v.trim_end_matches("MB").trim().split_whitespace().next().and_then(|x| x.trim_end_matches("MB").parse().ok()).unwrap_or(0) };
+    let vram = { let v = g("Video memory:"); let v = if v.is_empty() { g("Dedicated video memory:") } else { v }; v.trim_end_matches("MB").split_whitespace().next().and_then(|x| x.trim_end_matches("MB").parse().ok()).unwrap_or(0) };
     let low = renderer.to_lowercase();
     Gpu { software: low.contains("llvmpipe") || low.contains("softpipe") || low.contains("swrast") || g("Accelerated:") == "no", unified: g("Unified memory:") == "yes", renderer, gl, vram_mb: vram }
 }
@@ -207,7 +206,7 @@ fn main_view(cp: &Rc<Cp>, holder: &gtk::Box) {
         s.style_context().add_class("wei-row");
         s.set_xalign(1.0);
         // the lowest subscore is the one that determines the base score
-        if let (Some(x), Some(bs)) = (sc, base) { if (*x - bs).abs() < 0.001 { s.set_markup(&format!("<b>{x:.1}</b>")); } }
+        if let (Some(x), Some(bs)) = (sc, base) && (*x - bs).abs() < 0.001 { s.set_markup(&format!("<b>{x:.1}</b>")); }
         t.attach(&a, 0, r as i32 + 1, 1, 1);
         t.attach(&b, 1, r as i32 + 1, 1, 1);
         t.attach(&s, 2, r as i32 + 1, 1, 1);

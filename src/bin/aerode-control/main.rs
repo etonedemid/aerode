@@ -204,7 +204,7 @@ fn add_input_language(parent: Option<&gtk::Window>) -> Option<aerode::kbdlayout:
     // columns: description, layout, variant
     let store = gtk::TreeStore::new(&[glib::Type::STRING, glib::Type::STRING, glib::Type::STRING]);
     let mut sorted = layouts.clone();
-    sorted.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    sorted.sort_by_key(|a| a.1.to_lowercase());
     for (code, desc) in &sorted {
         let it = store.insert_with_values(None, None, &[(0, desc), (1, code), (2, &String::new())]);
         for (_, var, vdesc) in variants.iter().filter(|(l, _, _)| l == code) {

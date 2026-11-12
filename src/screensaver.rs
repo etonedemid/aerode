@@ -299,7 +299,7 @@ impl Saver {
                         gtk::gdk::prelude::GdkContextExt::set_source_pixbuf(cr, pb, x, y);
                         cr.paint_with_alpha(a).ok();
                     };
-                    if let Some(pb) = &p.prev { if fade < 1.0 { show(pb, 1.0 - fade); } }
+                    if let Some(pb) = &p.prev && fade < 1.0 { show(pb, 1.0 - fade); }
                     if let Some(pb) = &p.cur { show(pb, fade); }
                     if p.files.is_empty() {
                         cr.set_source_rgb(1.0, 1.0, 1.0);

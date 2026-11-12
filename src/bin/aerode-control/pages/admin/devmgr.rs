@@ -2,7 +2,6 @@
 //! power supplies) sorted into the Windows 7 device classes, with the Win7 Properties sheet
 //! (General / Driver / Details / Resources). Names come from lspci/lsusb or the pci.ids /
 //! usb.ids databases when available.
-use gtk::prelude::*;
 use gtk::{gdk_pixbuf::Pixbuf, glib};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -91,11 +90,10 @@ impl Ids {
             if l.starts_with("C ") { in_class = true; vendor = None; if let Some((c, n)) = l[2..].split_once("  ") { ids.classes.insert(hex(c), n.to_string()); } continue; }
             if !l.starts_with('\t') {
                 in_class = false;
-                if let Some((v, n)) = l.split_once("  ") { if let Ok(v) = u32::from_str_radix(v.trim(), 16) { ids.vendors.insert(v, (n.to_string(), HashMap::new())); vendor = Some(v); continue; } }
+                if let Some((v, n)) = l.split_once("  ") && let Ok(v) = u32::from_str_radix(v.trim(), 16) { ids.vendors.insert(v, (n.to_string(), HashMap::new())); vendor = Some(v); continue; }
                 vendor = None;
-            } else if !in_class && !l.starts_with("\t\t") {
-                if let (Some(v), Some((d, n))) = (vendor, l[1..].split_once("  ")) { if let Ok(d) = u32::from_str_radix(d.trim(), 16) { if let Some(e) = ids.vendors.get_mut(&v) { e.1.insert(d, n.to_string()); } } }
-            }
+            } else if !in_class && !l.starts_with("\t\t")
+                && let (Some(v), Some((d, n))) = (vendor, l[1..].split_once("  ")) && let Ok(d) = u32::from_str_radix(d.trim(), 16) && let Some(e) = ids.vendors.get_mut(&v) { e.1.insert(d, n.to_string()); }
         }
         ids
     }
@@ -240,7 +238,7 @@ pub fn collect(hidden: bool) -> Vec<Dev> {
             if name.is_empty() {
                 name = match class >> 8 { 0x0600 => "PCI standard host CPU bridge".into(), 0x0604 => "PCI standard PCI-to-PCI bridge".into(), 0x0601 => "PCI standard ISA bridge".into(), 0x0c05 => "SM Bus Controller".into(),
                     0x0106 => "Standard AHCI 1.0 Serial ATA Controller".into(), 0x0108 => "Standard NVM Express Controller".into(), 0x0c03 => "Standard USB Host Controller".into(), 0x0403 => "High Definition Audio Controller".into(),
-                    _ => if v == 0x1af4 { virtio_name(d) } else { format!("PCI Device") } };
+                    _ => if v == 0x1af4 { virtio_name(d) } else { "PCI Device".to_string() } };
                 if v == 0x1af4 && name == "PCI Device" { name = virtio_name(d); }
             }
             let cls = pci_class(class, !driver.is_empty());
@@ -466,12 +464,12 @@ pub fn window(app: &gtk::Application) -> gtk::Window {
     let s = new_state(&m);
     m.keep(s.clone());
     // devmgmt.msc toolbar: Properties, Help | Scan for hardware changes, Update Driver Software, Disable, Uninstall
-    { let w = Rc::downgrade(&s); m.tool(mmc::I_PROPS, "Properties", move || if let Some(s) = w.upgrade() { if let Some(d) = selected(&s) { properties(&s, &d); } }); }
+    { let w = Rc::downgrade(&s); m.tool(mmc::I_PROPS, "Properties", move || if let Some(s) = w.upgrade() && let Some(d) = selected(&s) { properties(&s, &d); }); }
     m.tool_sep();
     { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-scan", "view-refresh"], "Scan for hardware changes", move || if let Some(s) = w.upgrade() { load(&s); }); }
     { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-update", "system-software-update"], "Update Driver Software...", move || if let Some(s) = w.upgrade() { update_driver(&s); }); }
-    { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-disable", "action-unavailable"], "Disable", move || if let Some(s) = w.upgrade() { if let Some(d) = selected(&s) { disable(&s, &d); } }); }
-    { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-uninstall", "edit-delete"], "Uninstall", move || if let Some(s) = w.upgrade() { if let Some(d) = selected(&s) { uninstall(&s, &d); } }); }
+    { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-disable", "action-unavailable"], "Disable", move || if let Some(s) = w.upgrade() && let Some(d) = selected(&s) { disable(&s, &d); }); }
+    { let w = Rc::downgrade(&s); m.tool(&["aerode-dev-uninstall", "edit-delete"], "Uninstall", move || if let Some(s) = w.upgrade() && let Some(d) = selected(&s) { uninstall(&s, &d); }); }
     // View menu: Devices by type / by connection, Show hidden devices
     let by_type = gtk::RadioMenuItem::with_mnemonic("Devices by t_ype");
     let by_conn = gtk::RadioMenuItem::with_mnemonic_from_widget(&by_type, Some("Devices by co_nnection"));
@@ -513,7 +511,7 @@ fn new_state(m: &Rc<Mmc>) -> Rc<State> {
     }); }
     { let w = Rc::downgrade(&s); s.view.selection().connect_changed(move |_| if let Some(s) = w.upgrade() { actions(&s); }); }
     { let w = Rc::downgrade(&s); s.view.connect_button_press_event(move |tv, ev| {
-        if ev.button() == 3 { if let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); context_menu(&s, ev); return glib::Propagation::Stop; } }
+        if ev.button() == 3 && let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); context_menu(&s, ev); return glib::Propagation::Stop; }
         glib::Propagation::Proceed
     }); }
     s
@@ -531,9 +529,8 @@ fn dev_icon(d: &Dev) -> Option<Pixbuf> {
     if d.problem.is_empty() && !d.hidden { return Some(base); }
     // Win7 overlays a yellow "!" for problem devices and fades hidden ones
     let out = base.copy()?;
-    if !d.problem.is_empty() {
-        if let Some(w) = pix(&["dialog-warning"], 10) { w.composite(&out, 6, 6, 10, 10, 6.0, 6.0, 1.0, 1.0, gtk::gdk_pixbuf::InterpType::Bilinear, 255); }
-    }
+    if !d.problem.is_empty()
+        && let Some(w) = pix(&["dialog-warning"], 10) { w.composite(&out, 6, 6, 10, 10, 6.0, 6.0, 1.0, 1.0, gtk::gdk_pixbuf::InterpType::Bilinear, 255); }
     if d.hidden { return Some(out.add_alpha(false, 0, 0, 0).map(|p| { let f = p.copy().unwrap_or(p.clone()); f.saturate_and_pixelate(&f, 0.5, false); f }).unwrap_or(out)); }
     Some(out)
 }
@@ -546,7 +543,7 @@ fn fill(s: &Rc<State>) {
     if s.by_connection.get() {
         // nest by sysfs path: each device under the closest device whose path is a prefix of its own
         let pc = devs.iter().position(|d| d.class == "Computer");
-        let pc_it = pc.map(|i| s.store.insert_with_values(Some(&root), None, &[(0, &dev_icon(&devs[i])), (1, &devs[i].name), (2, &(i as i32))])).unwrap_or(root.clone());
+        let pc_it = pc.map(|i| s.store.insert_with_values(Some(&root), None, &[(0, &dev_icon(&devs[i])), (1, &devs[i].name), (2, &(i as i32))])).unwrap_or(root);
         let mut order: Vec<usize> = (0..devs.len()).filter(|i| Some(*i) != pc).collect();
         order.sort_by(|a, b| devs[*a].sys.len().cmp(&devs[*b].sys.len()).then(devs[*a].sys.cmp(&devs[*b].sys)));
         let mut iters: HashMap<usize, gtk::TreeIter> = HashMap::new();
@@ -555,7 +552,7 @@ fn fill(s: &Rc<State>) {
             let parent = if d.sys.is_empty() { None } else {
                 order.iter().filter(|&&j| j != i && !devs[j].sys.is_empty() && d.sys.starts_with(&format!("{}/", devs[j].sys)) && iters.contains_key(&j)).max_by_key(|&&j| devs[j].sys.len()).copied()
             };
-            let pit = parent.and_then(|p| iters.get(&p).cloned()).unwrap_or(pc_it.clone());
+            let pit = parent.and_then(|p| iters.get(&p).cloned()).unwrap_or(pc_it);
             let it = s.store.insert_with_values(Some(&pit), None, &[(0, &dev_icon(d)), (1, &d.name), (2, &(i as i32))]);
             iters.insert(i, it);
         }
@@ -567,11 +564,11 @@ fn fill(s: &Rc<State>) {
         for c in classes {
             let cit = s.store.insert_with_values(Some(&root), None, &[(0, &pix(class_icon(c), 16)), (1, &c), (2, &-1i32)]);
             let mut list: Vec<(usize, &Dev)> = devs.iter().enumerate().filter(|(_, d)| d.class == c).collect();
-            list.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()));
+            list.sort_by_key(|a| a.1.name.to_lowercase());
             let mut problem = false;
             for (i, d) in list { s.store.insert_with_values(Some(&cit), None, &[(0, &dev_icon(d)), (1, &d.name), (2, &(i as i32))]); problem |= !d.problem.is_empty(); }
             // Win7 opens the classes that have a device with a problem
-            if problem { if let Some(p) = s.store.path(&cit) { s.view.expand_to_path(&p); s.view.expand_row(&p, false); } }
+            if problem && let Some(p) = s.store.path(&cit) { s.view.expand_to_path(&p); s.view.expand_row(&p, false); }
         }
         if let Some(p) = s.store.path(&root) { s.view.expand_row(&p, false); }
     }
@@ -585,7 +582,7 @@ fn selected(s: &State) -> Option<Dev> {
 }
 
 fn actions(s: &Rc<State>) {
-    if !s.m.actions_visible() && s.m.tree_visible() == false {
+    if !s.m.actions_visible() && !s.m.tree_visible() {
         // standalone devmgmt.msc: no Actions pane, but keep the Action menu filled
     }
     let w = Rc::downgrade(s);
@@ -867,14 +864,13 @@ fn update_driver(s: &Rc<State>) {
     { let d = d.clone(); b2.connect_clicked(move |_| {
         let fc = gtk::FileChooserNative::new(Some("Browse For Driver Software"), Some(&d), gtk::FileChooserAction::Open, Some("_Open"), Some("_Cancel"));
         let f = gtk::FileFilter::new(); f.set_name(Some("Kernel modules (*.ko, *.ko.zst, *.ko.xz)")); for p in ["*.ko", "*.ko.zst", "*.ko.xz", "*.ko.gz"] { f.add_pattern(p); } fc.add_filter(f);
-        if fc.run() == gtk::ResponseType::Accept {
-            if let Some(p) = fc.filename() {
+        if fc.run() == gtk::ResponseType::Accept
+            && let Some(p) = fc.filename() {
                 let p = p.to_string_lossy().to_string();
                 if confirm(Some(d.upcast_ref()), "Update Driver Software", "Load this driver into the running kernel?", &p, "Load") {
                     elevate(&["insmod", &p], |ok, out| { if report("The driver could not be loaded.", ok, &out) { inform(None, "Update Driver Software", "Windows has successfully loaded the driver.", ""); } });
                 }
             }
-        }
         d.close();
     }); }
     d.show_all();

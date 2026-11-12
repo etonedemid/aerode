@@ -2,7 +2,6 @@
 //! headers, Turn Windows Firewall on or off, Allow a program or feature (ufw rules / firewalld
 //! services and ports per zone: home = private, public = public), Restore defaults, Advanced
 //! settings (firewall-config / gufw). Every change goes through pkexec.
-use gtk::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -85,7 +84,7 @@ pub fn friendly(service: &str) -> String {
         _ => "",
     };
     if !named.is_empty() { return named.into(); }
-    if let Some((p, proto)) = s.split_once('/') { if p.chars().all(|c| c.is_ascii_digit() || c == ':' || c == '-') { return format!("Port {} ({})", p.replace(':', "-"), proto.to_uppercase()); } }
+    if let Some((p, proto)) = s.split_once('/') && p.chars().all(|c| c.is_ascii_digit() || c == ':' || c == '-') { return format!("Port {} ({})", p.replace(':', "-"), proto.to_uppercase()); }
     s.to_string()
 }
 
@@ -149,7 +148,7 @@ fn main_view(ui: &Rc<Ui>) {
     let Some((f, nets)) = ui.fw.borrow().clone() else {
         body.pack_start(&label("Checking the firewall…", "dim"), false, false, 0);
         body.show_all();
-        refresh(ui, |u| main_view(u));
+        refresh(ui, main_view);
         return;
     };
     // the red "Update your Firewall settings" box
@@ -424,7 +423,7 @@ fn allowed(ui: &Rc<Ui>) {
         let fill2 = fill.clone();
         status.set_text("Loading…");
         let st = status.clone();
-        bg(|| firewalld_rules(), move |r| { fill2(r); st.set_text(""); });
+        bg(firewalld_rules, move |r| { fill2(r); st.set_text(""); });
     } else if backend.is_empty() {
         change.set_sensitive(false);
         status.set_text("No firewall is installed.");

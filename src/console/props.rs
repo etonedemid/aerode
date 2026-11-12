@@ -62,12 +62,11 @@ fn draw_sample(cr: &cairo::Context, c: &ConsoleConfig, fg: u8, bg: u8, pango: &g
     let (r, g, b) = rgb(c.palette[fg as usize & 15]);
     cr.set_source_rgb(r, g, b);
     let (_, chh) = host::cell_size(c, pango);
-    if c.font == "Raster Fonts" {
-        if let Some(f) = host::raster_font(&c.raster_size) {
+    if c.font == "Raster Fonts"
+        && let Some(f) = host::raster_font(&c.raster_size) {
             for (i, l) in SAMPLE.iter().enumerate() { host::draw_raster_text(cr, &f, 2.0, 2.0 + i as f64 * chh, l); }
             return;
         }
-    }
     let l = pangocairo::functions::create_layout(cr);
     l.set_font_description(Some(&host::ttf_description(c)));
     for (i, s) in SAMPLE.iter().enumerate() {

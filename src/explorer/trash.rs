@@ -130,9 +130,8 @@ fn trash_for(p: &Path) -> std::io::Result<(PathBuf, Option<PathBuf>)> {
         }
     }
     let d = top.join(format!(".Trash-{}", uid()));
-    if let Ok(m) = std::fs::symlink_metadata(&d) {
-        if m.file_type().is_symlink() { return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "trash is a symlink")); }
-    }
+    if let Ok(m) = std::fs::symlink_metadata(&d)
+        && m.file_type().is_symlink() { return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "trash is a symlink")); }
     mk(&d)?;
     Ok((d, Some(top)))
 }
@@ -175,7 +174,7 @@ pub fn trash(p: &Path) -> std::io::Result<Trashed> {
             Err(e) => return Err(e),
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::Other, "too many items with this name in the Recycle Bin"))
+    Err(std::io::Error::other("too many items with this name in the Recycle Bin"))
 }
 
 /// "name.txt" -> ("name", ".txt"); dotfiles and names without a dot have no extension.
@@ -213,7 +212,7 @@ pub fn list() -> Vec<Trashed> {
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().map(|x| x != "trashinfo").unwrap_or(true) { continue; }
-            if let Some(t) = read_info(&d, &p) { if t.file.symlink_metadata().is_ok() { v.push(t); } }
+            if let Some(t) = read_info(&d, &p) && t.file.symlink_metadata().is_ok() { v.push(t); }
         }
     }
     v

@@ -74,8 +74,8 @@ pub fn page_taskbar(cp: &Rc<Cp>) -> gtk::Widget {
             let Some(r) = r else { return };
             if r.contains("\"yes\"") || r.contains("\"challenge\"") || power.active_id().as_deref() == Some(id) { return; }
             // find the row by walking the model (rows before it may already be gone)
-            if let Some(model) = power.model() {
-                if let Some(it) = model.iter_first() {
+            if let Some(model) = power.model()
+                && let Some(it) = model.iter_first() {
                     let mut i = 0;
                     loop {
                         let v: Option<String> = model.value(&it, 1).get().ok();
@@ -84,7 +84,6 @@ pub fn page_taskbar(cp: &Rc<Cp>) -> gtk::Widget {
                         if !model.iter_next(&it) { break; }
                     }
                 }
-            }
         });
     }
     pl.set_mnemonic_widget(Some(&power));

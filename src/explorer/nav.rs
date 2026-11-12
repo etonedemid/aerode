@@ -142,7 +142,7 @@ impl NavPane {
         let was_open = self.store.path(&comp).map(|p| self.view.row_expanded(&p)).unwrap_or(false);
         while let Some(c) = self.store.iter_children(Some(&comp)) { self.store.remove(&c); }
         self.fill_computer(&comp);
-        if was_open { if let Some(p) = self.store.path(&comp) { self.view.expand_row(&p, false); } }
+        if was_open && let Some(p) = self.store.path(&comp) { self.view.expand_row(&p, false); }
     }
 
     fn target(&self, it: &gtk::TreeIter) -> String { self.store.value(it, N_TARGET as i32).get().unwrap_or_default() }
@@ -180,7 +180,7 @@ impl NavPane {
         let mut stale = vec![];
         m.foreach(|m, p, it| {
             let t: String = m.value(it, N_TARGET as i32).get().unwrap_or_default();
-            if Self::dir_of(&t).is_some() && t != "computer:///" && m.iter_has_child(it) && !self.view.row_expanded(p) { stale.push(it.clone()); }
+            if Self::dir_of(&t).is_some() && t != "computer:///" && m.iter_has_child(it) && !self.view.row_expanded(p) { stale.push(*it); }
             false
         });
         for it in stale {
@@ -196,7 +196,7 @@ impl NavPane {
         let mut found = None;
         m.foreach(|m, _, it| {
             let t: String = m.value(it, N_TARGET as i32).get().unwrap_or_default();
-            if t == target { found = Some(it.clone()); true } else { false }
+            if t == target { found = Some(*it); true } else { false }
         });
         found
     }
@@ -216,7 +216,7 @@ impl NavPane {
         let f2 = Rc::new(());
         let _ = f2;
         self.view.connect_row_activated(move |v, p, _| {
-            if let Some(n) = n.upgrade() { if !n.guard.get() { if v.row_expanded(p) { v.collapse_row(p); } else { v.expand_row(p, false); } } }
+            if let Some(n) = n.upgrade() && !n.guard.get() { if v.row_expanded(p) { v.collapse_row(p); } else { v.expand_row(p, false); } }
         });
     }
 
@@ -233,7 +233,7 @@ impl NavPane {
                 let t: String = m.value(i, N_TARGET as i32).get().unwrap_or_default();
                 if let Some(tp) = Self::path_of(&t).filter(|tp| want.starts_with(tp)) {
                     let depth = tp.components().count();
-                    if best.as_ref().map(|(d, _)| depth > *d).unwrap_or(true) { best = Some((depth, i.clone())); }
+                    if best.as_ref().map(|(d, _)| depth > *d).unwrap_or(true) { best = Some((depth, *i)); }
                 }
                 false
             });
@@ -247,7 +247,7 @@ impl NavPane {
                     if let Some(c) = self.store.iter_children(Some(&cur)) {
                         loop {
                             let t = self.target(&c);
-                            if Self::path_of(&t).map(|tp| want.starts_with(tp)).unwrap_or(false) { next = Some(c.clone()); break; }
+                            if Self::path_of(&t).map(|tp| want.starts_with(tp)).unwrap_or(false) { next = Some(c); break; }
                             if !self.store.iter_next(&c) { break; }
                         }
                     }

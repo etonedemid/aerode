@@ -2,7 +2,6 @@
 //! (password → udisksctl unlock + mount), Lock (unmount + udisksctl lock), Manage BitLocker
 //! (change/add password, back up the header = the recovery key, details). Encrypting or
 //! decrypting a drive in place is left to the partition tools, with a clear explanation.
-use gtk::prelude::*;
 use gtk::glib;
 use std::rc::Rc;
 

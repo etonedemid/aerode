@@ -77,9 +77,8 @@ pub fn catalog() -> (Vec<(String, String)>, Vec<(String, String, String)>) {
 /// Human description of a layout/variant from the XKB catalogue.
 pub fn describe(layout: &str, variant: &str) -> String {
     let (ls, vs) = catalog();
-    if !variant.is_empty() {
-        if let Some((_, _, d)) = vs.iter().find(|(l, v, _)| l == layout && v == variant) { return d.clone(); }
-    }
+    if !variant.is_empty()
+        && let Some((_, _, d)) = vs.iter().find(|(l, v, _)| l == layout && v == variant) { return d.clone(); }
     ls.iter().find(|(c, _)| c == layout).map(|(_, d)| d.clone()).unwrap_or_else(|| layout.to_string())
 }
 

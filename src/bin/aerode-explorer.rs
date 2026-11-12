@@ -53,11 +53,11 @@ fn main() -> glib::ExitCode {
         };
         let mut target = resolve(&target);
         let sel = select.map(|s| std::path::PathBuf::from(resolve(&s)));
-        if let Some(s) = &sel { if let Some(p) = s.parent() { target = p.to_string_lossy().into_owned(); } }
+        if let Some(s) = &sel && let Some(p) = s.parent() { target = p.to_string_lossy().into_owned(); }
         let loc = aerode::explorer::Loc::parse(&target);
         let ex = aerode::explorer::Explorer::new(app, loc);
         if let Some(s) = sel { ex.select_when_shown(s); }
-        0.into()
+        0
     });
     app.run()
 }

@@ -369,8 +369,8 @@ impl Decor {
                 cr.restore().ok();
             }
             // SIDEHIGHLIGHT: the light the side borders catch just below the caption
-            if !p.maximized {
-                if let Some(part) = self.parts.get(&SIDEHIGHLIGHT) {
+            if !p.maximized
+                && let Some(part) = self.parts.get(&SIDEHIGHLIGHT) {
                     for x0 in [0.0, vw - b] {
                         cr.save().ok();
                         cr.rectangle(x0, top, b, SIDE_HL_H);
@@ -383,7 +383,6 @@ impl Decor {
                         cr.restore().ok();
                     }
                 }
-            }
         }
         // ---- the frame bitmaps
         let drawn = themed && if p.small {

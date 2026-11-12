@@ -75,7 +75,7 @@ pub fn picom_version() -> Option<(u32, u32)> {
 }
 
 fn parse_version(s: &str) -> Option<(u32, u32)> {
-    let v = s.trim().split_whitespace().next()?.trim_start_matches('v');
+    let v = s.split_whitespace().next()?.trim_start_matches('v');
     if v.starts_with("git") { return Some((99, 0)); }
     let mut it = v.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).map(|p| p.parse::<u32>().ok());
     Some((it.next()??, it.next().flatten().unwrap_or(0)))
@@ -309,11 +309,11 @@ pub fn generate(base: &Path, bar: Bar, fx: Effects) -> String {
     let menu = if fx.menu { vec![fade_script(&["open", "show"], 0.175, true), none(&["close", "hide"])] } else { vec![none(&["open", "show", "close", "hide"])] };
     rules.push(group("window_type = 'popup_menu' || window_type = 'dropdown_menu'", &animations(&menu)));
     let combo = if fx.combo {
-        vec![format!("      {{ triggers = [ \"open\", \"show\" ];
-        v-y = {{ duration = 0.165; start = \"0 - window-height\"; end = 0; }};
+        vec!["      { triggers = [ \"open\", \"show\" ];
+        v-y = { duration = 0.165; start = \"0 - window-height\"; end = 0; };
         offset-y = \"v-y\"; shadow-offset-y = \"offset-y\";
         crop-x = \"window-x\"; crop-y = \"window-y\"; crop-width = \"window-width\"; crop-height = \"window-height\";
-      }}"), none(&["close", "hide"])]
+      }".to_string(), none(&["close", "hide"])]
     } else { vec![none(&["open", "show", "close", "hide"])] };
     rules.push(group("window_type = 'combo'", &animations(&combo)));
     // ---- tooltips (and other programs' notification popups) fade in and out
@@ -383,7 +383,7 @@ fn extra_conditions(txt: &str, name: &str) -> Option<String> {
         .filter_map(|c| c.strip_prefix('"').and_then(|c| c.strip_suffix('"')))
         .filter(|c| !SHIPPED_ONES.contains(c))
         // picom 12 deprecates the ":type" suffix of the old syntax
-        .map(|c| strip_type_suffix(c))
+        .map(strip_type_suffix)
         .map(|c| format!("({c})")).collect();
     (!conds.is_empty()).then(|| conds.join(" || ").replace('"', "'"))
 }

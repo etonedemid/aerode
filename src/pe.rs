@@ -239,7 +239,7 @@ mod dib_tests {
         h[0] = 40; h[4] = 16; h[8] = 16; h[12] = 1; h[14] = 8; // 16x16, 8 bpp, no pixel data
         assert!(super::decode_dib(&h, false).is_err());
         h[16] = 1; // BI_RLE8
-        h.extend(std::iter::repeat(0).take(2000));
+        h.extend(std::iter::repeat_n(0, 2000));
         assert!(super::decode_dib(&h, false).is_err());
     }
 }

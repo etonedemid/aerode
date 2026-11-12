@@ -2,7 +2,6 @@
 //! Task Scheduler Library lists every task with Win7's columns; the folders System, User and
 //! Cron narrow it down. Run / End / Enable / Disable go through systemctl (pkexec for system
 //! timers), Create Basic Task writes a user timer.
-use gtk::prelude::*;
 use gtk::{gdk_pixbuf::Pixbuf, glib};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -64,18 +63,17 @@ pub fn parse_ts(s: &str) -> i64 {
     if s.is_empty() || s == "n/a" || s == "0" { return 0; }
     if let Some(n) = s.strip_prefix('@') { return n.parse().unwrap_or(0); }
     let parts: Vec<&str> = s.split_whitespace().collect();
-    if parts.len() >= 3 {
-        if let Ok(d) = chrono::NaiveDateTime::parse_from_str(&format!("{} {}", parts[1], parts[2]), "%Y-%m-%d %H:%M:%S") {
+    if parts.len() >= 3
+        && let Ok(d) = chrono::NaiveDateTime::parse_from_str(&format!("{} {}", parts[1], parts[2]), "%Y-%m-%d %H:%M:%S") {
             use chrono::TimeZone;
             let tz = parts.get(3).copied().unwrap_or("");
             if tz == "UTC" { return d.and_utc().timestamp(); }
             if let chrono::LocalResult::Single(t) = chrono::Local.from_local_datetime(&d) { return t.timestamp(); }
         }
-    }
     0
 }
 
-fn clock(h: u32, m: u32) -> String { format!("{}:{:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, m, if h < 12 { "AM" } else { "PM" }) }
+fn clock(h: u32, m: u32) -> String { format!("{}:{:02} {}", if h.is_multiple_of(12) { 12 } else { h % 12 }, m, if h < 12 { "AM" } else { "PM" }) }
 
 const DOW: [(&str, &str); 7] = [("Mon", "Monday"), ("Tue", "Tuesday"), ("Wed", "Wednesday"), ("Thu", "Thursday"), ("Fri", "Friday"), ("Sat", "Saturday"), ("Sun", "Sunday")];
 
@@ -108,7 +106,7 @@ pub fn calendar_words(expr: &str) -> String {
     if y == "*" && mo == "*" { return format!("At {at} on day {} of every month", dd.trim_start_matches('0')); }
     if y == "*" {
         let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-        if let (Ok(mi), Ok(di)) = (mo.parse::<usize>(), dd.parse::<u32>()) { if (1..=12).contains(&mi) { return format!("At {at} on {} {di} every year", months[mi - 1]); } }
+        if let (Ok(mi), Ok(di)) = (mo.parse::<usize>(), dd.parse::<u32>()) && (1..=12).contains(&mi) { return format!("At {at} on {} {di} every year", months[mi - 1]); }
     }
     if let (Ok(_), Ok(_), Ok(_)) = (y.parse::<u32>(), mo.parse::<u32>(), dd.parse::<u32>()) { return format!("At {at} on {}/{}/{y}", mo.trim_start_matches('0'), dd.trim_start_matches('0')); }
     format!("On a schedule: {e}")
@@ -134,7 +132,7 @@ pub fn cron_words(f: &[&str]) -> String {
     }
     if f.len() < 5 { return f.join(" "); }
     let (m, h, dom, mon, dow) = (f[0], f[1], f[2], f[3], f[4]);
-    if let Some(n) = m.strip_prefix("*/") { if h == "*" && dom == "*" && mon == "*" && dow == "*" { return format!("Every {n} minutes"); } }
+    if let Some(n) = m.strip_prefix("*/") && h == "*" && dom == "*" && mon == "*" && dow == "*" { return format!("Every {n} minutes"); }
     if let (Ok(mm), Ok(hh)) = (m.parse::<u32>(), h.parse::<u32>()) {
         let at = clock(hh, mm);
         if dom == "*" && mon == "*" && dow == "*" { return format!("At {at} every day"); }
@@ -143,9 +141,9 @@ pub fn cron_words(f: &[&str]) -> String {
             let days: Vec<&str> = dow.split(',').filter_map(|d| d.parse::<usize>().ok().and_then(|i| names.get(i).copied())).collect();
             if !days.is_empty() { return format!("At {at} every {} of every week", days.join(", ")); }
         }
-        if mon == "*" && dow == "*" { if let Ok(d) = dom.parse::<u32>() { return format!("At {at} on day {d} of every month"); } }
+        if mon == "*" && dow == "*" && let Ok(d) = dom.parse::<u32>() { return format!("At {at} on day {d} of every month"); }
     }
-    if h == "*" && dom == "*" && mon == "*" && dow == "*" { if let Ok(mm) = m.parse::<u32>() { return if mm == 0 { "Every hour".into() } else { format!("At {mm} minutes past every hour") }; } }
+    if h == "*" && dom == "*" && mon == "*" && dow == "*" && let Ok(mm) = m.parse::<u32>() { return if mm == 0 { "Every hour".into() } else { format!("At {mm} minutes past every hour") }; }
     format!("Custom schedule: {}", f[..5].join(" "))
 }
 
@@ -172,7 +170,7 @@ pub fn load_all() -> Vec<Task> {
         let mut names: Vec<String> = files.lines().filter_map(|l| l.split_whitespace().next()).filter(|n| n.ends_with(".timer") && !n.contains('@')).map(|s| s.to_string()).collect();
         let mut a = base.clone();
         a.extend(["list-units", "--type=timer", "--all", "--no-legend", "--plain", "--no-pager"]);
-        for l in sh(&a).lines() { if let Some(n) = l.split_whitespace().next() { if n.ends_with(".timer") && !names.iter().any(|x| x == n) { names.push(n.to_string()); } } }
+        for l in sh(&a).lines() { if let Some(n) = l.split_whitespace().next() && n.ends_with(".timer") && !names.iter().any(|x| x == n) { names.push(n.to_string()); } }
         if names.is_empty() { continue; }
         let mut a = base.clone();
         a.extend(["show", "--timestamp=unix", "-p", "Id,Description,Unit,TimersCalendar,TimersMonotonic,NextElapseUSecRealtime,LastTriggerUSec,UnitFileState,ActiveState,Persistent,WakeSystem,FragmentPath"]);
@@ -253,7 +251,7 @@ pub fn load_all() -> Vec<Task> {
         tasks.push(Task { name: format!("cron-{} ({prog})", i + 1), kind: Kind::Cron, triggers: vec![cron_words(&f[..n])], raw: vec![f[..n].join(" ")], exec: cmd, status: "Ready".into(),
             result: "".into(), author: me.clone(), user: me.clone(), cron_line: l.to_string(), desc: "Runs from your crontab".into(), ..Default::default() });
     }
-    tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    tasks.sort_by_key(|a| a.name.to_lowercase());
     tasks
 }
 
@@ -311,9 +309,9 @@ fn new_state(m: &Rc<Mmc>) -> Rc<State> {
     holder.pack_start(&paned, true, true, 0);
     let s = Rc::new(State { m: m.clone(), tasks: RefCell::new(vec![]), folder: RefCell::new(String::new()), store, view, details, holder, head, title, loaded: std::cell::Cell::new(false) });
     { let w = Rc::downgrade(&s); s.view.selection().connect_changed(move |_| if let Some(s) = w.upgrade() { show_details(&s); actions(&s); }); }
-    { let w = Rc::downgrade(&s); s.view.connect_row_activated(move |_, _, _| if let Some(s) = w.upgrade() { if let Some(t) = selected(&s) { properties(&s, &t); } }); }
+    { let w = Rc::downgrade(&s); s.view.connect_row_activated(move |_, _, _| if let Some(s) = w.upgrade() && let Some(t) = selected(&s) { properties(&s, &t); }); }
     { let w = Rc::downgrade(&s); s.view.connect_button_press_event(move |tv, ev| {
-        if ev.button() == 3 { if let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); s.m.popup_actions(ev); return glib::Propagation::Stop; } }
+        if ev.button() == 3 && let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); s.m.popup_actions(ev); return glib::Propagation::Stop; }
         glib::Propagation::Proceed
     }); }
     s
@@ -332,7 +330,7 @@ fn visible(s: &State) -> Vec<(usize, Task)> {
 
 fn show_folder(s: &Rc<State>) {
     s.m.set_center(&s.holder);
-    if !s.loaded.get() { reload(s, |s| fill(s)); } else { fill(s); }
+    if !s.loaded.get() { reload(s, fill); } else { fill(s); }
     actions(s);
 }
 
@@ -476,7 +474,7 @@ fn actions(s: &Rc<State>) {
         act_off("Create Task..."), act_off("Import Task..."),
         act("Display All Running Tasks", NONE, move || if let Some(s) = b() { running(&s) }),
         act_off("Enable All Tasks History"), act_off("New Folder..."), act_off("View ▸"),
-        act("Refresh", mmc::I_REFRESH, move || if let Some(s) = c() { reload(&s, |s| fill(s)); }),
+        act("Refresh", mmc::I_REFRESH, move || if let Some(s) = c() { reload(&s, fill); }),
         act_off("Help"),
     ])];
     if let Some(t) = selected(s) {
@@ -487,7 +485,7 @@ fn actions(s: &Rc<State>) {
         groups.push(("Selected Item".into(), vec![
             act("Run", mmc::I_RUN, mk(run_task)), end, toggle,
             act("Export...", mmc::I_SAVE, mk(export)),
-            act("Properties", mmc::I_PROPS, mk(|s, t| properties(s, t))),
+            act("Properties", mmc::I_PROPS, mk(properties)),
             if deletable { act("Delete", mmc::I_DELETE, mk(delete)) } else { act_off("Delete") },
             act_off("Help"),
         ]));
@@ -577,7 +575,7 @@ fn overview(s: &Rc<State>) {
 
 fn ctl_run(t: &Task, verb: &[&str], s: &Rc<State>, what: &'static str) {
     let s2 = s.clone();
-    let after = move |ok: bool, out: String| { if report(what, ok, &out) { reload(&s2, |s| fill(s)); } };
+    let after = move |ok: bool, out: String| { if report(what, ok, &out) { reload(&s2, fill); } };
     let mut argv: Vec<String> = t.ctl().iter().map(|x| x.to_string()).collect();
     argv.extend(verb.iter().map(|x| x.to_string()));
     if t.kind == Kind::User {
@@ -594,7 +592,7 @@ fn run_task(s: &Rc<State>, t: &Task) {
 }
 
 fn end(s: &Rc<State>, t: &Task) {
-    if !confirm(Some(&s.m.win), "Task Scheduler", &format!("Do you want to end all instances of this task?"), &format!("{} ({})", t.name, t.service), "Yes") { return; }
+    if !confirm(Some(&s.m.win), "Task Scheduler", "Do you want to end all instances of this task?", &format!("{} ({})", t.name, t.service), "Yes") { return; }
     ctl_run(t, &["stop", &t.service.clone()], s, "The task could not be ended.");
 }
 
@@ -605,7 +603,7 @@ fn enable(s: &Rc<State>, t: &Task, on: bool) {
             let cur = sh(&["crontab", "-l"]);
             let new: String = cur.lines().map(|l| if l.trim() == line { if on { line.clone() } else { format!("#aerode-disabled# {line}") } } else if on && l.trim() == format!("#aerode-disabled# {line}") { line.clone() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
             set_crontab(&new)
-        }, move |r| { if let Err(e) = r { util::error("The task could not be changed.", &e); } reload(&s2, |s| fill(s)); });
+        }, move |r| { if let Err(e) = r { util::error("The task could not be changed.", &e); } reload(&s2, fill); });
         return;
     }
     let timer = t.timer.clone();
@@ -633,7 +631,7 @@ fn export(s: &Rc<State>, t: &Task) {
 }
 
 fn delete(s: &Rc<State>, t: &Task) {
-    if !confirm(Some(&s.m.win), "Task Scheduler", &format!("Are you sure you want to delete this task?"), &t.name, "Yes") { return; }
+    if !confirm(Some(&s.m.win), "Task Scheduler", "Are you sure you want to delete this task?", &t.name, "Yes") { return; }
     let (t, s2) = (t.clone(), s.clone());
     bg(move || -> Result<(), String> {
         match t.kind {
@@ -646,7 +644,7 @@ fn delete(s: &Rc<State>, t: &Task) {
                 Ok(())
             }
         }
-    }, move |r| { if let Err(e) = r { util::error("The task could not be deleted.", &e); } reload(&s2, |s| fill(s)); });
+    }, move |r| { if let Err(e) = r { util::error("The task could not be deleted.", &e); } reload(&s2, fill); });
 }
 
 fn properties(s: &Rc<State>, t: &Task) {
@@ -771,7 +769,7 @@ fn wizard(s: &Rc<State>) {
     p4.attach(&dir, 0, 5, 1, 1);
     { let (prog, d) = (prog.clone(), d.clone()); browse.connect_clicked(move |_| {
         let fc = gtk::FileChooserNative::new(Some("Open"), Some(&d), gtk::FileChooserAction::Open, Some("_Open"), Some("_Cancel"));
-        if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { prog.set_text(&p.to_string_lossy()); } }
+        if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { prog.set_text(&p.to_string_lossy()); }
     }); }
     stack.add_named(&p4, "4");
     // 5: finish
@@ -855,7 +853,7 @@ fn wizard(s: &Rc<State>) {
             let target = if timer.is_some() { format!("{unit_name}.timer") } else { format!("{unit_name}.service") };
             let st = st.clone();
             bg(move || { run(&["systemctl", "--user", "daemon-reload"]); run(&["systemctl", "--user", "enable", if target.ends_with(".timer") { "--now" } else { "--quiet" }, &target]) },
-               move |(ok, out)| { if !ok { util::error("The task was created but could not be enabled.", out.trim()); } reload(&st, |s| fill(s)); });
+               move |(ok, out)| { if !ok { util::error("The task was created but could not be enabled.", out.trim()); } reload(&st, fill); });
             d.close();
         }
         _ => d.close(),

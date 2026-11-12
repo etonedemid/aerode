@@ -260,7 +260,7 @@ fn fmt_k(kb: u64) -> String { format!("{} K", group(kb)) }
 fn group(n: u64) -> String {
     let s = n.to_string();
     let mut o = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { o.push(','); } o.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { o.push(','); } o.push(c); }
     o
 }
 
@@ -432,7 +432,7 @@ impl Tm {
         if let Some(it) = self.procs.iter_first() {
             loop {
                 let pid: u32 = self.procs.value(&it, 7).get().unwrap_or(0);
-                have.insert(pid, it.clone());
+                have.insert(pid, it);
                 if !self.procs.iter_next(&it) { break; }
             }
         }
@@ -445,7 +445,7 @@ impl Tm {
                 None => { self.procs.insert_with_values(None, &[(0, &p.name), (1, &p.user), (2, &cpu_s), (3, &mem_s), (4, &p.desc), (5, &p.mem_kb), (6, &p.cpu), (7, &p.pid)]); }
                 Some(it) => {
                 // only touch changed cells: fewer re-sorts and redraws
-                let it = it.clone();
+                let it = *it;
                 let cur_cpu: u32 = self.procs.value(&it, 6).get().unwrap_or(u32::MAX);
                 let cur_mem: u64 = self.procs.value(&it, 5).get().unwrap_or(u64::MAX);
                 if cur_cpu != p.cpu { self.procs.set(&it, &[(2, &cpu_s), (6, &p.cpu)]); }
@@ -474,7 +474,7 @@ impl Tm {
             set("processes", s.rows.len().to_string());
             let up = s.uptime;
             set("uptime", format!("{}:{:02}:{:02}:{:02}", up / 86400, up / 3600 % 24, up / 60 % 60, up % 60));
-            set("commit", format!("{} / {}", s.mem.get("Committed_AS").copied().unwrap_or(0) / 1048576, (s.mem.get("CommitLimit").copied().unwrap_or(0) + 1048575) / 1048576));
+            set("commit", format!("{} / {}", s.mem.get("Committed_AS").copied().unwrap_or(0) / 1048576, s.mem.get("CommitLimit").copied().unwrap_or(0).div_ceil(1048576)));
         }
         // --- networking
         {
@@ -508,7 +508,7 @@ impl Tm {
         let clients = wm.clients();
         let mut have: HashMap<u32, gtk::TreeIter> = HashMap::new();
         if let Some(it) = self.apps.iter_first() {
-            loop { let id: u32 = self.apps.value(&it, 2).get().unwrap_or(0); have.insert(id, it.clone()); if !self.apps.iter_next(&it) { break; } }
+            loop { let id: u32 = self.apps.value(&it, 2).get().unwrap_or(0); have.insert(id, it); if !self.apps.iter_next(&it) { break; } }
         }
         let mut seen = HashSet::new();
         for c in clients {
@@ -739,7 +739,7 @@ fn new_task(parent: &gtk::Window) {
                 let fc = gtk::FileChooserDialog::with_buttons(Some("Browse"), Some(&d), gtk::FileChooserAction::Open, &[("_Open", gtk::ResponseType::Accept), ("Cancel", gtk::ResponseType::Cancel)]);
                 fc.set_keep_above(true);
                 fc.set_default_size(700, 480);
-                if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { e.set_text(&glib::shell_quote(&p).to_string_lossy()); } }
+                if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { e.set_text(&glib::shell_quote(&p).to_string_lossy()); }
                 fc.close();
             }
             _ => break,

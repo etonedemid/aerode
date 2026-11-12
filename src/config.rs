@@ -561,6 +561,31 @@ mod argb_hex {
     }
 }
 
+pub fn reload() {
+    CONFIG.with(|c| *c.borrow_mut() = load());
+}
+
+pub fn get() -> Config {
+    CONFIG.with(|c| c.borrow().clone())
+}
+
+pub fn update(f: impl FnOnce(&mut Config)) {
+    // read-modify-write against the file: several processes (shell, Control Panel, Explorer) share
+    // it, and saving a stale in-memory copy would undo what another one just changed
+    CONFIG.with(|c| { let mut c = c.borrow_mut(); if conf_dir().join("config.json").exists() { *c = load(); } f(&mut c); });
+    save();
+}
+
+pub fn save() {
+    let dir = conf_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let json = CONFIG.with(|c| serde_json::to_string_pretty(&*c.borrow()).unwrap());
+    let tmp = dir.join("config.json.tmp");
+    if std::fs::write(&tmp, json).is_ok() {
+        let _ = std::fs::rename(tmp, dir.join("config.json"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,30 +613,5 @@ mod tests {
         migrate(&mut v);
         let c: Config = serde_json::from_value(v).unwrap();
         assert_eq!(c.colorization.color, 0xA8CE0F0F);
-    }
-}
-
-pub fn reload() {
-    CONFIG.with(|c| *c.borrow_mut() = load());
-}
-
-pub fn get() -> Config {
-    CONFIG.with(|c| c.borrow().clone())
-}
-
-pub fn update(f: impl FnOnce(&mut Config)) {
-    // read-modify-write against the file: several processes (shell, Control Panel, Explorer) share
-    // it, and saving a stale in-memory copy would undo what another one just changed
-    CONFIG.with(|c| { let mut c = c.borrow_mut(); if conf_dir().join("config.json").exists() { *c = load(); } f(&mut c); });
-    save();
-}
-
-pub fn save() {
-    let dir = conf_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let json = CONFIG.with(|c| serde_json::to_string_pretty(&*c.borrow()).unwrap());
-    let tmp = dir.join("config.json.tmp");
-    if std::fs::write(&tmp, json).is_ok() {
-        let _ = std::fs::rename(tmp, dir.join("config.json"));
     }
 }

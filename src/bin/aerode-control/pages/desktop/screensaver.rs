@@ -246,7 +246,7 @@ fn photos_settings(parent: &gtk::Window, photos: &Rc<RefCell<(String, String, bo
         browse.connect_clicked(move |_| {
             let fc = gtk::FileChooserNative::new(Some("Browse For Folder"), Some(&d2), gtk::FileChooserAction::SelectFolder, Some("OK"), Some("Cancel"));
             let _ = fc.set_current_folder(folder.text().as_str());
-            if fc.run() == gtk::ResponseType::Accept { if let Some(p) = fc.filename() { folder.set_text(&p.to_string_lossy()); } }
+            if fc.run() == gtk::ResponseType::Accept && let Some(p) = fc.filename() { folder.set_text(&p.to_string_lossy()); }
         });
     }
     d.show_all();

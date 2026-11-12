@@ -151,9 +151,8 @@ pub fn ttf_description(c: &ConsoleConfig) -> gtk::pango::FontDescription {
 
 /// Character cell size of a configuration's font.
 pub fn cell_size(c: &ConsoleConfig, ctx: &gtk::pango::Context) -> (f64, f64) {
-    if c.font == "Raster Fonts" {
-        if let Some(f) = raster_font(&c.raster_size) { return (f.width as f64, f.height as f64); }
-    }
+    if c.font == "Raster Fonts"
+        && let Some(f) = raster_font(&c.raster_size) { return (f.width as f64, f.height as f64); }
     let layout = gtk::pango::Layout::new(ctx);
     layout.set_font_description(Some(&ttf_description(c)));
     layout.set_text("M");
@@ -855,8 +854,8 @@ impl Console {
         {
             let c = self.clone();
             self.area.connect_motion_notify_event(move |a, e| {
-                if e.state().contains(gdk::ModifierType::BUTTON1_MASK) {
-                    if let Sel::Marking { ax, ay, .. } = c.sel.get() {
+                if e.state().contains(gdk::ModifierType::BUTTON1_MASK)
+                    && let Sel::Marking { ax, ay, .. } = c.sel.get() {
                         // dragging past the edge scrolls the window
                         let (px, py) = e.position();
                         let (w, h) = (a.allocated_width() as f64, a.allocated_height() as f64);
@@ -867,7 +866,6 @@ impl Console {
                         c.reveal(x, y);
                         a.queue_draw();
                     }
-                }
                 glib::Propagation::Stop
             });
         }
@@ -877,8 +875,8 @@ impl Console {
         {
             let c = self.clone();
             self.win.connect_property_notify_event(move |w, e| {
-                if e.atom() == gdk::Atom::intern("_AERODE_SYSMENU_CMD") && e.state() == gdk::PropertyState::NewValue {
-                    if let Some(gw) = w.window() {
+                if e.atom() == gdk::Atom::intern("_AERODE_SYSMENU_CMD") && e.state() == gdk::PropertyState::NewValue
+                    && let Some(gw) = w.window() {
                         let v = gdk::property_get(&gw, &gdk::Atom::intern("_AERODE_SYSMENU_CMD"), &gdk::Atom::intern("UTF8_STRING"), 0, 256, 1);
                         if let Some((_, _, data)) = v {
                             let id = String::from_utf8_lossy(&data).to_string();
@@ -887,7 +885,6 @@ impl Console {
                             glib::idle_add_local_once(move || c.command(&id));
                         }
                     }
-                }
                 glib::Propagation::Proceed
             });
         }

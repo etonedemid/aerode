@@ -133,11 +133,10 @@ pub fn pinned() -> Vec<String> {
     .into_iter()
     .flatten()
     {
-        if let Some(id) = a.id() {
-            if !ids.contains(&id.to_string()) {
+        if let Some(id) = a.id()
+            && !ids.contains(&id.to_string()) {
                 ids.push(id.to_string());
             }
-        }
     }
     config::update(|c| c.pinned = Some(ids.clone()));
     ids
@@ -298,15 +297,12 @@ pub fn run_command(cmd: &str) -> bool {
         launch(&app);
         return true;
     }
-    match glib::shell_parse_argv(expanded.as_str()) {
-        Ok(argv) => {
-            let v: Vec<String> = argv.iter().map(|s| s.to_string_lossy().into_owned()).collect();
-            let r: Vec<&str> = v.iter().map(|s| s.as_str()).collect();
-            if spawn(&r) {
-                return true;
-            }
+    if let Ok(argv) = glib::shell_parse_argv(expanded.as_str()) {
+        let v: Vec<String> = argv.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        let r: Vec<&str> = v.iter().map(|s| s.as_str()).collect();
+        if spawn(&r) {
+            return true;
         }
-        Err(_) => {}
     }
     error(
         &format!("Windows cannot find '{cmd}'."),
@@ -408,7 +404,7 @@ pub fn menu_sounds() {
     });
     emission_hook(gtk::MenuItem::static_type(), "activate", |o| {
         // an item that opens a submenu is not a command
-        if let Some(i) = o.downcast_ref::<gtk::MenuItem>() { if i.submenu().is_none() { sound(crate::sounds::Event::MenuCommand); } }
+        if let Some(i) = o.downcast_ref::<gtk::MenuItem>() && i.submenu().is_none() { sound(crate::sounds::Event::MenuCommand); }
     });
 }
 

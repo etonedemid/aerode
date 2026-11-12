@@ -141,12 +141,12 @@ const SHOW_PROPS: &str = "Id,Description,ActiveState,SubState,UnitFileState,User
 pub fn services() -> Vec<Svc> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for l in sh(&["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager"]).lines() {
-        if let Some(u) = l.split_whitespace().next() { if u.ends_with(".service") { names.insert(u.to_string()); } }
+        if let Some(u) = l.split_whitespace().next() && u.ends_with(".service") { names.insert(u.to_string()); }
     }
     let mut states: Vec<(String, String)> = vec![];
     for l in sh(&["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"]).lines() {
         let mut it = l.split_whitespace();
-        if let (Some(u), Some(st)) = (it.next(), it.next()) { if u.ends_with(".service") && !u.ends_with("@.service") { names.insert(u.to_string()); states.push((u.to_string(), st.to_string())); } }
+        if let (Some(u), Some(st)) = (it.next(), it.next()) && u.ends_with(".service") && !u.ends_with("@.service") { names.insert(u.to_string()); states.push((u.to_string(), st.to_string())); }
     }
     if names.is_empty() { return vec![]; }
     let mut args: Vec<&str> = vec!["systemctl", "show", "--no-pager", "-p", SHOW_PROPS, "--"];
@@ -167,7 +167,7 @@ fn from_unit_files(states: &[(String, String)]) -> Vec<Svc> {
         Svc { unit: u.clone(), desc: key("Description"), file_state: st.clone(), user: key("User"), path, exec: key("ExecStart").trim_start_matches(['-', '@', '+', '!']).to_string(),
             requires: key("Requires"), wants: key("Wants"), wanted_by: key("WantedBy"), restart: key("Restart"), can_start: st != "masked", ..Default::default() }
     }).collect();
-    v.sort_by(|a, b| a.unit.to_lowercase().cmp(&b.unit.to_lowercase()));
+    v.sort_by_key(|a| a.unit.to_lowercase());
     v
 }
 
@@ -190,7 +190,7 @@ pub fn parse_show(t: &str) -> Vec<Svc> {
         }
         if s.unit.ends_with(".service") && s.file_state != "bad" { v.push(s); }
     }
-    v.sort_by(|a, b| a.unit.to_lowercase().cmp(&b.unit.to_lowercase()));
+    v.sort_by_key(|a| a.unit.to_lowercase());
     v
 }
 

@@ -154,7 +154,7 @@ impl Note {
             app_icon,
             summary,
             body,
-            actions: actions.chunks_exact(2).map(|p| (p[0].clone(), p[1].clone())).collect(),
+            actions: actions.as_chunks::<2>().0.iter().map(|p| (p[0].clone(), p[1].clone())).collect(),
             urgency: hint_int(&hints, "urgency").map(|u| u.clamp(0, 2) as u8).unwrap_or(1),
             image,
             image_path: hint_str(&hints, &["image-path", "image_path"]),
@@ -291,13 +291,12 @@ pub fn sanitize_markup(s: &str) -> String {
                 let name: String = body.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
                 let tag: Option<&'static str> = match name.as_str() { "b" => Some("b"), "i" => Some("i"), "u" => Some("u"), "a" => Some("a"), _ => None };
                 if closing {
-                    if let Some(t) = tag {
-                        if let Some(pos) = open.iter().rposition(|o| *o == t) {
+                    if let Some(t) = tag
+                        && let Some(pos) = open.iter().rposition(|o| *o == t) {
                             while open.len() > pos {
                                 out.push_str(&format!("</{}>", open.pop().unwrap()));
                             }
                         }
-                    }
                     continue;
                 }
                 match (tag, name.as_str()) {
@@ -934,12 +933,11 @@ impl Daemon {
                 cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
                 cr.paint().ok();
                 cr.restore().ok();
-                if let Some(d) = w.upgrade() {
-                    if let Some(r) = d.bg.borrow().as_ref() {
+                if let Some(d) = w.upgrade()
+                    && let Some(r) = d.bg.borrow().as_ref() {
                         cr.set_source_surface(&r.surf, 0.0, 0.0).ok();
                         cr.paint().ok();
                     }
-                }
                 glib::Propagation::Proceed
             });
         }
@@ -959,9 +957,8 @@ impl Daemon {
         {
             let w = weak.clone();
             win.connect_leave_notify_event(move |_, e| {
-                if e.detail() != gdk::NotifyType::Inferior {
-                    if let Some(d) = w.upgrade() { d.resume(); }
-                }
+                if e.detail() != gdk::NotifyType::Inferior
+                    && let Some(d) = w.upgrade() { d.resume(); }
                 glib::Propagation::Proceed
             });
         }
@@ -992,11 +989,10 @@ impl Daemon {
             // replaces_id of the balloon on screen: update it in place (no new sound)
             self.fill(&n);
             if let Some(s) = self.cur.borrow_mut().as_mut() {
-                if let Some(t) = s.temp.as_ref().and_then(|t| t.clone().downcast::<gtk::Button>().ok()) {
-                    if let Some(img) = t.child().and_then(|c| c.downcast::<gtk::Image>().ok()) {
+                if let Some(t) = s.temp.as_ref().and_then(|t| t.clone().downcast::<gtk::Button>().ok())
+                    && let Some(img) = t.child().and_then(|c| c.downcast::<gtk::Image>().ok()) {
                         img.set_from_pixbuf(tray_icon(&n, app_info(&n).as_ref()).as_ref());
                     }
-                }
                 s.note = n;
             }
             self.relayout();
@@ -1237,9 +1233,8 @@ impl Daemon {
     fn render(&self, ww: i32, wh: i32) {
         let comp = glass::composited();
         let anchor = self.anchor.get();
-        if let Some(r) = self.bg.borrow().as_ref() {
-            if r.size == (ww, wh) && r.anchor == anchor && r.composited == comp { return; }
-        }
+        if let Some(r) = self.bg.borrow().as_ref()
+            && r.size == (ww, wh) && r.anchor == anchor && r.composited == comp { return; }
         let (bw, bh) = (ww - SHADOW, wh - SHADOW - STEM);
         if bw < 40 || bh < 20 { return; }
         // the stem points at the icon; the body rests on the taskbar's top edge

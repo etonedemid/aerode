@@ -2,7 +2,6 @@
 //! updates (checkupdates, or pacman -Qu after a sync into a private database; AUR through yay or
 //! paru), Select updates to install, Install updates (pkexec pacman -Syu with the progress shown
 //! in the panel), View update history (/var/log/pacman.log) and Change settings.
-use gtk::prelude::*;
 use gtk::glib;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -408,7 +407,7 @@ fn install(ui: &Rc<Ui>) {
     let sel = ui.selected.borrow().clone();
     let repo: Vec<String> = c.pkgs.iter().filter(|p| !p.aur && sel.contains(&p.name)).map(|p| p.name.clone()).collect();
     let aur: Vec<String> = c.pkgs.iter().filter(|p| p.aur && sel.contains(&p.name)).map(|p| p.name.clone()).collect();
-    let run_aur = move || if !aur.is_empty() { if let Some(h) = aur_helper() { terminal(&format!("{h} -S --needed {}", aur.join(" "))); } };
+    let run_aur = move || if !aur.is_empty() && let Some(h) = aur_helper() { terminal(&format!("{h} -S --needed {}", aur.join(" "))); };
     if repo.is_empty() { run_aur(); return; }
     if !util::which("pkexec") { terminal("sudo pacman -Syu"); run_aur(); return; }
     *ui.phase.borrow_mut() = Phase::Installing("Preparing to install updates...".into(), -1.0);

@@ -94,7 +94,7 @@ fn count_async(paths: Vec<PathBuf>, size_l: gtk::Label, disk_l: gtk::Label, cont
 fn group(n: u64) -> String {
     let s = n.to_string();
     let mut o = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { o.push(','); } o.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { o.push(','); } o.push(c); }
     o
 }
 
@@ -180,11 +180,10 @@ fn set_readonly(p: &Path, on: bool) {
     let mode = m.permissions().mode();
     // read-only removes write for everyone; clearing it gives the owner write again
     let new = if on { mode & !0o222 } else { mode | 0o200 };
-    if new != mode {
-        if let Err(e) = std::fs::set_permissions(p, std::fs::Permissions::from_mode(new)) {
+    if new != mode
+        && let Err(e) = std::fs::set_permissions(p, std::fs::Permissions::from_mode(new)) {
             util::error("Error Applying Attributes", &format!("An error occurred applying attributes to the file:\n{}\n\n{e}", p.display()));
         }
-    }
 }
 
 fn show_one(path: &Path, parent: Option<&gtk::Window>) {
@@ -233,7 +232,7 @@ fn show_one(path: &Path, parent: Option<&gtk::Window>) {
             let w = b.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok());
             let dlg = gtk::AppChooserDialog::new(w.as_ref(), gtk::DialogFlags::MODAL, &gio::File::for_path(&p));
             dlg.set_title("Open with");
-            if dlg.run() == gtk::ResponseType::Ok { if let Some(a) = dlg.app_info() { if a.set_as_default_for_type(&ct).is_ok() { set_app(Some(&a)); } } }
+            if dlg.run() == gtk::ResponseType::Ok && let Some(a) = dlg.app_info() && a.set_as_default_for_type(&ct).is_ok() { set_app(Some(&a)); }
             dlg.close();
         }); }
         ob.pack_start(&change, false, false, 12);
@@ -287,7 +286,7 @@ fn show_one(path: &Path, parent: Option<&gtk::Window>) {
         let mut r = 1;
         sep(&sg, &mut r);
         row(&sg, r, "Target type:", &val(if abs.is_dir() { "File folder" } else if abs.exists() { "File" } else { "(missing)" })); r += 1;
-        row(&sg, r, "Target location:", &val(&abs.parent().map(|p| ops::display_name(p)).unwrap_or_default())); r += 1;
+        row(&sg, r, "Target location:", &val(&abs.parent().map(ops::display_name).unwrap_or_default())); r += 1;
         let te = gtk::Entry::new();
         te.set_text(&target.to_string_lossy());
         te.set_editable(false);
@@ -383,23 +382,21 @@ fn show_one(path: &Path, parent: Option<&gtk::Window>) {
             let mut m = orig_mode & !0o777;
             for (c, bit) in &checks { if c.is_active() { m |= bit; } }
             if ro.is_active() != ro_orig { if ro.is_active() { m &= !0o222; } else { m |= 0o200; } }
-            if m != orig_mode && !is_link {
-                if let Err(e) = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(m)) {
+            if m != orig_mode && !is_link
+                && let Err(e) = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(m)) {
                     util::error("Error Applying Security", &format!("An error occurred while applying security information to:\n{}\n\n{e}", p.display()));
                 }
-            }
             // rename / hide
             let typed = name_e.text().to_string();
             let mut new = typed.clone();
             if hidden.is_active() && !new.starts_with('.') { new = format!(".{new}"); }
             if !hidden.is_active() && new.starts_with('.') { let t = new.trim_start_matches('.').to_string(); if !t.is_empty() { new = t; } }
-            if new != ops::display_name(&p) {
-                if let Some(np) = ops::rename(&p, &new, d.transient_for().as_ref()) {
+            if new != ops::display_name(&p)
+                && let Some(np) = ops::rename(&p, &new, d.transient_for().as_ref()) {
                     *cur.borrow_mut() = np.clone();
                     name_e.set_text(&ops::display_name(&np));
                     d.set_title(&format!("{} Properties", ops::display_name(&np)));
                 }
-            }
             apply.set_sensitive(false);
         }
         if resp != gtk::ResponseType::Apply { d.close(); }

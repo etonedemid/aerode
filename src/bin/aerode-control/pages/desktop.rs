@@ -1,7 +1,6 @@
 //! Appearance and desktop applets: Desktop Gadgets, Screen Saver Settings, Desktop Icon Settings,
 //! Taskbar and Start Menu Properties, Folder Options, Fonts, Getting Started.
 //! The Win7 property sheets (tabs + OK / Cancel / Apply) are built with [`Sheet`].
-use gtk::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -320,7 +319,7 @@ pub fn page_desktopicons(cp: &Rc<Cp>) -> gtk::Widget {
         });
     }
     { let (art, fill, sel, d) = (art.clone(), fill.clone(), selected.clone(), sheet.dirty()); restore.connect_clicked(move |_| {
-        if let Some(key) = sel() { if art.borrow_mut().remove(&key).is_some() { fill(); d(); } }
+        if let Some(key) = sel() && art.borrow_mut().remove(&key).is_some() { fill(); d(); }
     }); }
     { let (cp, sel) = (cp.clone(), selected.clone()); iv.connect_item_activated(move |_, _| if sel().is_some() {
         // double-click = Change Icon..., like Win7
@@ -388,7 +387,7 @@ fn change_icon(parent: &gtk::Window, current: &str) -> Option<String> {
                 let Some(n) = queue.borrow_mut().next() else { return glib::ControlFlow::Break };
                 if let Some(pb) = util::pixbuf(&n, 32) {
                     let it = store.insert_with_values(None, &[(0, &pb), (1, &n)]);
-                    if n == cur { if let Some(p) = store.path(&it).into() { iv.select_path(&p); iv.scroll_to_path(&p, false, 0.0, 0.0); } }
+                    if n == cur && let Some(p) = store.path(&it) { iv.select_path(&p); iv.scroll_to_path(&p, false, 0.0, 0.0); }
                 }
             }
             glib::ControlFlow::Continue
@@ -403,9 +402,8 @@ fn change_icon(parent: &gtk::Window, current: &str) -> Option<String> {
             ff.set_name(Some("Icon files"));
             for p in ["*.png", "*.svg", "*.ico", "*.xpm", "*.jpg"] { ff.add_pattern(p); }
             fc.add_filter(ff);
-            if fc.run() == gtk::ResponseType::Accept {
-                if let Some(p) = fc.filename() { entry.set_text(&p.to_string_lossy()); *picked.borrow_mut() = Some(p.to_string_lossy().into_owned()); d2.response(gtk::ResponseType::Ok); }
-            }
+            if fc.run() == gtk::ResponseType::Accept
+                && let Some(p) = fc.filename() { entry.set_text(&p.to_string_lossy()); *picked.borrow_mut() = Some(p.to_string_lossy().into_owned()); d2.response(gtk::ResponseType::Ok); }
         });
     }
     { let d2 = d.clone(); iv.connect_item_activated(move |_, _| d2.response(gtk::ResponseType::Ok)); }

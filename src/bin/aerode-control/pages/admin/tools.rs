@@ -1,7 +1,6 @@
 //! Administrative Tools: the Win7 folder of shortcuts (Details view: Name, Date modified, Type,
 //! Size) – double-click opens the tool – and Windows Memory Diagnostic (memtest86+ from the boot
 //! menu).
-use gtk::prelude::*;
 use gtk::{gdk_pixbuf::Pixbuf, glib};
 use std::rc::Rc;
 
@@ -84,7 +83,7 @@ pub fn page(cp: &Rc<Cp>) -> gtk::Widget {
         Some((m, it)) => { dname.set_text(&sval(&m, &it, 1)); ddesc.set_text(&format!("Shortcut   {}", sval(&m, &it, 6))); dicon.set_from_pixbuf(util::pixbuf(&sval(&m, &it, 7), 48).as_ref()); openb.show(); }
         None => { dname.set_text(&format!("{} items", ITEMS.len())); ddesc.set_text(""); openb.hide(); }
     }); }
-    { let cp = cp.clone(); tv.connect_row_activated(move |tv, p, _| { if let Some(m) = tv.model() { if let Some(it) = m.iter(p) { open(&cp, &sval(&m, &it, 5)); } } }); }
+    { let cp = cp.clone(); tv.connect_row_activated(move |tv, p, _| { if let Some(m) = tv.model() && let Some(it) = m.iter(p) { open(&cp, &sval(&m, &it, 5)); } }); }
     { let (cp, tv) = (cp.clone(), tv.clone()); openb.connect_clicked(move |_| if let Some((m, it)) = tv.selection().selected() { open(&cp, &sval(&m, &it, 5)); }); }
     v.upcast()
 }
@@ -95,9 +94,8 @@ pub fn page(cp: &Rc<Cp>) -> gtk::Widget {
 fn memtest_entry() -> Option<(&'static str, String)> {
     let list = sh(&["bootctl", "list", "--no-pager"]);
     for block in list.split("\n\n") {
-        if block.to_lowercase().contains("memtest") {
-            if let Some(id) = block.lines().find_map(|l| l.trim().strip_prefix("id:")) { return Some(("systemd-boot", id.trim().to_string())); }
-        }
+        if block.to_lowercase().contains("memtest")
+            && let Some(id) = block.lines().find_map(|l| l.trim().strip_prefix("id:")) { return Some(("systemd-boot", id.trim().to_string())); }
     }
     let cfg = std::fs::read_to_string("/boot/grub/grub.cfg").unwrap_or_default();
     for l in cfg.lines() {

@@ -45,12 +45,10 @@ impl Agent {
         let mut users = vec![];
         for (kind, props) in identities {
             if kind == "unix-user" {
-                if let Some(uid) = props.get("uid").and_then(|v| u32::try_from(v).ok()) {
-                    if let Some(n) = user_name(uid) { users.push(n); }
-                }
-            } else if kind == "unix-group" {
-                if let Some(gid) = props.get("gid").and_then(|v| u32::try_from(v).ok()) { users.extend(group_members(gid)); }
-            }
+                if let Some(uid) = props.get("uid").and_then(|v| u32::try_from(v).ok())
+                    && let Some(n) = user_name(uid) { users.push(n); }
+            } else if kind == "unix-group"
+                && let Some(gid) = props.get("gid").and_then(|v| u32::try_from(v).ok()) { users.extend(group_members(gid)); }
         }
         // prefer the current user if they are allowed to authenticate
         let me = glib::user_name().to_string_lossy().into_owned();
@@ -281,11 +279,10 @@ fn show(req: Request, cancel_rx: async_channel::Receiver<String>) {
     fixed.put(&dlg, geo.x() + (geo.width() - 456) / 2, geo.y() + (geo.height() - nat.height) / 2);
     win.show_all();
     // grab input like the secure desktop does
-    if let Some(seat) = gdk::Display::default().and_then(|d| d.default_seat()) {
-        if let Some(gw) = win.window() {
+    if let Some(seat) = gdk::Display::default().and_then(|d| d.default_seat())
+        && let Some(gw) = win.window() {
             let _ = seat.grab(&gw, gdk::SeatCapabilities::ALL, true, None, None, None);
         }
-    }
     pw.grab_focus();
     sounds::play(sounds::Event::UserAccountControl);
 

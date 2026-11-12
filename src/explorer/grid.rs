@@ -187,7 +187,7 @@ impl Grid {
         let w = Rc::downgrade(&g);
         area.connect_motion_notify_event(move |_, ev| w.upgrade().map(|g| g.on_motion(ev)).unwrap_or(glib::Propagation::Proceed));
         let w = Rc::downgrade(&g);
-        area.connect_leave_notify_event(move |_, _| { if let Some(g) = w.upgrade() { if g.hover.replace(-1) >= 0 { g.area.queue_draw(); } } glib::Propagation::Proceed });
+        area.connect_leave_notify_event(move |_, _| { if let Some(g) = w.upgrade() && g.hover.replace(-1) >= 0 { g.area.queue_draw(); } glib::Propagation::Proceed });
         let w = Rc::downgrade(&g);
         area.connect_scroll_event(move |_, ev| w.upgrade().map(|g| g.on_scroll(ev)).unwrap_or(glib::Propagation::Proceed));
         let w = Rc::downgrade(&g);
@@ -271,7 +271,7 @@ impl Grid {
         let shift = |s: &BTreeSet<i32>| -> BTreeSet<i32> { s.iter().map(|&x| if x >= i { x + 1 } else { x }).collect() };
         if self.sel.borrow().range(i..).next().is_some() { let s = shift(&self.sel.borrow()); *self.sel.borrow_mut() = s; }
         for c in [&self.cursor, &self.anchor, &self.hover, &self.drop] { if c.get() >= i { c.set(c.get() + 1); } }
-        if let Some(r) = self.rename.borrow_mut().as_mut() { if r.index >= i { r.index += 1; } }
+        if let Some(r) = self.rename.borrow_mut().as_mut() && r.index >= i { r.index += 1; }
         self.update_adjustments();
         self.queue_item(i);
     }
@@ -545,7 +545,7 @@ impl Grid {
         let idx = self.index_at(x, y);
         if ev.event_type() == gdk::EventType::DoubleButtonPress {
             self.press.borrow_mut().take();
-            if let Some(i) = idx { if !self.single_click.get() { self.activate(i); } }
+            if let Some(i) = idx && !self.single_click.get() { self.activate(i); }
             return glib::Propagation::Stop;
         }
         if ev.event_type() != gdk::EventType::ButtonPress { return glib::Propagation::Stop; }
@@ -592,14 +592,13 @@ impl Grid {
         if let Some(t) = self.autoscroll.borrow_mut().take() { t.remove(); }
         if self.band.borrow_mut().take().is_some() { self.area.queue_draw(); }
         let p = self.press.borrow_mut().take();
-        if let Some(p) = p {
-            if let (Some(i), false) = (p.index, p.dragging) {
+        if let Some(p) = p
+            && let (Some(i), false) = (p.index, p.dragging) {
                 let st = ev.state();
                 let mods = st.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK);
                 if p.defer_select && self.select_only(i) { self.area.queue_draw(); self.emit_changed(); }
                 if self.single_click.get() && !mods && ev.event_type() == gdk::EventType::ButtonRelease { self.activate(i); }
             }
-        }
         glib::Propagation::Stop
     }
 

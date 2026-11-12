@@ -3,7 +3,6 @@
 //! unallocated) – from `lsblk -J`. Mount/unmount ("Change Drive Letter and Paths") through
 //! udisksctl, Format through mkfs (pkexec), everything that moves partitions in GParted / KDE
 //! Partition Manager / GNOME Disks.
-use gtk::prelude::*;
 use gtk::{gdk, gdk_pixbuf::Pixbuf, glib};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -57,7 +56,7 @@ fn n(v: &serde_json::Value, k: &str) -> Option<u64> { v[k].as_u64().or_else(|| v
 
 fn vol(v: &serde_json::Value) -> Vol {
     let mut mounts: Vec<String> = v["mountpoints"].as_array().map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
-    if mounts.is_empty() { if let Some(m) = v["mountpoint"].as_str() { mounts.push(m.to_string()); } }
+    if mounts.is_empty() && let Some(m) = v["mountpoint"].as_str() { mounts.push(m.to_string()); }
     let name = s(v, "name");
     let start = n(v, "start").map(|x| x * 512).unwrap_or_else(|| std::fs::read_to_string(format!("/sys/class/block/{name}/start")).ok().and_then(|x| x.trim().parse::<u64>().ok()).unwrap_or(0) * 512);
     Vol {
@@ -245,7 +244,7 @@ fn new_state(m: &Rc<Mmc>) -> Rc<State> {
         }
     }); }
     { let w = Rc::downgrade(&s); s.view.connect_button_press_event(move |tv, ev| {
-        if ev.button() == 3 { if let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); menu(&s, ev); return glib::Propagation::Stop; } }
+        if ev.button() == 3 && let (Some(s), Some((Some(p), _, _, _))) = (w.upgrade(), tv.path_at_pos(ev.position().0 as i32, ev.position().1 as i32)) { tv.selection().select_path(&p); menu(&s, ev); return glib::Propagation::Stop; }
         glib::Propagation::Proceed
     }); }
     { let w = Rc::downgrade(&s); s.view.connect_row_activated(move |_, _, _| if let Some(s) = w.upgrade() { props_selected(&s) }); }
@@ -288,7 +287,7 @@ fn fill(s: &Rc<State>) {
         };
         for (ri, r) in regs.iter().enumerate() {
             if !kinds.contains(&r.kind) { kinds.push(r.kind); }
-            if let Some(v) = &r.vol { if r.kind != Kind::Extended { add_row(v, r.kind, ri, -1); } }
+            if let Some(v) = &r.vol && r.kind != Kind::Extended { add_row(v, r.kind, ri, -1); }
             for (ii, x) in r.inner.iter().enumerate() {
                 if !kinds.contains(&x.kind) { kinds.push(x.kind); }
                 if let Some(v) = &x.vol { add_row(v, x.kind, ri, ii as i32); }
@@ -350,7 +349,7 @@ fn disk_row(s: &Rc<State>, di: usize, label: &str, d: &Disk, regs: Vec<Region>) 
     da.set_size_request(-1, ROW_H);
     da.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
     let lines: Vec<String> = if d.rom {
-        let media = d.parts.first().or(d.whole.as_ref()).map(|v| vol_title(v)).unwrap_or_default();
+        let media = d.parts.first().or(d.whole.as_ref()).map(vol_title).unwrap_or_default();
         vec![label.into(), if d.model.to_lowercase().contains("dvd") { "DVD".into() } else { "CD-ROM".into() }, if d.size == 0 { "No Media".into() } else { gb(d.size) }, if media.is_empty() { String::new() } else { media }]
     } else {
         vec![label.into(), if d.removable { "Removable".into() } else { "Basic".into() }, gb(d.size), "Online".into()]

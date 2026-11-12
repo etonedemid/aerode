@@ -38,7 +38,7 @@ const CP1252: [u16; 32] = [
 
 fn decode(bytes: &[u8]) -> (String, Enc) {
     let utf16 = |b: &[u8], le: bool| {
-        let u: Vec<u16> = b.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
+        let u: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
         String::from_utf16_lossy(&u)
     };
     if let Some(r) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) { return (String::from_utf8_lossy(r).into_owned(), Enc::Utf8); }
@@ -441,14 +441,14 @@ impl App {
         let r = fc.run();
         let p = fc.filename();
         fc.close();
-        if r == gtk::ResponseType::Accept { if let Some(p) = p { self.load(p, false); } }
+        if r == gtk::ResponseType::Accept && let Some(p) = p { self.load(p, false); }
     }
 
     fn find_next(self: &Rc<Self>) -> bool {
         let (needle, case, down) = { let s = self.st.borrow(); (s.find.clone(), s.match_case, s.down) };
         if needle.is_empty() { self.find_dialog(false); return false; }
         let flags = gtk::TextSearchFlags::TEXT_ONLY | if case { gtk::TextSearchFlags::empty() } else { gtk::TextSearchFlags::CASE_INSENSITIVE };
-        let (start, end) = self.buf.selection_bounds().unwrap_or_else(|| { let i = self.cursor(); (i.clone(), i) });
+        let (start, end) = self.buf.selection_bounds().unwrap_or_else(|| { let i = self.cursor(); (i, i) });
         let hit = if down { end.forward_search(&needle, flags, None) } else { start.backward_search(&needle, flags, None) };
         match hit {
             Some((a, b)) => {
@@ -619,7 +619,7 @@ impl App {
         e.set_activates_default(true);
         l.set_mnemonic_widget(Some(&e));
         // only digits, like Win7's number edit box
-        e.connect_insert_text(|e, t, _| { if !t.chars().all(|c| c.is_ascii_digit()) { e.stop_signal_emission_by_name("insert-text"); gdk::Display::default().map(|d| d.beep()); } });
+        e.connect_insert_text(|e, t, _| { if !t.chars().all(|c| c.is_ascii_digit()) { e.stop_signal_emission_by_name("insert-text"); if let Some(d) = gdk::Display::default() { d.beep() } } });
         c.pack_start(&l, false, false, 0);
         c.pack_start(&e, false, false, 0);
         d.set_default_response(gtk::ResponseType::Ok);
@@ -645,7 +645,7 @@ impl App {
     }
 
     fn page_setup(self: &Rc<Self>) {
-        let settings = self.print_settings.borrow().clone().unwrap_or_else(gtk::PrintSettings::new);
+        let settings = self.print_settings.borrow().clone().unwrap_or_default();
         let setup = self.page_setup.borrow().clone();
         let s = gtk::print_run_page_setup_dialog(Some(&self.win), setup.as_ref(), &settings);
         if let Some(s) = s { *self.page_setup.borrow_mut() = Some(s); }
@@ -759,7 +759,7 @@ impl App {
         if !self.buf.delete_selection(true, true) {
             let mut a = self.cursor();
             if a.is_end() { return; }
-            let mut b = a.clone();
+            let mut b = a;
             b.forward_cursor_position();
             self.buf.begin_user_action();
             self.buf.delete_interactive(&mut a, &mut b, true);
@@ -929,7 +929,7 @@ fn build(app: &gtk::Application, file: Option<PathBuf>) {
         menu_item(&m, "_Font...", None, move || {
             let d = gtk::FontChooserDialog::new(Some("Font"), Some(&a.win));
             d.set_font(&App::font_desc());
-            if d.run() == gtk::ResponseType::Ok { if let Some(f) = d.font() { a.set_font(&f); } }
+            if d.run() == gtk::ResponseType::Ok && let Some(f) = d.font() { a.set_font(&f); }
             d.close();
         });
     }
@@ -1020,7 +1020,7 @@ fn build(app: &gtk::Application, file: Option<PathBuf>) {
         let a2 = a.clone();
         view.connect_drag_data_received(move |v, _, _, _, data, _, _| {
             if let Some(u) = data.uris().first() {
-                if let Some(p) = gio::File::for_uri(u).path() { if a2.maybe_save() { a2.load(p, false); } }
+                if let Some(p) = gio::File::for_uri(u).path() && a2.maybe_save() { a2.load(p, false); }
                 v.stop_signal_emission_by_name("drag-data-received");
             }
         });
@@ -1032,9 +1032,8 @@ fn build(app: &gtk::Application, file: Option<PathBuf>) {
     a.update_title();
     win.show();
     view.grab_focus();
-    if let Some(p) = file {
-        if !a.load(p, true) { win.close(); }
-    }
+    if let Some(p) = file
+        && !a.load(p, true) { win.close(); }
 }
 
 fn config_flag(name: &str) -> bool { config::conf_dir().join(name).exists() }

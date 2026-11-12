@@ -2,7 +2,6 @@
 //! tree on the left, the snap-in's result pane in the middle and the Actions pane on the right.
 //! Snap-ins add tree nodes with an id and register a handler for an id prefix; selecting a node
 //! calls the handler, which fills the centre (`set_center`) and the Actions pane (`set_actions`).
-use gtk::prelude::*;
 use gtk::{gdk, gdk_pixbuf::Pixbuf, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -379,7 +378,7 @@ pub fn head(title: &str, extra: &str) -> (gtk::Box, gtk::Label) {
 pub fn thousands(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { out.push(','); } out.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { out.push(','); } out.push(c); }
     out
 }
 
@@ -484,7 +483,7 @@ fn folder_list(m: &Rc<Mmc>, rows: &[(&str, &str)]) -> gtk::Widget {
 
 fn simple_table(cols: &[(&str, i32)], rows: Vec<Vec<String>>, icon: &[&str]) -> (gtk::TreeView, gtk::ListStore) {
     let mut types = vec![Pixbuf::static_type()];
-    types.extend(std::iter::repeat(glib::Type::STRING).take(cols.len()));
+    types.extend(std::iter::repeat_n(glib::Type::STRING, cols.len()));
     let store = gtk::ListStore::new(&types);
     let pb = pix(icon, 16);
     for r in rows {
@@ -542,7 +541,7 @@ fn shares_list(m: &Rc<Mmc>) {
     let mut rows = vec![];
     let conf = std::fs::read_to_string("/etc/samba/smb.conf").unwrap_or_default();
     let mut cur: Option<(String, String, String)> = None;
-    let flush = |c: Option<(String, String, String)>, rows: &mut Vec<Vec<String>>| if let Some((n, p, d)) = c { if n != "global" { rows.push(vec![n, p, "Windows".into(), d]); } };
+    let flush = |c: Option<(String, String, String)>, rows: &mut Vec<Vec<String>>| if let Some((n, p, d)) = c && n != "global" { rows.push(vec![n, p, "Windows".into(), d]); };
     for l in conf.lines().map(|l| l.trim()) {
         if l.starts_with('#') || l.starts_with(';') { continue; }
         if l.starts_with('[') && l.ends_with(']') { flush(cur.take(), &mut rows); cur = Some((l[1..l.len() - 1].to_string(), String::new(), String::new())); continue; }

@@ -1,7 +1,6 @@
 //! System Information (msinfo32): System Summary, Hardware Resources, Components and Software
 //! Environment, each a table filled on a worker thread when it is first opened. File ▸ Export
 //! writes every category to a text file; the Find bar searches the current or all categories.
-use gtk::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -590,15 +589,14 @@ fn do_find(s: &Rc<State>) {
     }
     // next match in the current table after the selected row
     let start_row = s.list.selection().selected_rows().0.first().and_then(|p| p.indices().first().copied()).map(|i| i + 1).unwrap_or(0) as usize;
-    if let Some(t) = s.cache.borrow().get(&cur) {
-        if let Some(i) = t.rows.iter().enumerate().skip(start_row).find(|(_, r)| r.iter().any(|c| c.to_lowercase().contains(&q))).map(|x| x.0) {
+    if let Some(t) = s.cache.borrow().get(&cur)
+        && let Some(i) = t.rows.iter().enumerate().skip(start_row).find(|(_, r)| r.iter().any(|c| c.to_lowercase().contains(&q))).map(|x| x.0) {
             let p = gtk::TreePath::from_indicesv(&[i as i32]);
             s.list.selection().unselect_all();
             s.list.selection().select_path(&p);
             s.list.scroll_to_cell(Some(&p), None::<&gtk::TreeViewColumn>, true, 0.5, 0.0);
             return;
         }
-    }
     if s.only_sel.is_active() { inform(Some(&s.win), "System Information", "Windows has finished searching.", ""); return; }
     // the following categories (loaded on a worker thread)
     let from = TREE.iter().position(|t| t.0 == cur).map(|i| i + 1).unwrap_or(0);

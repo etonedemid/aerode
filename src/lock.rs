@@ -27,8 +27,8 @@ pub fn lock(lock_sound: bool) {
 
 /// Run a locker until it is unlocked; false when none could lock.
 fn run_locker() -> bool {
-    if util::which("xsecurelock") {
-        if let (Some(auth), Some(saver)) = (module("auth_aerode"), module("saver_aerode")) {
+    if util::which("xsecurelock")
+        && let (Some(auth), Some(saver)) = (module("auth_aerode"), module("saver_aerode")) {
             let ok = std::process::Command::new("xsecurelock")
                 .env("XSECURELOCK_AUTH", auth)
                 .env("XSECURELOCK_SAVER", saver)
@@ -38,7 +38,6 @@ fn run_locker() -> bool {
             // a non-zero exit means it could not lock (e.g. another grab): lock another way
             if ok { return true; }
         }
-    }
     let g = util::primary_geometry();
     let (w, h) = (g.width(), g.height());
     // Win7's logon background (extracted from authui/imageres as lockscreen.png)
@@ -82,11 +81,11 @@ fn run_locker() -> bool {
     let png = cache.join("lock.png");
     if let Ok(mut f) = std::fs::File::create(&png) { let _ = surf.write_to_png(&mut f); }
     let p = png.to_string_lossy().into_owned();
-    let ok = std::process::Command::new("i3lock")
+    
+    std::process::Command::new("i3lock")
         .args(["-n", "-e", "-f", "-i", &p, "--color=1d4f7a"])
         .status()
         .or_else(|_| std::process::Command::new("xsecurelock").status())
         .map(|s| s.success())
-        .unwrap_or(false);
-    ok
+        .unwrap_or(false)
 }

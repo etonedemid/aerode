@@ -232,15 +232,13 @@ async fn run() -> zbus::Result<()> {
 async fn adopt_external(conn: &zbus::Connection, host: &str) {
     let _ = conn.call_method(Some(WATCHER), WATCHER_PATH, Some(WATCHER), "RegisterStatusNotifierHost", &(host,)).await;
     let r = conn.call_method(Some(WATCHER), WATCHER_PATH, Some("org.freedesktop.DBus.Properties"), "Get", &(WATCHER, "RegisteredStatusNotifierItems")).await;
-    if let Ok(m) = r {
-        if let Ok(v) = m.body().deserialize::<OwnedValue>() {
-            if let Value::Array(a) = unvariant(&v) {
+    if let Ok(m) = r
+        && let Ok(v) = m.body().deserialize::<OwnedValue>()
+            && let Value::Array(a) = unvariant(&v) {
                 for e in a.inner() {
                     if let Value::Str(s) = unvariant(e) { add(s.as_str()); }
                 }
             }
-        }
-    }
 }
 
 fn split_id(id: &str) -> (String, String) {
@@ -431,7 +429,7 @@ pub(super) fn pixmap_icon(v: &Value, size: i32) -> Option<Pixbuf> {
 
 pub(super) fn argb_to_pixbuf(w: i32, h: i32, argb: &[u8]) -> Pixbuf {
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for px in argb.chunks_exact(4).take((w * h) as usize) {
+    for px in argb.as_chunks::<4>().0.iter().take((w * h) as usize) {
         rgba.extend_from_slice(&[px[1], px[2], px[3], px[0]]);
     }
     Pixbuf::from_bytes(&glib::Bytes::from_owned(rgba), Colorspace::Rgb, true, 8, w, h, w * 4)
@@ -450,9 +448,8 @@ pub(super) fn named_icon(name: &str, theme_path: &str, size: i32) -> Option<Pixb
     if !theme_path.is_empty() {
         for ext in ["png", "svg", "xpm"] {
             let f = std::path::Path::new(theme_path).join(format!("{name}.{ext}"));
-            if f.exists() {
-                if let Ok(p) = Pixbuf::from_file_at_scale(&f, size, size, true) { return Some(p); }
-            }
+            if f.exists()
+                && let Ok(p) = Pixbuf::from_file_at_scale(&f, size, size, true) { return Some(p); }
         }
         let theme = THEMES.with(|t| t.borrow_mut().entry(theme_path.to_string()).or_insert_with(|| {
             let th = gtk::IconTheme::new();

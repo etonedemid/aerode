@@ -268,7 +268,7 @@ pub(crate) fn see_also(cp: &Rc<Cp>, links: &[(&str, &'static str)]) {
     v.pack_start(&h, false, false, 2);
     for (t, page) in links {
         let (me, page) = (cp.clone(), *page);
-        if page.starts_with('!') { let id = &page[1..]; v.pack_start(&super::super::link(t, move || spawn_tool(id)), false, false, 0); }
+        if let Some(id) = page.strip_prefix('!') { v.pack_start(&super::super::link(t, move || spawn_tool(id)), false, false, 0); }
         else { v.pack_start(&super::super::link(t, move || me.open(page)), false, false, 0); }
     }
     cp.side.pack_end(&v, false, false, 8);
@@ -423,11 +423,9 @@ pub(crate) fn save_text(parent: Option<&gtk::Window>, title: &str, name: &str, t
     let fc = gtk::FileChooserNative::new(Some(title), parent, gtk::FileChooserAction::Save, Some("_Save"), Some("_Cancel"));
     fc.set_current_name(name);
     fc.set_do_overwrite_confirmation(true);
-    if fc.run() == gtk::ResponseType::Accept {
-        if let Some(p) = fc.filename() {
-            if let Err(e) = std::fs::write(&p, text) { util::error("The file could not be saved.", &e.to_string()); }
-        }
-    }
+    if fc.run() == gtk::ResponseType::Accept
+        && let Some(p) = fc.filename()
+            && let Err(e) = std::fs::write(&p, text) { util::error("The file could not be saved.", &e.to_string()); }
 }
 
 /// A read-only multi-line text box.
@@ -437,7 +435,7 @@ pub(crate) fn text_box(t: &str) -> gtk::TextView {
     tv.set_wrap_mode(gtk::WrapMode::WordChar);
     tv.set_left_margin(4);
     tv.set_right_margin(4);
-    tv.buffer().map(|b| b.set_text(t));
+    if let Some(b) = tv.buffer() { b.set_text(t) }
     tv
 }
 

@@ -26,7 +26,7 @@ pub struct Wallpaper {
 }
 
 thread_local! {
-    static WP: RefCell<Option<Rc<Wallpaper>>> = RefCell::new(None);
+    static WP: RefCell<Option<Rc<Wallpaper>>> = const { RefCell::new(None) };
     static LISTENERS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
 }
 
@@ -236,7 +236,7 @@ thread_local! {
     static CHANGE_PENDING: Cell<bool> = const { Cell::new(false) };
     static COLOR_LISTENERS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
     /// glass toplevels: re-tagged and redrawn when the colourisation or the compositor changes
-    static GLASS_WINDOWS: RefCell<Vec<glib::WeakRef<gtk::Window>>> = RefCell::new(Vec::new());
+    static GLASS_WINDOWS: RefCell<Vec<glib::WeakRef<gtk::Window>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn watch() -> Option<Rc<Watch>> {

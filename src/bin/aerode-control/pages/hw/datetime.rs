@@ -165,7 +165,7 @@ pub fn page_tab(cp: &Rc<Cp>, tab: u32) -> gtk::Widget {
         { let d = sheet.dirty(); name.connect_changed(move |_| d()); }
         let open = { let (w, ztz, zent, d, _all) = (win.clone(), ztz.clone(), zent.clone(), sheet.dirty(), all.clone()); Rc::new(move || {
             let cur = ztz.borrow().clone();
-            if let Some(z) = pick_zone(&w, "Select time zone", &cur, false) { if z != cur { zent.set_text(&zone_label(&z)); *ztz.borrow_mut() = z; d(); } }
+            if let Some(z) = pick_zone(&w, "Select time zone", &cur, false) && z != cur { zent.set_text(&zone_label(&z)); *ztz.borrow_mut() = z; d(); }
         }) };
         { let o = open.clone(); pick.connect_clicked(move |_| o()); }
         { let o = open.clone(); zent.connect_button_press_event(move |_, _| { o(); glib::Propagation::Stop }); }
@@ -308,12 +308,11 @@ fn pick_zone(parent: &gtk::Window, title: &str, current: &str, dst_check: bool) 
     { let (store, tv, filter) = (store.clone(), tv.clone(), filter.clone()); super::super::admin::bg(zones, move |list| {
         for (name, label) in &list {
             let it = store.insert_with_values(None, &[(0, label), (1, name)]);
-            if *name == cur {
-                if let Some(fit) = filter.convert_child_iter_to_iter(&it) {
+            if *name == cur
+                && let Some(fit) = filter.convert_child_iter_to_iter(&it) {
                     tv.selection().select_iter(&fit);
                     if let Some(p) = filter.path(&fit) { tv.scroll_to_cell(Some(&p), None::<&gtk::TreeViewColumn>, true, 0.4, 0.0); }
                 }
-            }
         }
     }); }
     d.show_all();

@@ -164,33 +164,6 @@ pub fn composite(packs: &[Pack]) -> Option<Battery> {
     Some(Battery { percent, status: status.to_string() })
 }
 
-#[cfg(test)]
-mod battery_tests {
-    use super::*;
-    fn pack(now: u64, full: u64, status: &str) -> Pack { Pack { capacity: Some((now * 100 / full) as u32), now: Some(now), full: Some(full), status: status.into() } }
-    #[test]
-    fn two_packs_are_one_battery() {
-        let b = composite(&[pack(10, 50, "Discharging"), pack(40, 50, "Unknown")]).unwrap();
-        assert_eq!((b.percent, b.status.as_str()), (50, "Discharging"));
-    }
-    #[test]
-    fn capacity_only() {
-        let b = composite(&[Pack { capacity: Some(30), status: "Charging".into(), ..Default::default() }]).unwrap();
-        assert_eq!((b.percent, b.status.as_str()), (30, "Charging"));
-    }
-    #[test]
-    fn none_without_packs() { assert!(composite(&[]).is_none()); }
-    #[test]
-    fn peripherals_are_not_the_computers_battery() {
-        assert!(is_system_battery("BAT0", None, "acpi"));
-        assert!(is_system_battery("BAT1", Some("System"), ""));
-        assert!(!is_system_battery("hidpp_battery_0", None, "hid"));
-        assert!(!is_system_battery("ps-controller-battery-aa:bb", None, ""));
-        assert!(!is_system_battery("hid-00:11:22:33:44:55-battery", None, ""));
-        assert!(!is_system_battery("BAT0", Some("Device"), "acpi"));
-    }
-}
-
 /// Icon names for the battery, best first: the 10 %-step Win7 icons (built from batmeter.dll by
 /// aerode-extract), then the classic freedesktop names other themes have.
 pub fn battery_icons(b: &Battery) -> [String; 2] {
@@ -302,4 +275,31 @@ pub fn log_off() {
 pub fn lock() {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "aerode".into());
     spawn(&[&exe, "lock"]);
+}
+
+#[cfg(test)]
+mod battery_tests {
+    use super::*;
+    fn pack(now: u64, full: u64, status: &str) -> Pack { Pack { capacity: Some((now * 100 / full) as u32), now: Some(now), full: Some(full), status: status.into() } }
+    #[test]
+    fn two_packs_are_one_battery() {
+        let b = composite(&[pack(10, 50, "Discharging"), pack(40, 50, "Unknown")]).unwrap();
+        assert_eq!((b.percent, b.status.as_str()), (50, "Discharging"));
+    }
+    #[test]
+    fn capacity_only() {
+        let b = composite(&[Pack { capacity: Some(30), status: "Charging".into(), ..Default::default() }]).unwrap();
+        assert_eq!((b.percent, b.status.as_str()), (30, "Charging"));
+    }
+    #[test]
+    fn none_without_packs() { assert!(composite(&[]).is_none()); }
+    #[test]
+    fn peripherals_are_not_the_computers_battery() {
+        assert!(is_system_battery("BAT0", None, "acpi"));
+        assert!(is_system_battery("BAT1", Some("System"), ""));
+        assert!(!is_system_battery("hidpp_battery_0", None, "hid"));
+        assert!(!is_system_battery("ps-controller-battery-aa:bb", None, ""));
+        assert!(!is_system_battery("hid-00:11:22:33:44:55-battery", None, ""));
+        assert!(!is_system_battery("BAT0", Some("Device"), "acpi"));
+    }
 }

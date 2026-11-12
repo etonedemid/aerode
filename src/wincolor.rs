@@ -250,7 +250,7 @@ pub fn page(win: &gtk::Window) -> gtk::Widget {
         });
         let pw = Rc::downgrade(&p);
         da.connect_button_press_event(move |da, e| {
-            if e.button() == 1 { if let Some(p) = pw.upgrade() { da.grab_focus(); p.pick_swatch(i); } }
+            if e.button() == 1 && let Some(p) = pw.upgrade() { da.grab_focus(); p.pick_swatch(i); }
             glib::Propagation::Stop
         });
         let pw = Rc::downgrade(&p);

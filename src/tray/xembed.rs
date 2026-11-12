@@ -356,7 +356,7 @@ impl Tray {
         let n = w as usize * h as usize;
         if img.data.len() < n * 4 { return; }
         let mut rgba = Vec::with_capacity(n * 4);
-        for p in img.data.chunks_exact(4).take(n) {
+        for p in img.data.as_chunks::<4>().0.iter().take(n) {
             let (b, g, r, a) = if self.lsb { (p[0], p[1], p[2], p[3]) } else { (p[3], p[2], p[1], p[0]) };
             if depth == 32 {
                 // premultiplied → straight alpha

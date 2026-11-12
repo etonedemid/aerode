@@ -785,9 +785,9 @@ fn d_adapter(r: &mut Report) {
         let mut has_driver = false;
         for l in lspci.lines().chain(std::iter::once("")) {
             if !l.starts_with(char::is_whitespace) {
-                if let Some(c) = cur.take() { if !has_driver { no_driver.push(c); } }
+                if let Some(c) = cur.take() && !has_driver { no_driver.push(c); }
                 has_driver = false;
-                if l.contains("Network controller") || l.contains("Ethernet controller") { cur = Some(l.splitn(2, ": ").nth(1).unwrap_or(l).to_string()); }
+                if l.contains("Network controller") || l.contains("Ethernet controller") { cur = Some(l.split_once(": ").map(|x| x.1).unwrap_or(l).to_string()); }
             } else if l.contains("Kernel driver in use") { has_driver = true; }
         }
         if let Some(c) = no_driver.first() {
@@ -981,8 +981,8 @@ fn d_display(r: &mut Report) {
                 let name = toks[i + 1];
                 let get = |flag: &str| toks[i + 2..].iter().take_while(|t| **t != "--output").position(|t| *t == flag).and_then(|p| toks.get(i + 2 + p + 1)).copied();
                 if let Some(o) = outs.iter().find(|o| o.0 == name) {
-                    if let Some(m) = get("--mode") { if m != o.2 { differs.push(format!("{name} is at {} instead of {m}", if o.2.is_empty() { "off" } else { &o.2 })); } }
-                    if let Some(rt) = get("--rate").and_then(|x| x.parse::<f64>().ok()) { if (rt - o.3).abs() > 1.0 && !o.2.is_empty() { differs.push(format!("{name} runs at {:.0} Hz instead of {rt:.0} Hz", o.3)); } }
+                    if let Some(m) = get("--mode") && m != o.2 { differs.push(format!("{name} is at {} instead of {m}", if o.2.is_empty() { "off" } else { &o.2 })); }
+                    if let Some(rt) = get("--rate").and_then(|x| x.parse::<f64>().ok()) && (rt - o.3).abs() > 1.0 && !o.2.is_empty() { differs.push(format!("{name} runs at {:.0} Hz instead of {rt:.0} Hz", o.3)); }
                 }
                 i += 2;
             } else { i += 1; }
@@ -1040,7 +1040,7 @@ fn d_keyboard(r: &mut Report) {
     let now: Vec<String> = cur.iter().map(layout_code).collect();
     r.info(format!("Layouts in use: {}", now.join(", ")));
     let sw = cfg.kbd_switch.clone().unwrap_or_else(|| aerode::kbdlayout::DEFAULT_SWITCH.to_string());
-    let sw_ok = sw.is_empty() || opts.iter().any(|o| *o == sw);
+    let sw_ok = sw.is_empty() || opts.contains(&sw);
     if (!cfg.kbd_layouts.is_empty() && cfg.kbd_layouts != now) || !sw_ok {
         r.problem("The keyboard layouts are not the ones you chose", format!("You chose {} in Region and Language, but {} is in use{}.", if cfg.kbd_layouts.is_empty() { now.join(", ") } else { cfg.kbd_layouts.join(", ") }, now.join(", "), if sw_ok { "" } else { ", without the key that switches between them" }),
             Some(("Apply your keyboard layouts again", Fix::Main(|| { aerode::kbdlayout::ensure(); true }))));
@@ -1195,12 +1195,11 @@ fn d_power(r: &mut Report) {
         r.problem("The power plan is set to High performance", "On battery, the High performance plan drains the battery quickly.", Some(("Change to the Balanced power plan", run1(&["powerprofilesctl", "set", "balanced"]))));
     } else { r.ok("The power plan is set to High performance"); }
     r.step("Checking display brightness");
-    if on_battery {
-        if let Some(b) = aerode::sys::backlight() {
+    if on_battery
+        && let Some(b) = aerode::sys::backlight() {
             if b >= 95 { r.problem("Display brightness is set to maximum", "A bright screen uses a lot of power.", Some(("Lower the brightness to 70%", run1(&["brightnessctl", "set", "70%"])))); }
             else { r.ok("Display brightness is set to maximum"); }
         }
-    }
     r.step("Checking display and sleep settings");
     let presenting = std::fs::read_to_string(config::conf_dir().join("presentation.json")).map(|s| s.contains("\"active\": true")).unwrap_or(false);
     let q = sh(&["xset", "q"]).stdout;
@@ -1270,7 +1269,7 @@ fn d_programs(r: &mut Report) {
     if let Ok(rd) = std::fs::read_dir(glib::user_data_dir().join("applications")) {
         for e in rd.flatten() {
             let s = std::fs::read_to_string(e.path()).unwrap_or_default();
-            if let Some(t) = s.lines().find_map(|l| l.strip_prefix("TryExec=")) { if !util::which(t.trim()) { missing.push(e.file_name().to_string_lossy().into_owned()); } }
+            if let Some(t) = s.lines().find_map(|l| l.strip_prefix("TryExec=")) && !util::which(t.trim()) { missing.push(e.file_name().to_string_lossy().into_owned()); }
         }
     }
     if missing.is_empty() { r.ok("A program's shortcut points to a missing file"); }

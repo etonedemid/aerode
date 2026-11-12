@@ -108,7 +108,7 @@ fn authenticate(ui: &mut Ui) -> i32 {
                             ui.mode = Mode::Busy;
                             ui.draw_dynamic();
                             let t = if ty == b'U' { 'u' } else { 'p' };
-                            let _ = write!(inp, "{t} {}\n", answer.len());
+                            let _ = writeln!(inp, "{t} {}", answer.len());
                             let _ = inp.write_all(&answer);
                             let _ = inp.write_all(b"\n");
                             let _ = inp.flush();
@@ -274,15 +274,14 @@ impl Ui {
         // monitors in this window's coordinates (the lock window covers the whole screen)
         let mut monitors = vec![];
         let mut mon = None;
-        if !demo {
-            if let Ok(Ok(r)) = conn.randr_get_monitors(root, true).map(|c| c.reply()) {
+        if !demo
+            && let Ok(Ok(r)) = conn.randr_get_monitors(root, true).map(|c| c.reply()) {
                 for m in r.monitors {
                     let rect = (m.x as f64, m.y as f64, m.width as f64, m.height as f64);
                     if m.primary { mon = Some(rect); }
                     monitors.push(rect);
                 }
             }
-        }
         if monitors.is_empty() { monitors.push((0.0, 0.0, w as f64, h as f64)); }
         let mon = mon.unwrap_or(monitors[0]);
         let data = aerode::config::data_dir();
@@ -295,7 +294,7 @@ impl Ui {
     }
 
     fn event(&mut self, ev: Event) {
-        if let Event::Expose(e) = ev { if e.count == 0 { self.draw_all(); } }
+        if let Event::Expose(e) = ev && e.count == 0 { self.draw_all(); }
     }
 
     fn cx(&self) -> f64 { self.mon.0 + self.mon.2 / 2.0 }

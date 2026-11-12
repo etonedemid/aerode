@@ -591,7 +591,7 @@ fn worker(rx: std::sync::mpsc::Receiver<AudioCmd>) {
             match c {
                 AudioCmd::Query { streams, reply } => { want_streams |= streams; replies.push(reply); }
                 AudioCmd::Level { sink, pct } => {
-                    if let Some(AudioCmd::Level { sink: s2, pct: p2 }) = ops.last_mut() { if *s2 == sink { *p2 = pct; continue; } }
+                    if let Some(AudioCmd::Level { sink: s2, pct: p2 }) = ops.last_mut() && *s2 == sink { *p2 = pct; continue; }
                     ops.push(AudioCmd::Level { sink, pct });
                 }
                 AudioCmd::Step(n) => {
@@ -599,7 +599,7 @@ fn worker(rx: std::sync::mpsc::Receiver<AudioCmd>) {
                     ops.push(AudioCmd::Step(n));
                 }
                 AudioCmd::StreamLevel { index, pct } => {
-                    if let Some(AudioCmd::StreamLevel { index: i2, pct: p2 }) = ops.last_mut() { if *i2 == index { *p2 = pct; continue; } }
+                    if let Some(AudioCmd::StreamLevel { index: i2, pct: p2 }) = ops.last_mut() && *i2 == index { *p2 = pct; continue; }
                     ops.push(AudioCmd::StreamLevel { index, pct });
                 }
                 AudioCmd::EventLevel(pct) => {
@@ -627,7 +627,7 @@ fn worker(rx: std::sync::mpsc::Receiver<AudioCmd>) {
             }
         }
         // reap a finished sound
-        if let Some(c) = player.as_mut() { if matches!(c.try_wait(), Ok(Some(_))) { player = None; } }
+        if let Some(c) = player.as_mut() && matches!(c.try_wait(), Ok(Some(_))) { player = None; }
         if !replies.is_empty() {
             let info = audio_info(want_streams);
             for r in replies { let _ = r.try_send(info.clone()); }

@@ -354,7 +354,7 @@ impl Calc {
         };
         if n == 0.0 || (f == "sdn1" && n < 2.0) { self.error("Invalid input"); return; }
         self.set_value(v);
-        self.history.push((Mode::Statistics, format!("{name}"), self.entry.clone()));
+        self.history.push((Mode::Statistics, name.to_string(), self.entry.clone()));
     }
 }
 
@@ -1201,7 +1201,7 @@ impl Ui {
         let alt = st.contains(gdk::ModifierType::MOD1_MASK);
         if alt { return false; }
         // typing into a panel field (worksheet entries, spin buttons) goes to that field
-        if let Some(f) = self.win.focused_widget() { if f.is::<gtk::Entry>() && f.downcast_ref::<gtk::Entry>().map(|e| e.is_editable()).unwrap_or(false) { return false; } }
+        if let Some(f) = self.win.focused_widget() && f.is::<gtk::Entry>() && f.downcast_ref::<gtk::Entry>().map(|e| e.is_editable()).unwrap_or(false) { return false; }
         let mode = self.c.borrow().mode;
         let ch = kv.to_unicode().map(|c| c.to_ascii_lowercase());
         let code: Option<&str> = if ctrl {
@@ -1270,7 +1270,7 @@ impl Ui {
 fn group_int(n: i64) -> String {
     let s = n.abs().to_string();
     let mut o = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { o.push(','); } o.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { o.push(','); } o.push(c); }
     if n < 0 { format!("-{o}") } else { o }
 }
 

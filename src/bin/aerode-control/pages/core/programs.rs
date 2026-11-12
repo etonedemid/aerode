@@ -184,15 +184,14 @@ pub fn load() -> Vec<Prog> {
     let sync = sync_map();
     let mut v = pacman_programs(&sync);
     v.extend(flatpak_programs());
-    v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    v.sort_by_key(|a| a.name.to_lowercase());
     v
 }
 
 fn icon_for(p: &Prog, size: i32) -> Option<Pixbuf> {
-    if p.icon.starts_with('/') { if let Ok(pb) = Pixbuf::from_file_at_scale(&p.icon, size, size, true) { return Some(pb); } }
-    if !p.icon.is_empty() {
-        if let Some(t) = gtk::IconTheme::default() { if t.has_icon(&p.icon) { return util::pixbuf(&p.icon, size); } }
-    }
+    if p.icon.starts_with('/') && let Ok(pb) = Pixbuf::from_file_at_scale(&p.icon, size, size, true) { return Some(pb); }
+    if !p.icon.is_empty()
+        && let Some(t) = gtk::IconTheme::default() && t.has_icon(&p.icon) { return util::pixbuf(&p.icon, size); }
     pix(&["application-x-executable", "package-x-generic"], size)
 }
 

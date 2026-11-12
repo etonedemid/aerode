@@ -522,7 +522,7 @@ fn preview(cp: &Rc<Cp>, face: &Face, file: Option<PathBuf>) {
         let (cp, w2) = (cp.clone(), w.clone());
         inst.connect_clicked(move |b| {
             let b = b.clone();
-            install(&cp, &[f.clone()], Rc::new(move || {
+            install(&cp, std::slice::from_ref(&f), Rc::new(move || {
                 b.set_sensitive(false);
                 b.set_label("Installed");
                 util::spawn(&["fc-cache", "-f", &user_font_dirs()[0].to_string_lossy()]);
@@ -861,14 +861,13 @@ pub(crate) fn cleartype_tuner(cp: &Rc<Cp>) {
                 let fr = gtk::Frame::new(None);
                 fr.add(&b);
                 g.add(&fr);
-                if *id == current { if let Some(ch) = g.children().last().and_then(|c| c.clone().downcast::<gtk::FlowBoxChild>().ok()) { g.select_child(&ch); } }
+                if *id == current && let Some(ch) = g.children().last().and_then(|c| c.clone().downcast::<gtk::FlowBoxChild>().ok()) { g.select_child(&ch); }
             }
-            if g.selected_children().is_empty() { if let Some(c) = g.child_at_index(0) { g.select_child(&c); } }
+            if g.selected_children().is_empty() && let Some(c) = g.child_at_index(0) { g.select_child(&c); }
             let (choice, ids) = (choice.clone(), opts.iter().map(|o| o.0.clone()).collect::<Vec<_>>());
             g.connect_selected_children_changed(move |g| {
-                if let Some(c) = g.selected_children().first() {
-                    if let Some(id) = ids.get(c.index() as usize) { let mut ch = choice.borrow_mut(); if field == 0 { ch.0 = id.clone() } else { ch.1 = id.clone() } }
-                }
+                if let Some(c) = g.selected_children().first()
+                    && let Some(id) = ids.get(c.index() as usize) { let mut ch = choice.borrow_mut(); if field == 0 { ch.0 = id.clone() } else { ch.1 = id.clone() } }
             });
             p.pack_start(&g, false, false, 0);
             p

@@ -81,7 +81,7 @@ fn glob(cwd: &Path, w: &str) -> Vec<PathBuf> {
 fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut o = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { o.push(','); } o.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { o.push(','); } o.push(c); }
     o
 }
 
@@ -611,7 +611,7 @@ impl Shell {
                     }
                 }
             }
-            "SHIFT" => if let Some(b) = &mut self.batch { if !b.args.is_empty() { b.args.remove(0); } },
+            "SHIFT" => if let Some(b) = &mut self.batch && !b.args.is_empty() { b.args.remove(0); },
             "IF" => self.if_cmd(&rest_raw, o),
             "FOR" => self.for_cmd(&rest_raw, o),
             "HELP" => {
@@ -913,7 +913,7 @@ impl Shell {
                 Some(x) if x.contains('s') => entries.sort_by_key(|(_, m)| m.len()),
                 Some(x) if x.contains('d') => entries.sort_by_key(|(_, m)| m.modified().ok()),
                 Some(x) if x.contains('g') || x.contains('n') => entries.sort_by(|a, b| b.1.is_dir().cmp(&a.1.is_dir()).then(a.0.to_lowercase().cmp(&b.0.to_lowercase()))),
-                _ => entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase())),
+                _ => entries.sort_by_key(|a| a.0.to_lowercase()),
             }
             if order.as_deref().map(|x| x.contains('-')).unwrap_or(false) { entries.reverse(); }
             let (mut nf, mut nb, mut nd) = (0u64, 0u64, 0u64);
@@ -1294,9 +1294,8 @@ impl Shell {
         c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::inherit() });
         c.stdout(if piped_out { Stdio::piped() } else { Stdio::inherit() });
         if s.err_to_out && piped_out { c.stderr(Stdio::piped()); }
-        else if let Some((f, a)) = &s.err {
-            if let Ok(file) = if f.eq_ignore_ascii_case("nul") { std::fs::OpenOptions::new().write(true).open("/dev/null") } else { std::fs::OpenOptions::new().create(true).write(true).append(*a).truncate(!*a).open(to_linux(&self.cwd, f)) } { c.stderr(file); }
-        }
+        else if let Some((f, a)) = &s.err
+            && let Ok(file) = if f.eq_ignore_ascii_case("nul") { std::fs::OpenOptions::new().write(true).open("/dev/null") } else { std::fs::OpenOptions::new().create(true).write(true).append(*a).truncate(!*a).open(to_linux(&self.cwd, f)) } { c.stderr(file); }
         // let Ctrl+C reach the child, not us
         unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN); }
         match c.spawn() {

@@ -3,7 +3,6 @@
 //! Recycle Bin, temporary files older than a week, crash dumps, system logs (journal), unused
 //! packages (orphans). The user's own files are removed directly, the system ones under one
 //! pkexec prompt.
-use gtk::prelude::*;
 use gtk::glib;
 use std::path::Path;
 
@@ -65,16 +64,15 @@ pub fn scan() -> Vec<Item> {
 fn clean_user(keys: &[&str]) -> String {
     let mut errs = String::new();
     let cache = glib::user_cache_dir();
-    if keys.contains(&"thumbs") { if let Ok(rd) = std::fs::read_dir(cache.join("thumbnails")) { for e in rd.flatten() { let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path())); } } }
+    if keys.contains(&"thumbs") && let Ok(rd) = std::fs::read_dir(cache.join("thumbnails")) { for e in rd.flatten() { let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path())); } }
     if keys.contains(&"trash") { let (ok, out) = run(&["gio", "trash", "--empty"]); if !ok { let t = aerode::config::home().join(".local/share/Trash"); for d in ["files", "info", "expunged"] { let _ = std::fs::remove_dir_all(t.join(d)); } let _ = out; } }
-    if keys.contains(&"temp") {
-        if let Ok(rd) = std::fs::read_dir(&cache) {
+    if keys.contains(&"temp")
+        && let Ok(rd) = std::fs::read_dir(&cache) {
             for e in rd.flatten() {
                 if e.file_name() == "thumbnails" || e.file_name() == "aerode" { continue; }
-                if mtime(&e.path()).map(|t| now() - t > 7 * 86400).unwrap_or(false) { if let Err(x) = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path())) { errs += &format!("{}: {x}\n", e.path().display()); } }
+                if mtime(&e.path()).map(|t| now() - t > 7 * 86400).unwrap_or(false) && let Err(x) = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path())) { errs += &format!("{}: {x}\n", e.path().display()); }
             }
         }
-    }
     errs
 }
 

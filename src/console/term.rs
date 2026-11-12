@@ -239,8 +239,8 @@ impl Term {
                         self.alt = Some((main, self.vt, self.cx, self.cy));
                         self.vt = 0;
                         self.ensure_lines();
-                    } else if !on {
-                        if let Some((main, vt, cx, cy)) = self.alt.take() {
+                    } else if !on
+                        && let Some((main, vt, cx, cy)) = self.alt.take() {
                             self.lines = main; self.vt = vt; self.cx = cx; self.cy = cy;
                             if *p == 1049 { self.cx = self.saved.0; self.cy = self.saved.1; }
                             // the window may have been resized meanwhile: the main screen's lines get the
@@ -251,7 +251,6 @@ impl Term {
                             if self.cy >= self.rows { self.vt += self.cy + 1 - self.rows; self.cy = self.rows - 1; }
                             self.ensure_lines();
                         }
-                    }
                     self.dirty = true;
                 }
                 _ => {}

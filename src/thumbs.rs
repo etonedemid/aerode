@@ -292,7 +292,7 @@ fn open(st: &Rc<State>, anchor: &gtk::Widget, wins: Vec<Win>) {
 
 fn layout_size(st: &State, anchor: &gtk::Widget) -> (f64, f64) {
     let n = st.wins.borrow().len().max(1) as f64;
-    let screen_w = anchor.display().monitor_at_window(&anchor.window().unwrap_or_else(|| gdk::Window::default_root_window()))
+    let screen_w = anchor.display().monitor_at_window(&anchor.window().unwrap_or_else(gdk::Window::default_root_window))
         .map(|m| m.geometry().width() as f64).unwrap_or(1920.0);
     let cell_w = THUMB_W + 2.0 * PAD;
     let thumbs_w = n * cell_w + (n + 1.0) * GAP;
@@ -430,7 +430,7 @@ fn capture_scaled(x: &X, top: u32, depth: u8, w: i32, h: i32, tw: i32, th: i32) 
     if img.data.len() < stride * th as usize { return None; }
     let mut data = img.data;
     // a 24-bit source leaves the alpha byte undefined: make it opaque
-    if depth != 32 { for px in data.chunks_exact_mut(4) { px[3] = 255; } }
+    if depth != 32 { for px in data.as_chunks_mut::<4>().0 { px[3] = 255; } }
     cairo::ImageSurface::create_for_data(data, cairo::Format::ARgb32, tw, th, stride as i32).ok()
 }
 

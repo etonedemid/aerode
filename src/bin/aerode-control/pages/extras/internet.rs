@@ -93,8 +93,8 @@ fn save(d: &gtk::Window, st: &Rc<State>) -> bool {
     let changed_proxy = p != load_proxy();
     let changed_adv = a != load_advanced();
     let changed_browser = b != *st.browser_saved.borrow();
-    if changed_browser {
-        if let Some(prof) = &st.prof {
+    if changed_browser
+        && let Some(prof) = &st.prof {
             if let Some(pid) = prof.running() {
                 message(Some(d), gtk::MessageType::Warning, "Internet Properties", &format!("Close {} to change its settings.", prof.name),
                     &format!("{} is running (process {pid}) and would overwrite the new home page and browsing settings when it closes. Close it, then click Apply again.", prof.name));
@@ -107,7 +107,6 @@ fn save(d: &gtk::Window, st: &Rc<State>) -> bool {
             }
             *st.browser_saved.borrow_mut() = b;
         }
-    }
     if changed_proxy { apply_proxy(&p); }
     if changed_adv { apply_advanced(&a); }
     // like Windows, Apply/OK say nothing when it worked
@@ -411,11 +410,10 @@ fn load_proxy() -> Proxy {
         }
         if p.manual || p.pac || p.detect { return p; }
     }
-    if let Ok(u) = std::env::var("http_proxy").or_else(|_| std::env::var("HTTP_PROXY")) {
-        if !u.is_empty() { p.manual = true; p.http = split_url(&u); }
-    }
-    if let Ok(u) = std::env::var("https_proxy").or_else(|_| std::env::var("HTTPS_PROXY")) { if !u.is_empty() { p.https = split_url(&u); } }
-    if let Ok(u) = std::env::var("all_proxy").or_else(|_| std::env::var("ALL_PROXY")) { if !u.is_empty() { p.manual = true; p.socks = split_url(&u); } }
+    if let Ok(u) = std::env::var("http_proxy").or_else(|_| std::env::var("HTTP_PROXY"))
+        && !u.is_empty() { p.manual = true; p.http = split_url(&u); }
+    if let Ok(u) = std::env::var("https_proxy").or_else(|_| std::env::var("HTTPS_PROXY")) && !u.is_empty() { p.https = split_url(&u); }
+    if let Ok(u) = std::env::var("all_proxy").or_else(|_| std::env::var("ALL_PROXY")) && !u.is_empty() { p.manual = true; p.socks = split_url(&u); }
     p.same = p.manual && p.https == p.http;
     p
 }
@@ -638,7 +636,7 @@ fn proxy_advanced(parent: &gtk::Window, p: &Proxy) -> Option<Proxy> {
     ex.pack_start(&label("Do not use proxy server for addresses beginning with:"), false, false, 0);
     let tv = gtk::TextView::new();
     tv.set_wrap_mode(gtk::WrapMode::WordChar);
-    tv.buffer().map(|b| b.set_text(&p.exceptions));
+    if let Some(b) = tv.buffer() { b.set_text(&p.exceptions) }
     ex.pack_start(&scrolled(&tv, 60), false, false, 0);
     ex.pack_start(&label("Use semicolons ( ; ) to separate entries."), false, false, 0);
     c.pack_start(&group("Exceptions", &ex), false, false, 0);
@@ -731,9 +729,8 @@ fn app_combo(ty: &str) -> (gtk::ComboBoxText, Option<String>) {
     for a in gio::AppInfo::all_for_type(ty) { if let Some(id) = a.id() { c.append(Some(&id), &a.display_name()); } }
     if let Some(d) = &def {
         // a default from mimeapps.list that the MIME cache doesn't list
-        if !c.set_active_id(Some(d)) {
-            if let Some(a) = util::app_by_id(d) { c.append(Some(d), &a.display_name()); c.set_active_id(Some(d)); }
-        }
+        if !c.set_active_id(Some(d))
+            && let Some(a) = util::app_by_id(d) { c.append(Some(d), &a.display_name()); c.set_active_id(Some(d)); }
     }
     (c, def)
 }

@@ -3,7 +3,6 @@
 //! where the session re-applies them: ~/.config/aerode/input.sh (mouse and keyboard), displays.sh
 //! (screen layout), the xsettings/Xresources written by `desktop::write_xsettings` (text size,
 //! double-click and cursor blink time) and config.json (power plans, read by the shell's watcher).
-use gtk::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -174,7 +173,7 @@ impl DlgSheet {
     fn apply(&self) -> bool {
         let f = self.on_apply.borrow().clone();
         let ok = f.map(|f| f()).unwrap_or(true);
-        if ok { if let Some(b) = &self.apply_btn { b.set_sensitive(false); } }
+        if ok && let Some(b) = &self.apply_btn { b.set_sensitive(false); }
         ok
     }
 

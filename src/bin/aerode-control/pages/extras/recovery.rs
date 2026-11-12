@@ -57,7 +57,7 @@ fn parse_timeshift(s: &str) -> Vec<Point> {
         let Some(name) = f.get(i) else { continue };
         let mut rest = &f[i + 1..];
         let mut tags = "";
-        if let Some(t) = rest.first() { if t.chars().all(|c| "OBHDWM".contains(c)) { tags = t; rest = &rest[1..]; } }
+        if let Some(t) = rest.first() && t.chars().all(|c| "OBHDWM".contains(c)) { tags = t; rest = &rest[1..]; }
         let desc = rest.join(" ");
         let time = chrono::NaiveDateTime::parse_from_str(name, "%Y-%m-%d_%H-%M-%S").ok().and_then(|n| n.and_local_timezone(chrono::Local).single());
         let manual = tags.contains('O');

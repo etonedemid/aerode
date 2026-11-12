@@ -353,7 +353,7 @@ impl StartMenu {
                 ("devices", "Devices and Printers".into(), "printer", ctrl("devices")),
                 ("defaults", "Default Programs".into(), "preferences-desktop-default-applications", ctrl("defaults")),
                 ("help", "Help and Support".into(), "help-browser", Rc::new(|| { util::open_uri("https://wiki.archlinux.org/"); })),
-                ("run", "Run...".into(), "system-run", Rc::new(|| crate::dialogs::run_dialog())),
+                ("run", "Run...".into(), "system-run", Rc::new(crate::dialogs::run_dialog)),
             ],
         ];
         for group in groups {
@@ -907,7 +907,7 @@ impl StartMenu {
         });
         let s = Rc::downgrade(self);
         b.connect_leave_notify_event(move |_, e| {
-            if e.detail() != gdk::NotifyType::Inferior { if let Some(s) = s.upgrade() { s.cancel_jump_timer(); } }
+            if e.detail() != gdk::NotifyType::Inferior && let Some(s) = s.upgrade() { s.cancel_jump_timer(); }
             glib::Propagation::Proceed
         });
         b
@@ -944,9 +944,9 @@ impl StartMenu {
                 // Calculator, Sticky Notes, Snipping Tool, Paint, …) mapped to aerode's programs
                 for s in DEFAULT_PROGRAMS {
                     if freq.len() >= n { break; }
-                    if let Some(a) = util::app_by_id(s) { if !freq.iter().any(|f| f.id() == a.id()) { freq.push(a); } }
+                    if let Some(a) = util::app_by_id(s) && !freq.iter().any(|f| f.id() == a.id()) { freq.push(a); }
                 }
-                if let Some(t) = util::terminal() { if freq.len() < n && !freq.iter().any(|f| f.id() == t.id()) { freq.push(t); } }
+                if let Some(t) = util::terminal() && freq.len() < n && !freq.iter().any(|f| f.id() == t.id()) { freq.push(t); }
                 let recent = recent_index();
                 for a in freq.iter().take(n) {
                     self.list.pack_start(&self.mfu_item(a, isz, &recent), false, false, 0);

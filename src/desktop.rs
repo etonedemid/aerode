@@ -257,12 +257,11 @@ impl Desktop {
             b.is_dir().cmp(&a.is_dir()).then(o)
         });
         for p in files {
-            if p.extension().map(|e| e == "desktop").unwrap_or(false) {
-                if let Some(a) = gio::DesktopAppInfo::from_filename(&p) {
+            if p.extension().map(|e| e == "desktop").unwrap_or(false)
+                && let Some(a) = gio::DesktopAppInfo::from_filename(&p) {
                     v.push(Item { label: a.display_name().to_string(), icon: a.icon(), icon_name: None, target: Target::Path(p), special: Some("launcher") });
                     continue;
                 }
-            }
             let gf = gio::File::for_path(&p);
             let info = gf.query_info("standard::icon,standard::display-name,standard::type", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).ok();
             v.push(Item {
@@ -643,8 +642,8 @@ impl Desktop {
                 add(&m, "Properties", Box::new(|| { util::spawn(&["aerode-control", "system"]); }));
             }
             _ => {
-                if let Target::Path(p) = &it.target {
-                    if p.starts_with(desktop_dir()) {
+                if let Target::Path(p) = &it.target
+                    && p.starts_with(desktop_dir()) {
                         m.append(&gtk::SeparatorMenuItem::new());
                         let d = Rc::downgrade(self);
                         add(&m, "Delete", Box::new(move || if let Some(d) = d.upgrade() { d.delete_selected(false) }));
@@ -653,13 +652,12 @@ impl Desktop {
                         add(&m, "Rename", Box::new(move || {
                             if let Some(n) = prompt("Rename", "New name:", &p2.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()) {
                                 // Explorer's checks: never over an existing file, extension warning, Undo
-                                if crate::explorer::ops::rename(&p2, &n, None).is_some() { if let Some(d) = d.upgrade() { d.rebuild(); } }
+                                if crate::explorer::ops::rename(&p2, &n, None).is_some() && let Some(d) = d.upgrade() { d.rebuild(); }
                             }
                         }));
                         let p3 = p.clone();
                         add(&m, "Properties", Box::new(move || { util::spawn(&["aerode-explorer", "--properties", &p3.to_string_lossy()]); }));
                     }
-                }
             }
         }
         m.show_all();

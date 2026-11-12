@@ -101,11 +101,9 @@ fn set_animations(off: bool) {
 pub fn apply_xsettings(m: &Map) {
     let size = match val(m, "cursor_size", "regular") { "large" => 48, "xl" => 64, _ => 32 };
     let theme = current_theme();
-    let keys = vec![
-        ("Gtk/CursorThemeName".to_string(), format!("\"{theme}\"")),
+    let keys = [("Gtk/CursorThemeName".to_string(), format!("\"{theme}\"")),
         ("Gtk/CursorThemeSize".to_string(), size.to_string()),
-        ("Gtk/AutoMnemonics".to_string(), if get(m, "underline") { "0".into() } else { "1".into() }),
-    ];
+        ("Gtk/AutoMnemonics".to_string(), if get(m, "underline") { "0".into() } else { "1".into() })];
     let dir = config::conf_dir();
     let live = dir.join("xsettingsd.conf");
     if let Ok(cur) = std::fs::read_to_string(&live) {

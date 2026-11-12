@@ -368,13 +368,12 @@ fn device_tab(cp: &Rc<Cp>, sinks: bool, snap: &Rc<RefCell<Snapshot>>, meters: &R
             }
             list.show_all();
             ub();
-            if let Some(want) = OPEN_PROPS.with(|o| o.borrow().clone()) {
-                if let Some(d) = rows.borrow().iter().map(|r| r.1.clone()).find(|d| d.sink == sinks && d.name == want) {
+            if let Some(want) = OPEN_PROPS.with(|o| o.borrow().clone())
+                && let Some(d) = rows.borrow().iter().map(|r| r.1.clone()).find(|d| d.sink == sinks && d.name == want) {
                     OPEN_PROPS.with(|o| *o.borrow_mut() = None);
                     let (w, cards, fw) = (win.clone(), s.cards.clone(), filler_weak.clone());
                     glib::idle_add_local_once(move || { if let Some(f) = fw.upgrade() { properties(&w, &d, &cards, &f); } });
                 }
-            }
         })
     };
     // the rows hold the Filler weakly; the fill function goes in now
@@ -528,12 +527,11 @@ fn speaker_setup(win: &gtk::Window, d: &Dev, cards: &str, f: &Rc<Filler>) {
     c.pack_start(&test, false, false, 0);
     if let Some(b) = dlg.widget_for_response(gtk::ResponseType::Ok).and_then(|b| b.downcast::<gtk::Button>().ok()) { b.set_label("Next"); }
     dlg.show_all();
-    if dlg.run() == gtk::ResponseType::Ok {
-        if let Some((m, it)) = tv.selection().selected() {
+    if dlg.run() == gtk::ResponseType::Ok
+        && let Some((m, it)) = tv.selection().selected() {
             let p = super::super::admin::sval(&m, &it, 1);
             if p != active { pactl_do(&["set-card-profile", &d.card, &p]); f.reload(); }
         }
-    }
     dlg.close();
 }
 
@@ -849,7 +847,7 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
                 app = Some(ev.app());
                 root = Some(store.insert_with_values(None, None, &[(0, &ev.app().label()), (2, &u32::MAX)]));
             }
-            let root = root.clone().unwrap();
+            let root = root.unwrap();
             let file = f(*ev);
             let shown = file.as_deref().map(|p| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default();
             let it = store.insert_with_values(Some(&root), None, &[(0, &ev.label()), (1, &shown), (2, &(i as u32))]);
@@ -909,7 +907,7 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
         if !pick.set_active_id(Some(&file)) { if file.is_empty() { pick.set_active_id(Some("")); } else { pick.append(Some(&file), &base); pick.set_active_id(Some(&file)); } }
         setting.set(false);
     }); }
-    let changed = { let (map, muted, fill, dirty, setting, sid, set_scheme) = (map.clone(), muted.clone(), fill.clone(), dirty.clone(), setting.clone(), scheme_id.clone(), set_scheme.clone()); Rc::new(move || {
+    let changed = { let (map, muted, fill, dirty, setting, sid, set_scheme) = (map.clone(), muted.clone(), fill.clone(), dirty.clone(), setting.clone(), scheme_id, set_scheme.clone()); Rc::new(move || {
         setting.set(true);
         set_scheme(&sid(&map.borrow(), muted.get()));
         setting.set(false);
@@ -957,14 +955,13 @@ fn sounds_tab(sheet: &Rc<Sheet>) -> (gtk::Box, Box<dyn Fn()>) {
         for p in ["*.wav", "*.ogg", "*.oga", "*.flac"] { ff.add_pattern(p); }
         ff.set_name(Some("Wave Files (*.wav)"));
         fc.add_filter(ff);
-        if fc.run() == gtk::ResponseType::Accept {
-            if let Some(p) = fc.filename() {
+        if fc.run() == gtk::ResponseType::Accept
+            && let Some(p) = fc.filename() {
                 let s = p.to_string_lossy().into_owned();
                 let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 pick.append(Some(&s), &name);
                 pick.set_active_id(Some(&s));
             }
-        }
     }); }
     { let d = dirty.clone(); startup.connect_toggled(move |_| d()); }
     let apply = Box::new(move || {

@@ -370,7 +370,7 @@ impl Meter {
             let mut buf = [0u8; 320];
             while let Ok(n) = out.read(&mut buf) {
                 if n == 0 { break; }
-                let m = buf[..n & !1].chunks_exact(2).map(|b| (i16::from_le_bytes([b[0], b[1]]) as i32).unsigned_abs()).max().unwrap_or(0);
+                let m = buf[..n & !1].as_chunks::<2>().0.iter().map(|b| (i16::from_le_bytes([b[0], b[1]]) as i32).unsigned_abs()).max().unwrap_or(0);
                 // keep the highest value until the UI reads it
                 p.fetch_max(m, std::sync::atomic::Ordering::Relaxed);
             }
@@ -556,7 +556,7 @@ fn build(app: &gtk::Application) {
     refresh();
     let r = refresh.clone();
     let events = util::watch_lines(&["pactl", "subscribe"], |l| l.contains(" on sink") || l.contains(" on server") || l.contains(" on card "),
-        std::time::Duration::from_millis(80), move || r());
+        std::time::Duration::from_millis(80), r);
     { let r = refresh.clone(); glib::timeout_add_seconds_local(if events { 30 } else { 2 }, move || { r(); glib::ControlFlow::Continue }); }
     {
         let w = Rc::downgrade(&m);
@@ -668,7 +668,7 @@ impl Mixer {
             // a live event sound has the level the server keeps for System Sounds
             let l = system.iter().map(|s| s.level()).max().map(|l| l.min(100));
             self.system.rel.set(l.unwrap_or(prefs.system_sounds.min(100)));
-            if let Some(l) = l { if l != prefs.system_sounds { let mut p = prefs.clone(); p.system_sounds = l; sys::save_volume_prefs(&p); } }
+            if let Some(l) = l && l != prefs.system_sounds { let mut p = prefs.clone(); p.system_sounds = l; sys::save_volume_prefs(&p); }
         }
         self.system.set_muted(prefs.system_sounds_muted);
         if system.is_empty() { self.system.meter.borrow_mut().take(); }
@@ -710,7 +710,7 @@ impl Mixer {
             if sep && prev_sep { unsafe { k.destroy(); } continue; }
             prev_sep = sep;
         }
-        if let Some(last) = self.apps_box.children().last() { if last.is::<gtk::Separator>() { unsafe { last.destroy(); } } }
+        if let Some(last) = self.apps_box.children().last() && last.is::<gtk::Separator>() { unsafe { last.destroy(); } }
         *self.info.borrow_mut() = i;
         self.relink(self.master_level());
     }
@@ -727,12 +727,11 @@ fn set_app_mute(c: &Column, system: bool, to: bool) {
 
 /// A program's icon: the one it names, else its .desktop file's, else a generic one.
 fn app_icon(s: &sys::Stream) -> Option<gtk::gdk_pixbuf::Pixbuf> {
-    if !s.icon.is_empty() { if let Some(p) = util::pixbuf(&s.icon, 32) { return Some(p); } }
+    if !s.icon.is_empty() && let Some(p) = util::pixbuf(&s.icon, 32) { return Some(p); }
     let bin = std::path::Path::new(&s.binary).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     if !bin.is_empty() {
-        if let Some(a) = util::app_by_id(&format!("{bin}.desktop")).or_else(|| util::all_apps().into_iter().find(|a| util::own_exe(a) == bin.to_lowercase())) {
-            if let Some(p) = util::gicon_pixbuf(a.icon().as_ref(), 32) { return Some(p); }
-        }
+        if let Some(a) = util::app_by_id(&format!("{bin}.desktop")).or_else(|| util::all_apps().into_iter().find(|a| util::own_exe(a) == bin.to_lowercase()))
+            && let Some(p) = util::gicon_pixbuf(a.icon().as_ref(), 32) { return Some(p); }
         if let Some(p) = util::pixbuf(&bin, 32) { return Some(p); }
     }
     util::pixbuf(util::first_icon(&["application-x-executable", "application-default-icon"]), 32)

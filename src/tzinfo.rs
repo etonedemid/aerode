@@ -39,9 +39,8 @@ pub enum Date { M(u32, u32, u32), J(u32), N(u32) }
 impl Zone {
     pub fn load(name: &str) -> Option<Zone> {
         if name.contains("..") { return None; }
-        if name == "UTC" || name == "Etc/UTC" || name.is_empty() {
-            if !zoneinfo_dir().join("UTC").exists() { return Some(Zone { rule: Some(Rule { std_off: 0, dst: None }), ..Default::default() }); }
-        }
+        if (name == "UTC" || name == "Etc/UTC" || name.is_empty())
+            && !zoneinfo_dir().join("UTC").exists() { return Some(Zone { rule: Some(Rule { std_off: 0, dst: None }), ..Default::default() }); }
         parse_tzif(&std::fs::read(zoneinfo_dir().join(name)).ok()?)
     }
 
@@ -58,7 +57,7 @@ impl Zone {
 
     /// The standard (non daylight saving) offset now: what Windows puts in "(UTC+01:00)".
     pub fn std_offset(&self, utc: i64) -> i32 {
-        if let Some(r) = &self.rule { if self.trans.last().map(|l| utc >= l.0).unwrap_or(true) { return r.std_off; } }
+        if let Some(r) = &self.rule && self.trans.last().map(|l| utc >= l.0).unwrap_or(true) { return r.std_off; }
         let (o, dst) = self.offset_at(utc);
         if !dst { return o; }
         self.trans.iter().rev().filter(|t| t.0 <= utc).filter_map(|t| self.types.get(t.1)).find(|t| !t.1).map(|t| t.0).unwrap_or(o)
@@ -145,7 +144,7 @@ pub fn parse_rule(s: &str) -> Option<Rule> {
     // [+-]hh[:mm[:ss]] → seconds
     let time = |it: &mut std::iter::Peekable<std::str::Chars>| -> Option<i32> {
         let mut sign = 1;
-        if let Some(c) = it.peek().copied() { if c == '+' || c == '-' { if c == '-' { sign = -1; } it.next(); } }
+        if let Some(c) = it.peek().copied() && (c == '+' || c == '-') { if c == '-' { sign = -1; } it.next(); }
         let mut parts = [0i32; 3];
         let mut k = 0;
         let mut any = false;

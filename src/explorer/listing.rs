@@ -80,7 +80,7 @@ pub fn kb(n: u64) -> String {
     let k = n.div_ceil(1024);
     let s = k.to_string();
     let mut o = String::new();
-    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i) % 3 == 0 { o.push(','); } o.push(c); }
+    for (i, c) in s.chars().enumerate() { if i > 0 && (s.len() - i).is_multiple_of(3) { o.push(','); } o.push(c); }
     format!("{o} KB")
 }
 
@@ -280,7 +280,7 @@ pub fn scan_dir(dir: PathBuf, opts: ScanOpts, cancel: Arc<AtomicBool>) -> async_
         let mut b = Batcher::new(tx.clone());
         for e in rd.flatten() {
             if cancel.load(Ordering::Relaxed) { return; }
-            if let Some(en) = opts.entry(&e.path(), Some(&hidden)) { if !b.push(en) { return; } }
+            if let Some(en) = opts.entry(&e.path(), Some(&hidden)) && !b.push(en) { return; }
         }
         b.flush();
         let _ = tx.send_blocking(ScanMsg::Done);
@@ -331,7 +331,7 @@ pub fn scan_paths(paths: Vec<PathBuf>, opts: ScanOpts, cancel: Arc<AtomicBool>) 
         for p in paths {
             if cancel.load(Ordering::Relaxed) { return; }
             let o = ScanOpts { show_hidden: true, ..opts };
-            if let Some(en) = o.entry(&p, None) { if !b.push(en) { return; } }
+            if let Some(en) = o.entry(&p, None) && !b.push(en) { return; }
         }
         b.flush();
         let _ = tx.send_blocking(ScanMsg::Done);
@@ -416,9 +416,8 @@ fn make_thumb(r: &ThumbReq) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let md5 = glib::compute_checksum_for_data(glib::ChecksumType::Md5, uri.as_bytes())?;
     let (flavor, px) = if r.size > 128 { ("large", 256) } else { ("normal", 128) };
     let cached = cache_dir().join(flavor).join(format!("{md5}.png"));
-    if let Ok(pb) = Pixbuf::from_file(&cached) {
-        if pb.option("tEXt::Thumb::MTime").map(|m| m.parse::<i64>().ok() == Some(r.mtime)).unwrap_or(false) { return Some(pb); }
-    }
+    if let Ok(pb) = Pixbuf::from_file(&cached)
+        && pb.option("tEXt::Thumb::MTime").map(|m| m.parse::<i64>().ok() == Some(r.mtime)).unwrap_or(false) { return Some(pb); }
     let pb = match r.kind {
         ThumbKind::Image => {
             // don't decode giant files just for an icon

@@ -260,7 +260,7 @@ pub fn props(cp: Option<&Rc<Cp>>, tab: u32) {
 }
 
 fn props_dialog(cp: Option<Rc<Cp>>, tab: u32) -> gtk::Dialog {
-    let parent = cp.as_ref().map(|c| cpwin(c));
+    let parent = cp.as_ref().map(cpwin);
     let s = DlgSheet::new(parent.as_ref(), "System Properties", true);
     let parent_of = { let d = s.d.clone(); move || -> gtk::Window { d.clone().upcast() } };
 
@@ -840,7 +840,7 @@ fn user_profiles(parent: &gtk::Window, cp: &Option<Rc<Cp>>) {
     let homes: Vec<(String, String)> = pw.lines().filter_map(|l| {
         let f: Vec<&str> = l.split(':').collect();
         let uid: u32 = f.get(2)?.parse().ok()?;
-        (uid >= 1000 && uid < 60000 && !f.get(6)?.ends_with("nologin")).then(|| (f[0].to_string(), f[5].to_string()))
+        ((1000..60000).contains(&uid) && !f.get(6)?.ends_with("nologin")).then(|| (f[0].to_string(), f[5].to_string()))
     }).collect();
     for (user, home) in homes {
         let modified = std::fs::metadata(&home).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -898,7 +898,7 @@ fn startup_recovery(parent: &gtk::Window) {
     row.pack_start(&secs, false, false, 0);
     row.pack_start(&lbl("seconds"), false, false, 0);
     st.pack_start(&row, false, false, 0);
-    let sens = loader != "";
+    let sens = !loader.is_empty();
     show_list.set_sensitive(sens);
     secs.set_sensitive(sens && show_list.is_active());
     { let s2 = secs.clone(); show_list.connect_toggled(move |c| s2.set_sensitive(c.is_active())); }
@@ -977,7 +977,7 @@ fn user_env() -> Vec<(String, String, String)> {
             out.push((k, v, name.clone()));
         }
     }
-    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out.sort_by_key(|a| a.0.to_lowercase());
     out
 }
 

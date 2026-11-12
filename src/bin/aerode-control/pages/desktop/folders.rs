@@ -166,12 +166,12 @@ pub fn page_folderoptions(cp: &Rc<Cp>) -> gtk::Widget {
             for (kind, label, key) in ADVANCED {
                 let (on, parent) = match *kind {
                     "folder" => { sub = None; (false, None) }
-                    "sub" => { (false, top.clone()) }
+                    "sub" => { (false, top) }
                     "radio" => {
                         let (k, v) = key.split_once('=').unwrap_or((key, "1"));
-                        (get(o, k) == (v == "1"), sub.clone().or(top.clone()))
+                        (get(o, k) == (v == "1"), sub.or(top))
                     }
-                    _ => { sub = None; (get(o, key), top.clone()) }
+                    _ => { sub = None; (get(o, key), top) }
                 };
                 let icon = match *kind { "folder" | "sub" => util::pixbuf("folder", 16), _ => None };
                 let it = store.insert_with_values(parent.as_ref(), None, &[(0, label), (1, kind), (2, key), (3, &on), (4, &(*kind == "check" || *kind == "radio")), (5, &(*kind == "radio")), (6, &icon), (7, &icon.is_some())]);
@@ -214,15 +214,14 @@ pub fn page_folderoptions(cp: &Rc<Cp>) -> gtk::Widget {
                     let (k, v) = key.split_once('=').unwrap_or((&key, "1"));
                     set(&mut o.borrow_mut(), k, v == "1");
                     // siblings of the same key follow
-                    if let Some(parent) = store.iter_parent(&it) {
-                        if let Some(ch) = store.iter_children(Some(&parent)) {
+                    if let Some(parent) = store.iter_parent(&it)
+                        && let Some(ch) = store.iter_children(Some(&parent)) {
                             loop {
                                 let ck: String = store.value(&ch, 2).get().unwrap_or_default();
                                 if ck.split_once('=').map(|x| x.0) == Some(k) { store.set_value(&ch, 3, &(ck == key).to_value()); }
                                 if !store.iter_next(&ch) { break; }
                             }
                         }
-                    }
                 }
                 _ => return,
             }

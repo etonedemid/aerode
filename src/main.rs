@@ -17,7 +17,7 @@ struct Shell {
     start: Rc<startmenu::StartMenu>,
 }
 
-thread_local! { static SHELL: RefCell<Option<Shell>> = RefCell::new(None); }
+thread_local! { static SHELL: RefCell<Option<Shell>> = const { RefCell::new(None) }; }
 
 fn build(app: &gtk::Application) {
     if SHELL.with(|s| s.borrow().is_some()) { return; }
@@ -80,7 +80,7 @@ fn autostart() {
             let exe = a.executable().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
             if matches!(exe.as_str(), "picom" | "compton" | "xcompmgr" | "compiz") { continue; }
             if a.is_hidden() || !a.shows_in(Some("Aerode")) { continue; }
-            if a.boolean("X-GNOME-Autostart-enabled") == false && a.has_key("X-GNOME-Autostart-enabled") { continue; }
+            if !a.boolean("X-GNOME-Autostart-enabled") && a.has_key("X-GNOME-Autostart-enabled") { continue; }
             let _ = a.launch(&[], None::<&gio::AppLaunchContext>);
         }
     }
@@ -213,9 +213,9 @@ fn main() -> glib::ExitCode {
         let a: Vec<String> = cl.arguments().iter().map(|s| s.to_string_lossy().into_owned()).collect();
         let r = command(app, &a);
         if SHELL.with(|s| s.borrow().is_some()) { std::mem::forget(app.hold()); }
-        r.into()
+        r
     });
-    app.connect_activate(|app| build(app));
+    app.connect_activate(build);
     app.run_with_args(&args)
 }
 

@@ -492,10 +492,9 @@ fn set_presenting(on: bool) -> Pres {
         util::spawn(&["xset", "-dpms"]);
         if p.set_volume { sys::set_volume(p.volume); }
         // stay awake: no automatic sleep or idle actions until presenting stops
-        if util::which("systemd-inhibit") {
-            if let Ok(c) = std::process::Command::new("systemd-inhibit").args(["--what=idle:sleep", "--who=Windows Mobility Center", "--why=Giving a presentation", "--mode=block", "sleep", "infinity"])
+        if util::which("systemd-inhibit")
+            && let Ok(c) = std::process::Command::new("systemd-inhibit").args(["--what=idle:sleep", "--who=Windows Mobility Center", "--why=Giving a presentation", "--mode=block", "sleep", "infinity"])
                 .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() { p.inhibit_pid = c.id(); }
-        }
         if !p.background.is_empty() {
             p.saved_wallpaper = Some(config::get().wallpaper.clone().unwrap_or_default());
             let bg = p.background.clone();

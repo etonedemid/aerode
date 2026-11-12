@@ -881,7 +881,7 @@ impl Explorer {
             ],
             Some(Loc::Computer) => {
                 let mut v = vec![("Local Disk (/)".to_string(), Loc::Path(PathBuf::from("/")), util::first_icon(&["drive-harddisk-system", "drive-harddisk"]))];
-                for m in self.vm.mounts() { if let Some(p) = m.root().path() { if p != Path::new("/") { v.push((m.name().to_string(), Loc::Path(p), "drive-removable-media")); } } }
+                for m in self.vm.mounts() { if let Some(p) = m.root().path() && p != Path::new("/") { v.push((m.name().to_string(), Loc::Path(p), "drive-removable-media")); } }
                 v
             }
             Some(Loc::Libraries) => ["Documents", "Music", "Pictures", "Videos"].iter().map(|n| (n.to_string(), Loc::Library(n), Loc::Library(n).icon())).collect(),
@@ -948,11 +948,10 @@ impl Explorer {
             if !collapsed.is_empty() { m.append(&gtk::SeparatorMenuItem::new()); }
             for (name, l, icon) in e.crumb_children(of.as_ref()) {
                 let it = menu_item_icon(&name, icon);
-                if current.as_ref() == Some(&l) {
-                    if let Some(lb) = it.child().and_then(|c| c.downcast::<gtk::Box>().ok()).and_then(|b| b.children().last().cloned()).and_then(|w| w.downcast::<gtk::Label>().ok()) {
+                if current.as_ref() == Some(&l)
+                    && let Some(lb) = it.child().and_then(|c| c.downcast::<gtk::Box>().ok()).and_then(|b| b.children().last().cloned()).and_then(|w| w.downcast::<gtk::Label>().ok()) {
                         lb.set_markup(&format!("<b>{}</b>", glib::markup_escape_text(&name)));
                     }
-                }
                 let (e2, l2) = (e.clone(), l.clone());
                 it.connect_activate(move |_| e2.go(l2.clone(), true));
                 m.append(&it);
@@ -1086,7 +1085,7 @@ impl Explorer {
         let vals = self.row_values(&e, size);
         let refs: Vec<(u32, &dyn ToValue)> = vals.iter().map(|(c, v)| (*c, v as &dyn ToValue)).collect();
         let store = self.store();
-        let existing = self.rows.borrow().get(&e.path).map(|r| r.it.clone());
+        let existing = self.rows.borrow().get(&e.path).map(|r| r.it);
         self.unsorted.set(true);
         match existing {
             Some(it) => {
@@ -1095,7 +1094,7 @@ impl Explorer {
                 let same = self.rows.borrow().get(&e.path).map(|r| r.e.same_look(&e)).unwrap_or(false);
                 let editing = self.renaming.borrow().as_ref().map(|(p, _)| p == &e.path).unwrap_or(false);
                 if !same && !editing { store.set(&it, &refs); }
-                if !editing { if let Some(r) = self.rows.borrow_mut().get_mut(&e.path) { r.e = e; } }
+                if !editing && let Some(r) = self.rows.borrow_mut().get_mut(&e.path) { r.e = e; }
             }
             None => {
                 let it = store.insert_with_values(None, &refs);
@@ -1357,7 +1356,7 @@ impl Explorer {
         self.resort();
         let want: Vec<PathBuf> = self.select_after.borrow().clone();
         if !want.is_empty() && self.attached.get() {
-            let found: Vec<gtk::TreeIter> = { let rows = self.rows.borrow(); want.iter().filter_map(|p| rows.get(p).map(|r| r.it.clone())).collect() };
+            let found: Vec<gtk::TreeIter> = { let rows = self.rows.borrow(); want.iter().filter_map(|p| rows.get(p).map(|r| r.it)).collect() };
             if !found.is_empty() {
                 { let rows = self.rows.borrow(); self.select_after.borrow_mut().retain(|p| !rows.contains_key(p)); }
                 self.unselect_all();
@@ -1371,7 +1370,7 @@ impl Explorer {
         }
         let ren = self.rename_after.borrow().clone();
         if let (Some(p), true) = (ren, self.attached.get()) {
-            let it = self.rows.borrow().get(&p).map(|r| r.it.clone());
+            let it = self.rows.borrow().get(&p).map(|r| r.it);
             if let Some(it) = it {
                 *self.rename_after.borrow_mut() = None;
                 let Some(tp) = self.store().path(&it) else { return };
@@ -1513,7 +1512,7 @@ impl Explorer {
         for f in &flows {
             let others: Vec<gtk::FlowBox> = flows.iter().filter(|x| *x != f).cloned().collect();
             f.connect_selected_children_changed(move |f| { if !f.selected_children().is_empty() { for o in &others { o.unselect_all(); } } });
-            f.connect_child_activated(|_, c| { if let Some(w) = c.child() { if let Ok(b) = w.downcast::<gtk::EventBox>() { b.activate(); open_drive_child(&b); } } });
+            f.connect_child_activated(|_, c| { if let Some(w) = c.child() && let Ok(b) = w.downcast::<gtk::EventBox>() { b.activate(); open_drive_child(&b); } });
         }
         self.computer.show_all();
         self.info_icon.set_from_pixbuf(util::pixbuf("computer", 48).as_ref());
@@ -1589,9 +1588,8 @@ impl Explorer {
             let (path, mnt, vol) = (path.clone(), mnt.clone(), vol.clone());
             ev.connect_button_press_event(move |w, ev| {
                 if ev.button() == 3 {
-                    if let Some(c) = w.parent().and_then(|p| p.downcast::<gtk::FlowBoxChild>().ok()) {
-                        if let Some(f) = c.parent().and_then(|p| p.downcast::<gtk::FlowBox>().ok()) { f.select_child(&c); }
-                    }
+                    if let Some(c) = w.parent().and_then(|p| p.downcast::<gtk::FlowBoxChild>().ok())
+                        && let Some(f) = c.parent().and_then(|p| p.downcast::<gtk::FlowBox>().ok()) { f.select_child(&c); }
                     let m = gtk::Menu::new();
                     let o = gtk::MenuItem::with_mnemonic("_Open");
                     let op = open.clone();
@@ -1624,7 +1622,7 @@ impl Explorer {
                         m.append(&gtk::SeparatorMenuItem::new());
                         let it = gtk::MenuItem::with_mnemonic("P_roperties");
                         let w = e.win.clone();
-                        it.connect_activate(move |_| props::show(&[p.clone()], Some(w.upcast_ref())));
+                        it.connect_activate(move |_| props::show(std::slice::from_ref(&p), Some(w.upcast_ref())));
                         m.append(&it);
                     }
                     m.show_all();
@@ -1890,12 +1888,10 @@ impl Explorer {
             } else if let Some(p) = &path {
                 self.add_info_row(0, 0, "Date modified:", &get_s(it, C_DATE));
                 if !isdir { self.add_info_row(1, 0, "Size:", &util::human_size(store.value(it, C_SIZEN as i32).get::<u64>().unwrap_or(0))); }
-                if let Ok(m) = std::fs::metadata(p) {
-                    if let Ok(t) = m.created() { self.add_info_row(if isdir { 1 } else { 2 }, 0, "Date created:", &chrono::DateTime::<chrono::Local>::from(t).format("%-m/%-d/%Y %-I:%M %p").to_string()); }
-                }
-                if ct.starts_with("image/") {
-                    if let Some((_, w, h)) = Pixbuf::file_info(p) { self.add_info_row(0, 1, "Dimensions:", &format!("{w} x {h}")); }
-                }
+                if let Ok(m) = std::fs::metadata(p)
+                    && let Ok(t) = m.created() { self.add_info_row(if isdir { 1 } else { 2 }, 0, "Date created:", &chrono::DateTime::<chrono::Local>::from(t).format("%-m/%-d/%Y %-I:%M %p").to_string()); }
+                if ct.starts_with("image/")
+                    && let Some((_, w, h)) = Pixbuf::file_info(p) { self.add_info_row(0, 1, "Dimensions:", &format!("{w} x {h}")); }
                 if matches!(loc, Loc::Search(..)) { self.add_info_row(1, 1, "Folder:", &get_s(it, C_ORIG)); }
             }
             self.update_preview(path.as_deref().map(|p| (p, ct.as_str(), isdir)));
@@ -1942,7 +1938,7 @@ impl Explorer {
             let mut buf = vec![0u8; 64 * 1024];
             let n = std::fs::File::open(p).and_then(|mut f| { use std::io::Read; f.read(&mut buf) }).unwrap_or(0);
             buf.truncate(n);
-            self.preview_text.buffer().map(|b| b.set_text(&String::from_utf8_lossy(&buf)));
+            if let Some(b) = self.preview_text.buffer() { b.set_text(&String::from_utf8_lossy(&buf)) }
             self.preview_sw.show_all();
             self.preview_msg.hide();
             return;
@@ -2014,7 +2010,7 @@ impl Explorer {
         let imgs: Vec<PathBuf> = {
             let store = self.store();
             let mut v = vec![];
-            if let Some(it) = store.iter_first() { loop { let ct: String = store.value(&it, C_CT as i32).get().unwrap_or_default(); if ct.starts_with("image/") { if let Some(p) = path_of_uri(&store.value(&it, C_URI as i32).get::<String>().unwrap_or_default()) { v.push(p); } } if !store.iter_next(&it) { break; } } }
+            if let Some(it) = store.iter_first() { loop { let ct: String = store.value(&it, C_CT as i32).get().unwrap_or_default(); if ct.starts_with("image/") && let Some(p) = path_of_uri(&store.value(&it, C_URI as i32).get::<String>().unwrap_or_default()) { v.push(p); } if !store.iter_next(&it) { break; } } }
             v
         };
         if let Some(first) = self.selected().into_iter().find(|p| imgs.contains(p)).or_else(|| imgs.first().cloned()) { self.open_file(&first); }
@@ -2094,9 +2090,8 @@ impl Explorer {
 
     /// Put a just-created item in the view right away (the file monitor would be later) and select it.
     fn show_new_item(self: &Rc<Self>, p: &Path, rename: bool) {
-        if p.parent() == self.cur_dir().as_deref() {
-            if let Some(mut en) = listing::stat_entry(p, None) { en.render(self.opts.borrow().hide_ext); self.upsert(en); }
-        }
+        if p.parent() == self.cur_dir().as_deref()
+            && let Some(mut en) = listing::stat_entry(p, None) { en.render(self.opts.borrow().hide_ext); self.upsert(en); }
         if rename { *self.rename_after.borrow_mut() = Some(p.to_path_buf()); } else { self.select_after.borrow_mut().push(p.to_path_buf()); }
         self.after_batch();
     }
@@ -2299,7 +2294,7 @@ impl Explorer {
                         let d2 = d.clone();
                         Self::add_item(&m, "Open command _window here", move || open_terminal(&d2));
                         let w = win.clone();
-                        Self::add_item(&m, "P_roperties", move || props::show(&[d.clone()], Some(w.upcast_ref())));
+                        Self::add_item(&m, "P_roperties", move || props::show(std::slice::from_ref(&d), Some(w.upcast_ref())));
                     }
                 }
             }
@@ -2387,13 +2382,12 @@ impl Explorer {
             }
             { let e = self.clone(); Self::add_item(&m, "_Delete", move || e.delete(false)); }
             { let e = self.clone(); Self::add_item(&m, "Rena_me", move || e.rename()).set_sensitive(one); }
-            if one && first.is_symlink() {
-                if let Ok(t) = std::fs::read_link(&first) {
+            if one && first.is_symlink()
+                && let Ok(t) = std::fs::read_link(&first) {
                     let t = if t.is_absolute() { t } else { first.parent().map(|p| p.join(&t)).unwrap_or(t) };
                     let e = self.clone();
                     Self::add_item(&m, "Open _file location", move || { if let Some(par) = t.parent() { e.select_after.borrow_mut().push(t.clone()); e.go(Loc::Path(par.to_path_buf()), true); } });
                 }
-            }
             if matches!(loc, Loc::Search(..) | Loc::Recent) {
                 let e = self.clone();
                 let p = first.clone();
@@ -2436,7 +2430,7 @@ impl Explorer {
         let n = store.iter_n_children(None);
         if n == 0 { return; }
         // repeating one letter cycles through the items starting with it
-        let same = prefix.chars().all(|x| Some(x) == prefix.chars().next());
+        let same = prefix.chars().all(|x| prefix.starts_with(x));
         let key = if same { prefix.chars().next().map(|x| x.to_string()).unwrap_or_default() } else { prefix.clone() };
         let cur = self.selected_tree_paths().first().and_then(|p| p.indices().first().copied()).unwrap_or(-1);
         let start = if same && prefix.chars().count() > 1 || (same && cur >= 0 && self.name_at(&store, cur).starts_with(&key)) { cur + 1 } else { cur.max(0) };
@@ -2505,15 +2499,13 @@ impl Explorer {
         let store = self.store();
         let hit = if *w == self.icons.area.clone().upcast::<gtk::Widget>() { self.icons.path_at_pos(x, y) }
             else if let Some(tv) = w.downcast_ref::<gtk::TreeView>() { tv.dest_row_at_pos(x, y).and_then(|(p, _)| p) } else { None };
-        if let Some(tp) = hit {
-            if let Some(it) = store.iter(&tp) {
+        if let Some(tp) = hit
+            && let Some(it) = store.iter(&tp) {
                 let isdir: bool = store.value(&it, C_ISDIR as i32).get().unwrap_or(false);
-                if let Some(p) = path_of_uri(&store.value(&it, C_URI as i32).get::<String>().unwrap_or_default()) {
-                    if isdir { return (Some(p), Some(tp)); }
-                }
+                if let Some(p) = path_of_uri(&store.value(&it, C_URI as i32).get::<String>().unwrap_or_default())
+                    && isdir { return (Some(p), Some(tp)); }
                 if let Some(n) = store.value(&it, C_URI as i32).get::<String>().unwrap_or_default().strip_prefix("library:") { return (Some(library_dir(n)), Some(tp)); }
             }
-        }
         (self.cur_dir(), None)
     }
 
@@ -2821,8 +2813,8 @@ impl Explorer {
                 if ev.button() == 8 { e.go_back(); return glib::Propagation::Stop; }
                 if ev.button() == 9 { e.go_fwd(); return glib::Propagation::Stop; }
                 // a click on empty space in the list clears the selection (TreeView keeps it otherwise)
-                if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                    if let Some(tv) = w.downcast_ref::<gtk::TreeView>() {
+                if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress
+                    && let Some(tv) = w.downcast_ref::<gtk::TreeView>() {
                         let (x, y) = ev.position();
                         let mods = ev.state().intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK);
                         match tv.path_at_pos(x as i32, y as i32) {
@@ -2840,7 +2832,6 @@ impl Explorer {
                             }
                         }
                     }
-                }
                 glib::Propagation::Proceed
             });
             // Ctrl+wheel changes the view, like Windows
@@ -2936,8 +2927,8 @@ impl Explorer {
                     k if (k == K::minus || k == K::KP_Subtract) && ctrl => e.step_view(1),
                     _ => {
                         // type-to-select (or type into the search box, Folder Options)
-                        if !ctrl && !alt {
-                            if let Some(c) = k.to_unicode().filter(|c| !c.is_control() && (*c != ' ' || !e.typeahead.borrow().0.is_empty())) {
+                        if !ctrl && !alt
+                            && let Some(c) = k.to_unicode().filter(|c| !c.is_control() && (*c != ' ' || !e.typeahead.borrow().0.is_empty())) {
                                 if e.opts.borrow().type_to_search {
                                     e.search.grab_focus();
                                     let pos = e.search.text().chars().count() as i32;
@@ -2947,7 +2938,6 @@ impl Explorer {
                                 } else { e.typeahead(c); }
                                 return glib::Propagation::Stop;
                             }
-                        }
                         return glib::Propagation::Proceed;
                     }
                 }
@@ -2988,7 +2978,7 @@ impl Explorer {
             let e = self.clone();
             scale.connect_value_changed(move |s| {
                 let i = s.value().round() as usize;
-                if let Some(v) = View::ALL.get(i) { if *v != e.view.get() { e.set_view(*v); } }
+                if let Some(v) = View::ALL.get(i) && *v != e.view.get() { e.set_view(*v); }
             });
         }
         h.pack_start(&scale, false, false, 0);
@@ -3129,7 +3119,7 @@ fn recent_folders() -> Vec<PathBuf> {
     let mut items: Vec<(i64, PathBuf)> = rm.items().iter().filter_map(|i| {
         let p = gio::File::for_uri(&i.uri()?).path()?;
         let d = if i.mime_type().map(|m| m == "inode/directory").unwrap_or(false) { p } else { p.parent()?.to_path_buf() };
-        Some((i.modified() as i64, d))
+        Some((i.modified(), d))
     }).collect();
     items.sort_by(|a, b| b.0.cmp(&a.0));
     let mut seen = HashSet::new();
@@ -3201,15 +3191,14 @@ fn choose_program(p: &Path, w: &impl IsA<gtk::Window>) {
     always.set_active(true);
     d.content_area().pack_end(&always, false, false, 6);
     always.show();
-    if d.run() == gtk::ResponseType::Ok {
-        if let Some(a) = d.app_info() {
+    if d.run() == gtk::ResponseType::Ok
+        && let Some(a) = d.app_info() {
             if always.is_active() {
                 let ct = gio::content_type_guess(Some(p), &[]).0.to_string();
                 let _ = a.set_as_default_for_type(&ct);
             }
             launch_with(&a, p);
         }
-    }
     d.close();
 }
 
@@ -3226,9 +3215,8 @@ fn is_runnable(p: &Path) -> bool {
 /// Open a file like Windows: shortcuts (.desktop) launch, programs run, documents open in their
 /// program; unknown types get the "Open with" dialog.
 pub fn open_file(p: &Path, parent: Option<&gtk::Window>) {
-    if p.extension().map(|e| e == "desktop").unwrap_or(false) {
-        if let Some(a) = gio::DesktopAppInfo::from_filename(p) { util::launch(a.upcast_ref()); return; }
-    }
+    if p.extension().map(|e| e == "desktop").unwrap_or(false)
+        && let Some(a) = gio::DesktopAppInfo::from_filename(p) { util::launch(a.upcast_ref()); return; }
     if is_runnable(p) {
         let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_default();
         match std::process::Command::new(p).current_dir(dir).stdin(std::process::Stdio::null()).spawn() {

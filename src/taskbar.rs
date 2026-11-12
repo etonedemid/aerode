@@ -61,11 +61,10 @@ struct Orb {
 
 /// Key used to match an app to WM_CLASS.
 pub fn app_key(app: &gio::AppInfo) -> String {
-    if let Some(d) = app.downcast_ref::<gio::DesktopAppInfo>() {
-        if let Some(c) = d.startup_wm_class() {
+    if let Some(d) = app.downcast_ref::<gio::DesktopAppInfo>()
+        && let Some(c) = d.startup_wm_class() {
             return c.to_lowercase();
         }
-    }
     let exe = util::own_exe(app);
     if !exe.is_empty() && exe != "env" && exe != "flatpak" && exe != "sh" {
         return exe;
@@ -75,11 +74,10 @@ pub fn app_key(app: &gio::AppInfo) -> String {
 
 fn client_keys(c: &Client) -> Vec<String> {
     let mut v = vec![c.class.to_lowercase(), c.instance.to_lowercase()];
-    if let Ok(exe) = std::fs::read_link(format!("/proc/{}/exe", c.pid)) {
-        if let Some(n) = exe.file_name() {
+    if let Ok(exe) = std::fs::read_link(format!("/proc/{}/exe", c.pid))
+        && let Some(n) = exe.file_name() {
             v.push(n.to_string_lossy().to_lowercase());
         }
-    }
     v.retain(|s| !s.is_empty());
     v
 }
@@ -850,14 +848,13 @@ fn paint_task_button(cr: &cairo::Context, v: &BtnVis, w: f64, h: f64) {
     let base = if flashing { Some(7) } else if active { Some(4) } else if running { Some(1) } else { None };
     let pressed = v.pressed.get() && v.hover.get();
     let hot = if pressed { 1.0 } else { v.fade.get() };
-    if let Some(s) = base {
-        if hot < 1.0 || flashing {
+    if let Some(s) = base
+        && (hot < 1.0 || flashing) {
             cr.push_group();
             shellstyle::paint(cr, "TaskBand2", 5, s, 0.0, 0.0, fw, h);
             cr.pop_group_to_source().ok();
             cr.paint_with_alpha(if flashing { 1.0 } else { 1.0 - hot }).ok();
         }
-    }
     if hot > 0.0 {
         let st = match (active, pressed) { (true, true) => 6, (true, false) => 5, (false, true) => 3, (false, false) => 2 };
         cr.push_group();

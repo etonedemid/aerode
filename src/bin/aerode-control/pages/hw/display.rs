@@ -170,7 +170,7 @@ fn custom_dpi(parent: &gtk::Window, cur: u32) -> Option<u32> {
         u();
     }; let d2 = drag.clone(); ruler.connect_button_press_event(move |_, e| { d2(e.position().0); glib::Propagation::Stop }); ruler.connect_motion_notify_event(move |_, e| { drag(e.position().0); glib::Propagation::Stop }); }
     { let (p, u) = (cur_pct.clone(), upd.clone()); pct.connect_changed(move |c| {
-        if let Some(t) = c.active_text() { if let Ok(v) = t.trim().trim_end_matches('%').parse::<u32>() { if (100..=500).contains(&v) { p.set(v); u(); } } }
+        if let Some(t) = c.active_text() && let Ok(v) = t.trim().trim_end_matches('%').parse::<u32>() && (100..=500).contains(&v) { p.set(v); u(); }
     }); }
     let f = gtk::Frame::new(None);
     f.add(&ruler);
@@ -229,7 +229,7 @@ fn parse(text: &str) -> Vec<Out> {
     let mut edid: Option<String> = None;
     for l in text.lines() {
         if !l.starts_with(char::is_whitespace) {
-            if let (Some(o), Some(e)) = (outs.last_mut(), edid.take()) { if let Some(n) = edid_name(&e) { o.monitor = n; } }
+            if let (Some(o), Some(e)) = (outs.last_mut(), edid.take()) && let Some(n) = edid_name(&e) { o.monitor = n; }
             connected = l.contains(" connected");
             if !connected { continue; }
             let w: Vec<&str> = l.split_whitespace().collect();
@@ -247,7 +247,7 @@ fn parse(text: &str) -> Vec<Out> {
         } else if let Some(e) = edid.as_mut().filter(|_| l.starts_with("\t\t") && l.trim().chars().all(|c| c.is_ascii_hexdigit())) {
             e.push_str(l.trim());
         } else if l.starts_with("   ") && !l.starts_with("\t") {
-            if let Some(e) = edid.take() { if let (Some(o), Some(n)) = (outs.last_mut(), edid_name(&e)) { o.monitor = n; } }
+            if let Some(e) = edid.take() && let (Some(o), Some(n)) = (outs.last_mut(), edid_name(&e)) { o.monitor = n; }
             let Some(o) = outs.last_mut() else { continue };
             let mut it = l.split_whitespace();
             let Some(name) = it.next() else { continue };
@@ -271,7 +271,7 @@ fn parse(text: &str) -> Vec<Out> {
             }
         }
     }
-    if let (Some(o), Some(e)) = (outs.last_mut(), edid.take()) { if let Some(n) = edid_name(&e) { o.monitor = n; } }
+    if let (Some(o), Some(e)) = (outs.last_mut(), edid.take()) && let Some(n) = edid_name(&e) { o.monitor = n; }
     for o in outs.iter_mut() { if o.preferred.is_empty() { o.preferred = o.modes.first().map(|m| m.name.clone()).unwrap_or_default(); } }
     outs
 }
@@ -730,7 +730,7 @@ impl ResUi {
             let (bw, bh) = rect_size(o, base);
             let mut geo = (base.x, base.y, bw, bh);
             for m in 0..display.n_monitors() {
-                if let Some(mon) = display.monitor(m) { if mon.model().map(|s| s == o.name).unwrap_or(false) { let g = mon.geometry(); geo = (g.x(), g.y(), g.width(), g.height()); } }
+                if let Some(mon) = display.monitor(m) && mon.model().map(|s| s == o.name).unwrap_or(false) { let g = mon.geometry(); geo = (g.x(), g.y(), g.width(), g.height()); }
             }
             let win = gtk::Window::new(gtk::WindowType::Popup);
             win.set_app_paintable(true);
