@@ -22,6 +22,9 @@ use crate::{config, glass, sounds, util};
 use listing::{fmt_date, Entry, ScanMsg};
 pub use nav::library_dir;
 
+/// A removable drive entry in the Computer view: name, path, volume, mount, icon.
+type RemovableEntry = (String, Option<PathBuf>, Option<gio::Volume>, Option<gio::Mount>, String);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Loc {
     Path(PathBuf),
@@ -1465,7 +1468,7 @@ impl Explorer {
         self.stack.set_visible_child_name("computer");
         for c in self.computer.children() { self.computer.remove(&c); }
         let mut disks: Vec<(String, PathBuf, &str)> = vec![("Local Disk (/)".into(), PathBuf::from("/"), util::first_icon(&["drive-harddisk-system", "drive-harddisk"]))];
-        let mut removable: Vec<(String, Option<PathBuf>, Option<gio::Volume>, Option<gio::Mount>, String)> = vec![];
+        let mut removable: Vec<RemovableEntry> = vec![];
         let hide_empty = self.opts.borrow().hide_empty_drives;
         for m in self.vm.mounts() {
             let Some(p) = m.root().path() else { continue };
@@ -3121,7 +3124,7 @@ fn recent_folders() -> Vec<PathBuf> {
         let d = if i.mime_type().map(|m| m == "inode/directory").unwrap_or(false) { p } else { p.parent()?.to_path_buf() };
         Some((i.modified(), d))
     }).collect();
-    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.sort_by_key(|a| std::cmp::Reverse(a.0));
     let mut seen = HashSet::new();
     items.into_iter().map(|(_, d)| d).filter(|d| d.is_dir() && seen.insert(d.clone())).take(40).collect()
 }
@@ -3273,7 +3276,7 @@ fn shortcut_overlay(base: &Pixbuf, size: i32) -> Pixbuf {
     if let Ok(cr) = gtk::cairo::Context::new(&surf) {
         cr.set_source_pixbuf(base, ((size - base.width()) / 2) as f64, ((size - base.height()) / 2) as f64);
         cr.paint().ok();
-        let s = (size as f64 * 0.42).max(9.0).min(48.0);
+        let s = (size as f64 * 0.42).clamp(9.0, 48.0);
         let (x, y) = (0.5, size as f64 - s - 0.5);
         cr.rectangle(x, y, s, s);
         cr.set_source_rgb(1.0, 1.0, 1.0);
