@@ -188,7 +188,7 @@ impl Note {
 
 /// D-Bus thread → GTK.
 enum Msg {
-    Notify(Note),
+    Notify(Box<Note>),
     Close(u32),
 }
 
@@ -406,7 +406,7 @@ impl Server {
                     actions: Vec<String>, hints: HashMap<String, OwnedValue>, expire_timeout: i32) -> u32 {
         let id = if replaces_id != 0 { replaces_id } else { self.alloc() };
         let note = Note::from_dbus(id, app_name, app_icon, summary, body, actions, hints, expire_timeout);
-        let _ = self.tx.send(Msg::Notify(note)).await;
+        let _ = self.tx.send(Msg::Notify(Box::new(note))).await;
         id
     }
 
@@ -810,7 +810,7 @@ pub fn start(tray: &gtk::Box, wm: Rc<crate::x11::Wm>) {
     glib::MainContext::default().spawn_local(async move {
         while let Ok(m) = rx.recv().await {
             match m {
-                Msg::Notify(n) => d.notify(n),
+                Msg::Notify(n) => d.notify(*n),
                 Msg::Close(id) => d.close_by_call(id),
             }
         }
