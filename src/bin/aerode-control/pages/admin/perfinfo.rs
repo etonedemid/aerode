@@ -11,6 +11,8 @@ use super::super::super::{kv_grid, link, section, text, title, Cp};
 use super::*;
 use aerode::config::{self, Wei};
 
+type Tool<'a> = (&'a [&'a str], &'a str, Box<dyn Fn() + 'a>);
+
 fn clamp(s: f64) -> f64 { (s.clamp(1.0, 7.9) * 10.0).floor() / 10.0 }
 
 /// Floating-point work on every logical CPU for ~1.5 s → million operations per second.
@@ -380,7 +382,7 @@ fn advanced(cp: &Rc<Cp>, holder: &gtk::Box) {
     let v = vbox(8);
     v.pack_start(&title("Advanced Tools"), false, false, 0);
     v.pack_start(&text("Use these tools to get additional performance information."), false, false, 0);
-    let tools: Vec<(&[&str], &str, Box<dyn Fn()>)> = vec![
+    let tools: Vec<Tool<'_>> = vec![
         (&["aerode-eventvwr", "utilities-system-monitor"], "View performance details in Event log", Box::new(|| spawn_tool("eventvwr"))),
         (&["utilities-system-monitor-perf", "utilities-system-monitor"], "Open Performance Monitor", Box::new(|| { util::spawn(&["aerode-taskmgr"]); })),
         (&["utilities-system-monitor"], "Open Resource Monitor", Box::new(|| { util::spawn(&["aerode-taskmgr"]); })),
