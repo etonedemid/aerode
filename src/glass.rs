@@ -20,6 +20,8 @@ use std::rc::Rc;
 use crate::dwmcolor::{Colorization, ShaderConsts, ThemeGlass};
 use crate::{config, util};
 
+type BlurFits = Vec<(ShaderConsts, ([f64; 3], f64))>;
+
 pub struct Wallpaper {
     pub sharp: Pixbuf,
     pub blurred: Pixbuf,
@@ -403,7 +405,7 @@ thread_local! {
     /// the wallpaper blurred the way Win7 blurs glass backdrops (no compositor: fake glass)
     static BACKDROP: RefCell<Option<Rc<Backdrop>>> = const { RefCell::new(None) };
     /// picom_fit results per state, for the current wallpaper
-    static FITS: RefCell<Vec<(ShaderConsts, ([f64; 3], f64))>> = const { RefCell::new(Vec::new()) };
+    static FITS: RefCell<BlurFits> = const { RefCell::new(Vec::new()) };
 }
 
 /// The theme's glass constants (opacity and reflection per window state).
