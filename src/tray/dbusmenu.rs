@@ -8,6 +8,9 @@ use zbus::zvariant::{OwnedValue, Value};
 
 use super::sni::{conn, debug, str_of, unvariant};
 
+// GetLayout reply body: revision, then the node (id, properties, raw children).
+type LayoutBody = (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>));
+
 const IFACE: &str = "com.canonical.dbusmenu";
 
 struct Node {
@@ -52,7 +55,7 @@ fn node(v: &Value) -> Option<Node> {
 async fn layout(conn: &zbus::Connection, dest: &str, path: &str, parent: i32) -> Option<Node> {
     let m = conn.call_method(Some(dest), path, Some(IFACE), "GetLayout", &(parent, -1i32, Vec::<String>::new())).await
         .map_err(|e| debug(&format!("GetLayout: {e}"))).ok()?;
-    let (_rev, (id, props, children)): (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)) =
+    let (_rev, (id, props, children)): LayoutBody =
         m.body().deserialize().map_err(|e| debug(&format!("GetLayout reply: {e}"))).ok()?;
     Some(Node { id, props, children: children.iter().filter_map(|c| node(c)).collect() })
 }
