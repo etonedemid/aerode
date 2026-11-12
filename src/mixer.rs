@@ -21,6 +21,7 @@ const TKP_TRACKVERT: i32 = 2;
 const TKP_THUMBRIGHT: i32 = 8;
 
 type Cb = RefCell<Vec<Box<dyn Fn()>>>;
+type CbU32 = RefCell<Vec<Box<dyn Fn(u32)>>>;
 
 pub struct Slider {
     pub area: gtk::DrawingArea,
@@ -32,7 +33,7 @@ pub struct Slider {
     hot: Cell<bool>,
     track: i32,
     thumb: (i32, i32),
-    changed: RefCell<Vec<Box<dyn Fn(u32)>>>,
+    changed: CbU32,
     touched: Cb,
     ended: Cb,
     tip: RefCell<Option<(gtk::Window, gtk::Label)>>,
@@ -602,7 +603,7 @@ impl Mixer {
                 sys::send(AudioCmd::Level { sink: Some(m.info.borrow().default.clone()), pct: v });
                 m.relink(v);
                 100
-            } else if master == 0 { 100 } else { (v * 100 + master / 2) / master };
+            } else if master == 0 { 100 } else { v.checked_mul(100).map_or(100, |p| p.checked_add(master / 2).map_or(100, |p| p.checked_div(master).unwrap_or(100))) };
             c.rel.set(rel.min(100));
             if system {
                 let mut p = sys::volume_prefs();
