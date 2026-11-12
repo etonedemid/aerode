@@ -191,10 +191,10 @@ impl Decor {
             const OPACITY: u32 = 2430;
             const COLORIZATIONOPACITY: u32 = 2432;
             let get = |part: i32, state: i32, prop: u32| t.int("DWMWindow", part, state, prop).map(|v| v as f64 / 100.0);
-            for i in 0..4 {
+            for (i, slot) in glow_opacity.iter_mut().enumerate() {
                 if let Some(v) = get(TOPFRAME, i as i32 + 1, COLORIZATIONOPACITY) { theme.opacity[i] = v; }
                 if let Some(v) = get(REFLECTIONMAP, i as i32 + 1, OPACITY) { theme.reflection[i] = v; }
-                if let Some(v) = get(TOPFRAME, i as i32 + 1, OPACITY) { glow_opacity[i] = v; }
+                if let Some(v) = get(TOPFRAME, i as i32 + 1, OPACITY) { *slot = v; }
             }
             for i in 0..2 {
                 if let Some(v) = get(SIDEHIGHLIGHT, i as i32 + 1, OPACITY) { side_opacity[i] = v; }
