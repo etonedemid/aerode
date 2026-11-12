@@ -1158,7 +1158,7 @@ mod tests {
         // the list's pane (P + 9 .. W_JUMP - 12) is as wide as the program list, its items' text
         // clear of the user tile's column below JUMP_TOP
         assert_eq!(W_JUMP - P - 9 - 12, ITEM_W - 2);
-        assert!(JUMP_TOP >= TILE - OV);
+        const { assert!(JUMP_TOP >= TILE - OV) }
     }
 
     #[test]
