@@ -2,6 +2,8 @@
 //! history, F1–F9, Insert/overwrite, Esc, Tab completion, the F7 popup.
 use std::io::{Read, Write};
 
+type Completion<'a> = dyn Fn(&str, usize, usize) -> Option<(String, usize)> + 'a;
+
 pub struct Tty { saved: libc::termios }
 
 impl Tty {
@@ -104,7 +106,7 @@ impl Editor {
     }
 
     /// Read one line. `prompt_len` = columns already used by the prompt.
-    pub fn read_line(&mut self, prompt_len: usize, complete: &dyn Fn(&str, usize, usize) -> Option<(String, usize)>) -> Option<String> {
+    pub fn read_line(&mut self, prompt_len: usize, complete: &Completion<'_>) -> Option<String> {
         let mut buf: Vec<char> = vec![];
         let mut pos = 0usize;
         let mut hist_i = self.history.len();
