@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 use aerode::{config, sounds, theme, util};
 
+type PanelRefresh = Box<dyn Fn(f64)>;
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Mode { Standard, Scientific, Programmer, Statistics }
 
@@ -38,7 +40,7 @@ enum Tok { Num(f64), Op(Op), LParen, RParen }
 #[derive(Clone, Copy, PartialEq)]
 enum Base { Hex, Dec, Oct, Bin }
 #[derive(Clone, Copy, PartialEq)]
-enum Word { Qword, Dword, Word, Byte }
+enum Word { Qword, Dword, Word16, Byte }
 
 impl Base { fn radix(self) -> u32 { match self { Base::Hex => 16, Base::Dec => 10, Base::Oct => 8, Base::Bin => 2 } } }
 
@@ -71,8 +73,8 @@ impl Calc {
             grouping: false, fe: false, history: vec![], pending_unary: None, stats: vec![] }
     }
 
-    fn mask(&self) -> u64 { match self.word { Word::Qword => u64::MAX, Word::Dword => 0xffff_ffff, Word::Word => 0xffff, Word::Byte => 0xff } }
-    fn bits(&self) -> u32 { match self.word { Word::Qword => 64, Word::Dword => 32, Word::Word => 16, Word::Byte => 8 } }
+    fn mask(&self) -> u64 { match self.word { Word::Qword => u64::MAX, Word::Dword => 0xffff_ffff, Word::Word16 => 0xffff, Word::Byte => 0xff } }
+    fn bits(&self) -> u32 { match self.word { Word::Qword => 64, Word::Dword => 32, Word::Word16 => 16, Word::Byte => 8 } }
 
     fn value(&self) -> f64 {
         if self.mode == Mode::Programmer {
@@ -368,7 +370,7 @@ fn fmt_num(v: f64, fe: bool) -> String {
         let s = format!("{v:.15e}");
         let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
         let m = m.trim_end_matches('0');
-        let m = if m.ends_with('.') { m.to_string() } else if m.contains('.') { m.to_string() } else { format!("{m}.") };
+        let m = if m.contains('.') { m.to_string() } else { format!("{m}.") };
         let e: i32 = e.parse().unwrap_or(0);
         return format!("{m}e{}{}", if e >= 0 { "+" } else { "-" }, e.abs());
     }
@@ -591,7 +593,7 @@ struct Ui {
     panel_box: gtk::Box,
     panel: Cell<Panel>,
     /// re-computes the panel from the current number (unit conversion "From")
-    panel_refresh: RefCell<Option<Box<dyn Fn(f64)>>>,
+    panel_refresh: RefCell<Option<PanelRefresh>>,
     mode_items: RefCell<Vec<(Mode, gtk::RadioMenuItem)>>,
     hist_item: RefCell<Option<gtk::CheckMenuItem>>,
 }
@@ -845,11 +847,11 @@ impl Ui {
                 }));
                 grid.attach(&fr, 0, 0, 1, 3);
                 let u = self.clone();
-                let word = match self.c.borrow().word { Word::Qword => 0, Word::Dword => 1, Word::Word => 2, Word::Byte => 3 };
+                let word = match self.c.borrow().word { Word::Qword => 0, Word::Dword => 1, Word::Word16 => 2, Word::Byte => 3 };
                 let fr = self.radio_group(&[("Qword", "qword"), ("Dword", "dword"), ("Word", "word"), ("Byte", "byte")], true, word, Rc::new(move |i| {
                     let mut c = u.c.borrow_mut();
                     let v = c.value();
-                    c.word = [Word::Qword, Word::Dword, Word::Word, Word::Byte][i];
+                    c.word = [Word::Qword, Word::Dword, Word::Word16, Word::Byte][i];
                     let m = c.mask();
                     let v = c.sign_extend((v as i64 as u64) & m) as f64;
                     if !c.error { c.entry = c.fmt(v); }
