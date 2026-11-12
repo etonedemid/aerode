@@ -10,6 +10,9 @@ use std::cell::RefCell;
 
 use crate::dwmcolor::{Colorization, ShaderConsts, ThemeGlass};
 
+/// A cached picom fit: the shader consts and the resulting (premultiplied colour, alpha).
+type FitEntry = (ShaderConsts, ([f64; 3], f64));
+
 pub struct Glass {
     pub colz: Colorization,
     pub theme: ThemeGlass,
@@ -18,7 +21,7 @@ pub struct Glass {
     backdrop: RefCell<Option<(i32, i32, Vec<u8>)>>,
     /// backdrops glass usually covers, for the picom fit: the downscaled wallpaper, white, grey, black
     sample: Vec<[f64; 3]>,
-    fits: RefCell<Vec<(ShaderConsts, ([f64; 3], f64))>>,
+    fits: RefCell<Vec<FitEntry>>,
 }
 
 fn wallpaper_image() -> Option<image::DynamicImage> {
