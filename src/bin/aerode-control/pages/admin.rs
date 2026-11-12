@@ -13,6 +13,9 @@ use std::rc::Rc;
 use super::super::Cp;
 use aerode::util;
 
+/// A ("See also" title, action) link.
+type SeeAlsoLink<'a> = (&'a str, Box<dyn Fn()>);
+
 pub(crate) mod actioncenter;
 mod backup;
 mod bitlocker;
@@ -275,7 +278,7 @@ pub(crate) fn see_also(cp: &Rc<Cp>, links: &[(&str, &'static str)]) {
 }
 
 /// "See also" with arbitrary actions.
-pub(crate) fn see_also_fn(cp: &Rc<Cp>, links: Vec<(&str, Box<dyn Fn()>)>) {
+pub(crate) fn see_also_fn<'a>(cp: &Rc<Cp>, links: Vec<SeeAlsoLink<'a>>) {
     let v = gtk::Box::new(gtk::Orientation::Vertical, 2);
     let h = gtk::Label::new(Some("See also"));
     h.set_xalign(0.0);
