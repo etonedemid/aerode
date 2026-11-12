@@ -7,6 +7,9 @@ use std::rc::Rc;
 use crate::taskbar::Taskbar;
 use crate::{config, sys, util};
 
+/// A popup menu item: label, and its action if any ("" is a separator, no action is disabled).
+type MenuItems = Vec<(String, Option<Rc<dyn Fn()>>)>;
+
 thread_local! {
     static OPEN: RefCell<Option<gtk::Window>> = const { RefCell::new(None) };
     /// when a flyout last closed by itself (focus loss / Esc)
@@ -105,7 +108,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
 
 /// A right-click menu on a notification-area icon (Win7: every system icon has one). The press
 /// is consumed so it doesn't also open the taskbar's own menu.
-pub(crate) fn tray_menu(b: &gtk::Button, items: Rc<dyn Fn() -> Vec<(String, Option<Rc<dyn Fn()>>)>>) {
+pub(crate) fn tray_menu(b: &gtk::Button, items: Rc<dyn Fn() -> MenuItems>) {
     b.connect_button_press_event(move |b, e| {
         if e.button() != 3 { return glib::Propagation::Proceed; }
         close_open();
@@ -121,7 +124,7 @@ pub(crate) fn tray_menu(b: &gtk::Button, items: Rc<dyn Fn() -> Vec<(String, Opti
 
 /// A popup menu from (mnemonic label, action) items: "" is a separator, no action greys the item
 /// out, and a leading ✓ makes it a checked item.
-pub(crate) fn build_menu(items: Vec<(String, Option<Rc<dyn Fn()>>)>) -> gtk::Menu {
+pub(crate) fn build_menu(items: MenuItems) -> gtk::Menu {
     let m = gtk::Menu::new();
     for (label, act) in items {
         if label.is_empty() { m.append(&gtk::SeparatorMenuItem::new()); continue; }
@@ -197,7 +200,7 @@ fn clock(tb: &Rc<Taskbar>) {
     {
         let tbw = Rc::downgrade(tb);
         tray_menu(&b, Rc::new(move || {
-            let mut v: Vec<(String, Option<Rc<dyn Fn()>>)> = vec![
+            let mut v: MenuItems = vec![
                 ("A_djust date/time".into(), act(|| control("datetime"))),
                 ("_Customize notification icons".into(), act(|| { crate::tray::customize(); })),
                 (String::new(), None),
