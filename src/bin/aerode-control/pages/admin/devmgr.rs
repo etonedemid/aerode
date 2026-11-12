@@ -87,7 +87,7 @@ impl Ids {
         let mut in_class = false;
         for l in txt.lines() {
             if l.starts_with('#') || l.trim().is_empty() { continue; }
-            if l.starts_with("C ") { in_class = true; vendor = None; if let Some((c, n)) = l[2..].split_once("  ") { ids.classes.insert(hex(c), n.to_string()); } continue; }
+            if let Some(stripped) = l.strip_prefix("C ") { in_class = true; vendor = None; if let Some((c, n)) = stripped.split_once("  ") { ids.classes.insert(hex(c), n.to_string()); } continue; }
             if !l.starts_with('\t') {
                 in_class = false;
                 if let Some((v, n)) = l.split_once("  ") && let Ok(v) = u32::from_str_radix(v.trim(), 16) { ids.vendors.insert(v, (n.to_string(), HashMap::new())); vendor = Some(v); continue; }
