@@ -9,6 +9,8 @@ use std::rc::Rc;
 
 use aerode::{config, theme, util, x11::Wm};
 
+type PerfBlock<'a> = (&'a str, &'a [(&'a str, &'static str)], i32, i32);
+
 const HIST: usize = 120;
 
 // ------------------------------------------------------------------ sampling (worker thread)
@@ -868,7 +870,7 @@ fn build(app: &gtk::Application) {
     grid.set_row_spacing(1);
     grid.set_column_homogeneous(true);
     let mut labels = HashMap::new();
-    let blocks: [(&str, &[(&str, &'static str)], i32, i32); 3] = [
+    let blocks: [PerfBlock<'_>; 3] = [
         ("Physical Memory (MB)", &[("Total", "total"), ("Cached", "cached"), ("Available", "available"), ("Free", "free")], 0, 0),
         ("Kernel Memory (MB)", &[("Paged", "paged"), ("Nonpaged", "nonpaged")], 0, 1),
         ("System", &[("Handles", "handles"), ("Threads", "threads"), ("Processes", "processes"), ("Up Time", "uptime"), ("Commit (GB)", "commit")], 1, 0),
