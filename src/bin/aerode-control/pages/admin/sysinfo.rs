@@ -246,7 +246,7 @@ pub fn load(id: &str) -> Table {
                 let drv = std::fs::read_link(format!("{base}/device/driver")).ok().and_then(|l| l.file_name().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| "virtual".into());
                 rows.extend([vec!["Name".into(), n.clone()], vec!["Adapter Type".into(), match rd(&format!("{base}/type")).as_str() { "1" => "Ethernet 802.3".into(), "772" => "Loopback".into(), "801" | "803" => "Wireless".into(), t => format!("type {t}") }],
                     vec!["Product Type".into(), if Path::new(&format!("{base}/wireless")).exists() { "Wireless LAN".into() } else { drv.clone() }], vec!["Installed".into(), "Yes".into()], vec!["Last Reset".into(), String::new()],
-                    vec!["Index".into(), rd(&format!("{base}/ifindex"))], vec!["Service Name".into(), drv], vec!["IP Address".into(), ips.join(", ")], vec!["MAC Address".into(), rd(&format!("{base}/address")).to_uppercase().replace(':', ":")],
+                    vec!["Index".into(), rd(&format!("{base}/ifindex"))], vec!["Service Name".into(), drv], vec!["IP Address".into(), ips.join(", ")], vec!["MAC Address".into(), rd(&format!("{base}/address")).to_uppercase()],
                     vec!["Operational State".into(), rd(&format!("{base}/operstate"))], vec!["Speed".into(), { let s = rd(&format!("{base}/speed")); if s.is_empty() || s.starts_with('-') { String::new() } else { format!("{s} Mbit/s") } }], vec![String::new(), String::new()]]);
             }
             Table { cols: vec!["Item", "Value"], rows }
