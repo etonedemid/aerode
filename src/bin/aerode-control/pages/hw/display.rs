@@ -9,6 +9,8 @@ use super::super::admin::{columns, img, inform, scrolled, spawn_tool};
 use super::super::desktop::{check, combo, group, radios, write_xsettings};
 use std::cell::Cell;
 
+type Layout = (Vec<(usize, i32, i32, i32, i32)>, f64, f64, f64);
+
 fn vbox(s: i32) -> gtk::Box { gtk::Box::new(gtk::Orientation::Vertical, s) }
 fn hbox(s: i32) -> gtk::Box { gtk::Box::new(gtk::Orientation::Horizontal, s) }
 
@@ -551,8 +553,8 @@ impl ResUi {
                     for p in st.pend.iter_mut() { p.on = true; }
                     // side by side, left to right
                     let mut x = 0;
-                    for j in 0..st.pend.len() {
-                        let (w, _) = rect_size(&outs[j], &st.pend[j]);
+                    for (j, o) in outs.iter().enumerate() {
+                        let (w, _) = rect_size(o, &st.pend[j]);
                         st.pend[j].x = x;
                         st.pend[j].y = 0;
                         x += w;
@@ -590,7 +592,7 @@ impl ResUi {
     }
 
     /// Screen rectangles in desktop coordinates and the transform to the drawing area.
-    fn layout(&self, aw: f64, ah: f64) -> (Vec<(usize, i32, i32, i32, i32)>, f64, f64, f64) {
+    fn layout(&self, aw: f64, ah: f64) -> Layout {
         let st = self.st.borrow();
         let mut rects = vec![];
         let mut off_x = st.pend.iter().zip(&st.outs).filter(|(p, _)| p.on).map(|(p, o)| p.x + rect_size(o, p).0).max().unwrap_or(0);
