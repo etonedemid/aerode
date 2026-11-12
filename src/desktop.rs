@@ -9,6 +9,9 @@ use std::rc::Rc;
 
 use crate::{config, glass, util};
 
+/// rubber-band selection: (start x, start y, current x, current y, ctrl held)
+type Band = RefCell<Option<(f64, f64, f64, f64, bool)>>;
+
 #[derive(Clone)]
 enum Target {
     Uri(String),
@@ -29,7 +32,7 @@ pub struct Desktop {
     selected: RefCell<Vec<gtk::Button>>,
     _monitor: RefCell<Option<gio::FileMonitor>>,
     /// rubber-band selection: (start x, start y, current x, current y, ctrl held)
-    band: RefCell<Option<(f64, f64, f64, f64, bool)>>,
+    band: Band,
     band_area: gtk::Box,
     band_base: RefCell<Vec<gtk::Button>>,
     /// icon key → its top-left on the desktop, as laid out now
