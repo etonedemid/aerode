@@ -245,7 +245,7 @@ fn main_dialog(w: &gtk::Window, root: &str, items: Vec<Item>) {
         let sys = system_script(&keys);
         bg(move || clean_user(&user_keys), move |errs| {
             let done = { let w2 = w2.clone(); move |e: String| { if !e.trim().is_empty() { util::error("Some files could not be deleted.", e.trim()); } w2.close(); } };
-            if sys.is_empty() { done(errs); } else { elevate_sh(&sys, move |ok, out| done(if ok { errs } else if out.contains("Not authorized") || out.contains("dismissed") { errs } else { errs + &out })); }
+            if sys.is_empty() { done(errs); } else { elevate_sh(&sys, move |ok, out| done(if ok || out.contains("Not authorized") || out.contains("dismissed") { errs } else { errs + &out })); }
         });
     }); }
     w.add(&v);
