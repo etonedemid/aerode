@@ -5,6 +5,7 @@
 //! * `ShaderConsts::glass`     = the Win7 glass pixel formula (CPU path / tests)
 //! * `ShaderConsts::picom_fit` = best `S + (1-a)*B` imitation for picom's fixed blend
 //! * `hsb_to_rgb`              = themecpl.dll!CColorizationColor (colour mixer)
+//!
 //! Sources: github.com/ALTaleX531/OpenGlass, github.com/ALTaleX531/dwm_colorization_calculator.
 
 pub const LUMA: [f64; 3] = [0.2126, 0.7152, 0.0722];
