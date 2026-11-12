@@ -10,6 +10,8 @@ use std::rc::Rc;
 use super::mmc::{self, act, act_off, Mmc};
 use super::*;
 
+type StateFiller = Rc<dyn Fn(&Rc<State>)>;
+
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Kind { #[default] System, User, Cron }
 
@@ -540,7 +542,7 @@ fn overview(s: &Rc<State>) {
     outer.add(&inner);
     v.pack_start(&outer, true, true, 0);
     s.m.set_center(&v);
-    let fill_ov: Rc<dyn Fn(&Rc<State>)> = { let (st_store, sum1, at, sum2, period) = (st_store.clone(), sum1.clone(), at.clone(), sum2.clone(), period.clone()); Rc::new(move |s: &Rc<State>| {
+    let fill_ov: StateFiller = { let (st_store, sum1, at, sum2, period) = (st_store.clone(), sum1.clone(), at.clone(), sum2.clone(), period.clone()); Rc::new(move |s: &Rc<State>| {
         st_store.clear(); at.clear();
         let span: i64 = period.active_id().and_then(|p| p.parse().ok()).unwrap_or(86400);
         let t0 = now() - span;
