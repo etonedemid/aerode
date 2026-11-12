@@ -8,6 +8,8 @@
 use super::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+type ReloadSlot = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
 #[derive(Clone, Default, Debug)]
 pub struct Prog {
     pub name: String,
@@ -548,7 +550,7 @@ fn updates_page(cp: &Rc<Cp>) -> gtk::Widget {
     status.set_margin_bottom(4);
     frame.pack_start(&status, false, false, 0);
     v.pack_start(&frame, true, true, 0);
-    let reload: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let reload: ReloadSlot = Rc::new(RefCell::new(None));
     let r: Rc<dyn Fn()> = {
         let (store, tv, status) = (store.clone(), tv.clone(), status.clone());
         Rc::new(move || {
