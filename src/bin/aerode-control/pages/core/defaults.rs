@@ -8,6 +8,9 @@
 use super::*;
 use std::collections::BTreeMap;
 
+type ShowCell = Rc<RefCell<Option<Rc<dyn Fn(Option<gio::AppInfo>)>>>>;
+type Picks = Rc<RefCell<Vec<(Vec<String>, Vec<(gtk::RadioButton, Option<gio::AppInfo>)>)>>>;
+
 impl Cp {
     pub(crate) fn page_defaults(self: &Rc<Self>) -> gtk::Widget {
         css();
@@ -118,7 +121,7 @@ fn set_programs_page(cp: &Rc<Cp>, app_id: Option<String>) -> gtk::Widget {
     v.pack_start(&button_row(&[&ok]), false, false, 0);
     let show: Rc<dyn Fn(Option<gio::AppInfo>)> = {
         let (right, cp) = (right.clone(), cp.clone());
-        let me: Rc<RefCell<Option<Rc<dyn Fn(Option<gio::AppInfo>)>>>> = Rc::new(RefCell::new(None));
+        let me: ShowCell = Rc::new(RefCell::new(None));
         let me2 = me.clone();
         let f: Rc<dyn Fn(Option<gio::AppInfo>)> = Rc::new(move |a: Option<gio::AppInfo>| {
             for c in right.children() { right.remove(&c); }
@@ -455,7 +458,7 @@ fn access_page(cp: &Rc<Cp>) -> gtk::Widget {
     v.pack_start(&list, false, false, 0);
     { let b = body.clone(); cfg[1].connect_toggled(move |r| b.set_sensitive(r.is_active())); }
     // per category: "Use my current X" + one radio per program, each with "Enable access to this program"
-    let picks: Rc<RefCell<Vec<(Vec<String>, Vec<(gtk::RadioButton, Option<gio::AppInfo>)>)>>> = Rc::new(RefCell::new(vec![]));
+    let picks: Picks = Rc::new(RefCell::new(vec![]));
     let accesses: Rc<RefCell<Vec<(gio::AppInfo, gtk::CheckButton)>>> = Rc::new(RefCell::new(vec![]));
     for (what, _, types) in ACCESS {
         body.pack_start(&label(&format!("Choose a default {what}:"), ""), false, false, 0);
@@ -524,6 +527,6 @@ mod tests {
         let g = super::globs_from(&["# comment\n80:application/msword:*.doc\n50:text/plain:*.doc\n50:text/plain:*.txt\n50:text/x-foo:*.[ch]\n".to_string()]);
         assert_eq!(g.get("application/msword"), Some(&vec![".doc".to_string()]));
         assert_eq!(g.get("text/plain"), Some(&vec![".txt".to_string()]));
-        assert!(g.get("text/x-foo").is_none());
+        assert!(!g.contains_key("text/x-foo"));
     }
 }
