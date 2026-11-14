@@ -152,7 +152,7 @@ pub(super) fn volume(tb: &Rc<Taskbar>) {
     }
     let vc = v.clone();
     b.connect_clicked(move |b| {
-        if close_open() { return; }
+        if super::toggle_off(b) { return; }
         open_flyout(&vc, b);
     });
 }

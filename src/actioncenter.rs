@@ -78,7 +78,7 @@ pub fn attach(tb: &Rc<Taskbar>) {
     { let r = refresh.clone(); glib::timeout_add_seconds_local_once(60, move || r(None)); }
     { let r = refresh.clone(); glib::timeout_add_seconds_local(30 * 60, move || { r(None); glib::ControlFlow::Continue }); }
     b.connect_clicked(move |b| {
-        if close_open() { return; }
+        if crate::flyouts::toggle_off(b) { return; }
         refresh(Some(b.clone().upcast()));
     });
 }

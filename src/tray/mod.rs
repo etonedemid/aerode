@@ -414,8 +414,8 @@ fn scroll(id: &str, delta: i32, horizontal: bool) {
 
 // ------------------------------------------------------------------ overflow flyout
 fn toggle_overflow() {
-    if flyouts::close_open() { return; }
     let Some(a) = area() else { return };
+    if flyouts::toggle_off(&a.chevron) { return; }
     let grid = gtk::Grid::new();
     grid.set_halign(gtk::Align::Center);
     grid.style_context().add_class("overflow-grid");

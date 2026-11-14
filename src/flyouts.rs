@@ -12,6 +12,8 @@ type MenuItems = Vec<(String, Option<Rc<dyn Fn()>>)>;
 
 thread_local! {
     static OPEN: RefCell<Option<gtk::Window>> = const { RefCell::new(None) };
+    /// the tray icon the open (or last) flyout belongs to
+    static ANCHOR: RefCell<Option<gtk::Widget>> = const { RefCell::new(None) };
     /// when a flyout last closed by itself (focus loss / Esc)
     static CLOSED_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
     /// set while an icon is dragged out of / into a flyout (the drag grab takes the focus)
@@ -33,6 +35,14 @@ pub fn close_open() -> bool {
         if vis { return true; }
     }
     CLOSED_AT.with(|c| c.take()).map(|t| t.elapsed().as_millis() < 350).unwrap_or(false)
+}
+
+/// A click on a tray icon: close the open flyout, and say whether it was this icon's own (then the
+/// click only closes it, like Win7). A click on another icon closes it too and goes on to open
+/// that icon's flyout - one click, not two.
+pub fn toggle_off(anchor: &impl IsA<gtk::Widget>) -> bool {
+    let own = ANCHOR.with(|a| a.borrow().as_ref() == Some(anchor.upcast_ref()));
+    close_open() && own
 }
 
 fn closed_by_itself(w: &gtk::Window) {
@@ -103,6 +113,7 @@ pub fn popup(anchor: &gtk::Widget, body: &gtk::Widget, foot: Option<&gtk::Widget
     anchor.set_has_tooltip(false);
     { let a = anchor.clone(); w.connect_destroy(move |_| a.set_has_tooltip(had_tip)); }
     OPEN.with(|o| *o.borrow_mut() = Some(w.clone()));
+    ANCHOR.with(|a| *a.borrow_mut() = Some(anchor.clone()));
     w
 }
 
@@ -249,7 +260,7 @@ fn clock(tb: &Rc<Taskbar>) {
         glib::ControlFlow::Continue
     });
     b.connect_clicked(move |b| {
-        if close_open() { return; }
+        if toggle_off(b) { return; }
         // the clocks may have just been changed in Control Panel
         *extra.borrow_mut() = extra_clocks();
         let now = chrono::Local::now();
@@ -425,7 +436,7 @@ fn network(tb: &Rc<Taskbar>) {
     let events = util::watch_lines(&["nmcli", "monitor"], |_| true, std::time::Duration::from_millis(300), r);
     { let r = refresh.clone(); glib::timeout_add_seconds_local(if events { 30 } else { 5 }, move || { r(); glib::ControlFlow::Continue }); }
     b.connect_clicked(move |b| {
-        if close_open() { return; }
+        if toggle_off(b) { return; }
         let st = sys::net_status();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 4);
         body.set_size_request(260, -1);
@@ -531,7 +542,7 @@ fn battery(tb: &Rc<Taskbar>) {
     refresh();
     glib::timeout_add_seconds_local(20, move || { refresh(); glib::ControlFlow::Continue });
     b.connect_clicked(|b| {
-        if close_open() { return; }
+        if toggle_off(b) { return; }
         let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         if let Some(bt) = sys::battery() {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -577,7 +588,7 @@ fn brightness() {
         let displays = Rc::new(displays);
         let icon = util::first_icon(&["display-brightness", "display-brightness-symbolic", "preferences-desktop-display"]);
         crate::tray::add_builtin("aerode-brightness", "Screen brightness", icon, "Screen brightness", move |anchor| {
-            if close_open() { return; }
+            if toggle_off(anchor) { return; }
             let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
             body.set_size_request(260, -1);
             let h = gtk::Label::new(Some("Adjust screen brightness"));

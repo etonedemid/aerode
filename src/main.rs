@@ -22,6 +22,9 @@ thread_local! { static SHELL: RefCell<Option<Shell>> = const { RefCell::new(None
 fn build(app: &gtk::Application) {
     if SHELL.with(|s| s.borrow().is_some()) { return; }
     theme::init_app();
+    // the shell speaks Win7's English: without this the date flyout's calendar alone follows LC_TIME
+    // ("noviembre", "dom lun mar" under an English "Saturday, November 14")
+    unsafe { libc::setlocale(libc::LC_TIME, c"C".as_ptr()); }
     theme::load_css(theme::SHELL_CSS);
     let wm = match x11::Wm::connect() {
         Ok(w) => Rc::new(w),
