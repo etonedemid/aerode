@@ -37,6 +37,7 @@ fn build(app: &gtk::Application) {
     let tb = taskbar::Taskbar::new(app, wm);
     let sm = startmenu::StartMenu::new(app);
     { let s = sm.clone(); *tb.orb_cb.borrow_mut() = Some(Rc::new(move || s.toggle())); }
+    { let t = tb.clone(); startmenu::start_overrides_menus(sm.clone(), move |x, y| t.on_orb(x, y)); }
     {
         let t = tb.clone();
         *sm.on_hide.borrow_mut() = Some(Box::new(move || { t.set_start_open(false); t.win.queue_draw(); }));

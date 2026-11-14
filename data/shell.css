@@ -197,6 +197,8 @@ menu.jumplist { background-color: rgb(251, 252, 254); padding: 0; min-width: 261
   border: 1px solid rgb(10, 25, 33); }
 menu.jumplist menuitem { padding: 2px 10px 2px 15px; min-height: 18px; }
 menu.jumplist menuitem.jl-head { padding: 6px 10px 2px 15px; }
+/* the hover border must not change a row's height: GtkMenu would turn to scroll arrows and clip the list */
+menu.jumplist menuitem.jl-item, menu.jumplist menuitem.jl-task { padding: 1px 9px 1px 14px; border: 1px solid transparent; }
 menu.jumplist menuitem.jl-head:disabled label.jl-heading, menu.jumplist label.jl-heading { color: #003399; }
 menu.jumplist separator.jl-rule { background-color: rgb(170, 187, 222); min-height: 1px; margin: 0; }
 menu.jumplist separator.jl-band, menu.jumplist menuitem.jl-band { margin: 6px 0 0 0; padding: 0; min-height: 1px;

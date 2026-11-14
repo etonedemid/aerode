@@ -25,6 +25,44 @@ thread_local! {
 /// Hide the Start menu if it is open (used when clicking the desktop).
 pub fn hide_all() { if let Some(f) = HIDE_ALL.with(|h| h.borrow().clone()) { f(); } }
 
+/// Close every open menu of the shell (Jump Lists, context menus, tray menus, their submenus).
+fn close_menus() {
+    for w in gtk::Window::list_toplevels() {
+        if !w.is_visible() { continue; }
+        if let Some(m) = w.downcast::<gtk::Bin>().ok().and_then(|b| b.child()).and_then(|c| c.downcast::<gtk::Menu>().ok()) { m.deactivate(); }
+    }
+}
+
+/// Start beats the shell's open menus. A menu holds the pointer and keyboard grab, so a click on the
+/// orb would only close it and the Windows key (the WM's passive grab can't fire) would do nothing:
+/// catch both ahead of GTK. GTK also runs tooltips ahead of grabs, so while a menu is open the
+/// pointer's moves over the rest of the shell are dropped, or tooltips would cover the menu.
+pub fn start_overrides_menus(sm: Rc<StartMenu>, on_orb: impl Fn(f64, f64) -> bool + 'static) {
+    let super_alone = Cell::new(false);
+    gdk::Event::set_handler(Some(move |e: &mut gdk::Event| {
+        if gtk::grab_get_current().is_some_and(|w| w.is::<gtk::Menu>()) {
+            let is_super = || e.keyval().is_some_and(|k| [gdk::keys::constants::Super_L, gdk::keys::constants::Super_R].contains(&gdk::keys::Key::from(k)));
+            let start = match e.event_type() {
+                gdk::EventType::ButtonPress => e.button() == Some(1) && e.root_coords().is_some_and(|(x, y)| on_orb(x, y)),
+                gdk::EventType::KeyPress => { super_alone.set(is_super()); false }
+                gdk::EventType::KeyRelease => is_super() && super_alone.replace(false),
+                gdk::EventType::MotionNotify | gdk::EventType::EnterNotify | gdk::EventType::LeaveNotify => {
+                    let in_menu = gtk::event_widget(e).and_then(|w| w.toplevel()).and_then(|t| t.downcast::<gtk::Bin>().ok()).and_then(|b| b.child()).is_some_and(|c| c.is::<gtk::Menu>());
+                    if !in_menu { return; }
+                    false
+                }
+                _ => false,
+            };
+            if start {
+                close_menus();
+                sm.toggle();
+                return;
+            }
+        }
+        gtk::main_do_event(e);
+    }));
+}
+
 /// Customize Start Menu items: (key, Win7 label, "link" = link / menu / don't display or "check", default)
 pub const START_ITEMS: &[(&str, &str, &str, &str)] = &[
     ("computer", "Computer", "link", "link"),
@@ -538,6 +576,8 @@ impl StartMenu {
 
     pub fn show(self: &Rc<Self>) {
         crate::flyouts::close_open();
+        crate::thumbs::hide();
+        close_menus();
         self.mode.set(0);
         self.search.set_text("");
         self.expanded.borrow_mut().clear();

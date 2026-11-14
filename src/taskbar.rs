@@ -463,6 +463,8 @@ impl Taskbar {
         let tb = Rc::downgrade(self);
         button.connect_enter_notify_event(move |b, _| {
             let Some(tb) = tb.upgrade() else { return glib::Propagation::Proceed };
+            // Start stays on top: no thumbnails over it (the pointer may rest here as a menu lets go)
+            if tb.orb.menu_open.get() { return glib::Propagation::Proceed; }
             let groups = tb.groups.borrow();
             match groups.iter().find(|g| g.key == key) {
                 Some(g) if !g.windows.is_empty() => crate::thumbs::hover(&tb.wm, b.upcast_ref(), tb.thumb_wins(&g.windows)),
@@ -624,6 +626,15 @@ impl Taskbar {
         }
         // refresh() rebuilds the button contents at the new icon size
         for g in self.groups.borrow().iter() { if let Some(c) = g.button.child() { g.button.remove(&c); } }
+    }
+
+    /// Is this root position on the Start orb?
+    pub fn on_orb(&self, x: f64, y: f64) -> bool {
+        let e = &self.orb.events;
+        let (Some((ox, oy)), Some(gw)) = (e.translate_coordinates(&self.win, 0, 0), self.win.window()) else { return false };
+        let (_, wx, wy) = gw.origin();
+        let (x, y) = (x as i32 - wx - ox, y as i32 - wy - oy);
+        x >= 0 && y >= 0 && x < e.allocated_width() && y < e.allocated_height()
     }
 
     /// The Start menu opened or closed: the orb shows its pressed state while the menu is open and
