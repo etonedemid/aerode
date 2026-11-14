@@ -337,7 +337,11 @@ impl Shell {
                     let (vname, subst) = match name.split_once(':') { Some((a, b)) => (a.to_string(), Some(b.to_string())), None => (name.clone(), None) };
                     if let Some(v) = self.var(&vname) {
                         let v = match subst.as_deref().and_then(|s| s.split_once('=')) {
-                            Some((from, to)) => replace_ci(&v, from.trim_start_matches('*'), to),
+                            // %VAR:*str=repl%: everything up to and including the first str becomes repl
+                            Some((from, to)) => match from.strip_prefix('*') {
+                                Some(f) if !f.is_empty() => match v.to_lowercase().find(&f.to_lowercase()) { Some(p) => format!("{to}{}", &v[p + f.len()..]), None => v },
+                                _ => replace_ci(&v, from, to),
+                            },
                             None => match subst.as_deref().and_then(|s| s.strip_prefix('~')) {
                                 Some(spec) => {
                                     let mut it = spec.split(',');
@@ -1748,6 +1752,16 @@ mod tests {
         assert_eq!(ForF::parse("tokens=* delims=").split("  x y"), vec!["  x y"]);
         assert_eq!(ForF::parse("tokens=*").split("  x y"), vec!["x y"]);
         assert_eq!(split_set("a,b \"c d\";e"), vec!["a", "b", "\"c d\"", "e"]);
+    }
+    #[test] fn var_substitution() {
+        let mut s = Shell::new(&crate::console::host::ConsoleConfig::default());
+        s.vars.insert("X".into(), "hello.World.txt".into());
+        assert_eq!(s.expand("%X:*.=%"), "World.txt");
+        assert_eq!(s.expand("%X:*o=0%"), "0.World.txt");
+        assert_eq!(s.expand("%X:*WORLD=%"), ".txt");
+        assert_eq!(s.expand("%X:.=_%"), "hello_World_txt");
+        assert_eq!(s.expand("%X:*zz=q%"), "hello.World.txt");
+        assert_eq!(s.expand("%X:~-3%"), "txt");
     }
     #[test] fn else_split() { let (a, b) = split_else("(echo yes) else (echo no)"); assert_eq!(a, "(echo yes)"); assert_eq!(b.as_deref(), Some("(echo no)")); }
 }
