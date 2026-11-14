@@ -1146,7 +1146,7 @@ impl Wm {
 
     pub fn minimize(&mut self, w: u32) {
         let Some(c) = self.clients.get_mut(&w) else { return };
-        if c.minimized { return; }
+        if c.minimized || !is_app(c) { return; }
         window_sound(crate::sounds::Event::Minimize);
         c.minimized = true;
         let animate = !c.wm_hidden && self.window_anims();
@@ -2539,7 +2539,9 @@ impl Wm {
         if self.kbd_drag_key(e.detail, press) { return; }
         let switching = self.switcher.is_some();
         let Some(action) = self.keys.lookup(e.detail, u16::from(e.state), press, e.time, switching, &self.conn) else { return };
-        let act = self.active;
+        // the window keys are for program windows: with the desktop or the taskbar focused, Win+Down
+        // would minimise the desktop itself (a black screen, and nothing to bring it back with)
+        let act = if self.clients.get(&self.active).is_some_and(is_app) { self.active } else { 0 };
         use keys::Action::*;
         match action {
             Spawn(cmd) => { crate::util::spawn(&["sh", "-c", &cmd]); }
