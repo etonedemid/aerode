@@ -1160,12 +1160,17 @@ fn paint_fallback(cr: &cairo::Context, w: f64, hu: f64, hm: f64, p: f64, seps: &
     }
 }
 
-fn file_search(q: &str, limit: usize) -> Vec<std::path::PathBuf> {
+fn file_search(q: &str, limit: usize) -> Vec<std::path::PathBuf> { file_search_in(&config::home(), q, limit) }
+
+/// Names containing `q` under `root`, nearest folders first: breadth-first, so the entry budget
+/// goes to Documents, Desktop, Downloads... before the depths of one big tree, and never to
+/// caches and build output (CACHEDIR.TAG folders like cargo's target, node_modules).
+fn file_search_in(root: &std::path::Path, q: &str, limit: usize) -> Vec<std::path::PathBuf> {
     if q.len() < 2 { return vec![]; }
     let mut out = vec![];
-    let mut stack = vec![(config::home(), 0)];
+    let mut queue = std::collections::VecDeque::from([(root.to_path_buf(), 0)]);
     let mut visited = 0;
-    while let Some((dir, depth)) = stack.pop() {
+    while let Some((dir, depth)) = queue.pop_front() {
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };
         for e in rd.flatten() {
             visited += 1;
@@ -1173,8 +1178,10 @@ fn file_search(q: &str, limit: usize) -> Vec<std::path::PathBuf> {
             let name = e.file_name().to_string_lossy().to_lowercase();
             if name.starts_with('.') { continue; }
             let p = e.path();
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir && (name == "node_modules" || name == "__pycache__" || p.join("CACHEDIR.TAG").exists()) { continue; }
             if name.contains(q) { out.push(p.clone()); }
-            if depth < 4 && e.file_type().map(|t| t.is_dir()).unwrap_or(false) { stack.push((p, depth + 1)); }
+            if depth < 4 && is_dir { queue.push_back((p, depth + 1)); }
         }
     }
     out
@@ -1183,6 +1190,21 @@ fn file_search(q: &str, limit: usize) -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_search_is_shallow_first_and_skips_build_output() {
+        let root = std::env::temp_dir().join(format!("aerode-search-{}", std::process::id()));
+        let mk = |p: &str| { let f = root.join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, "").unwrap(); };
+        mk("zz/deep/a/report-deep.txt");
+        mk("docs/report.txt");
+        mk("proj/target/CACHEDIR.TAG");
+        mk("proj/target/report.o");
+        mk("proj/node_modules/report.js");
+        let found = file_search_in(&root, "report", 10);
+        let _ = std::fs::remove_dir_all(&root);
+        let names: Vec<String> = found.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["report.txt", "report-deep.txt"]);
+    }
 
     #[test]
     fn default_programs_ship_with_aerode() {
