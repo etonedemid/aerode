@@ -70,6 +70,8 @@ pub struct Client {
     pub fullscreen: bool,
     pub minimized: bool,
     pub above: bool,
+    /// _NET_WM_STATE_MODAL: its owner hands the focus to it
+    pub modal: bool,
     pub skip_taskbar: bool,
     pub urgent: bool,
     pub transient_for: u32,
@@ -386,7 +388,7 @@ impl Wm {
             a._NET_ACTIVE_WINDOW, a._NET_CLOSE_WINDOW, a._NET_WORKAREA, a._NET_NUMBER_OF_DESKTOPS, a._NET_CURRENT_DESKTOP,
             a._NET_DESKTOP_GEOMETRY, a._NET_SHOWING_DESKTOP, a._NET_WM_DESKTOP, a._NET_WM_STATE, a._NET_WM_STATE_MAXIMIZED_VERT,
             a._NET_WM_STATE_MAXIMIZED_HORZ, a._NET_WM_STATE_FULLSCREEN, a._NET_WM_STATE_HIDDEN, a._NET_WM_STATE_ABOVE,
-            a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_DEMANDS_ATTENTION, a._NET_WM_STATE_FOCUSED, a._NET_WM_WINDOW_TYPE,
+            a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_MODAL, a._NET_WM_STATE_DEMANDS_ATTENTION, a._NET_WM_STATE_FOCUSED, a._NET_WM_WINDOW_TYPE,
             a._NET_WM_STRUT, a._NET_WM_STRUT_PARTIAL, a._NET_FRAME_EXTENTS, a._NET_REQUEST_FRAME_EXTENTS, a._NET_WM_MOVERESIZE,
             a._NET_MOVERESIZE_WINDOW, a._NET_WM_ALLOWED_ACTIONS, a._GTK_FRAME_EXTENTS, a._GTK_WORKAREAS,
             a._NET_WM_SYNC_REQUEST];
@@ -591,7 +593,7 @@ impl Wm {
         let mut c = Client {
             win: w, frame: None, kind, title: self.read_title(w), icon: self.read_icon(w), geom, restore: None,
             maximized: false, fullscreen: state.contains(&a._NET_WM_STATE_FULLSCREEN), minimized: start_minimized,
-            above: state.contains(&a._NET_WM_STATE_ABOVE) || kind == Kind::Dock, skip_taskbar: state.contains(&a._NET_WM_STATE_SKIP_TASKBAR),
+            above: state.contains(&a._NET_WM_STATE_ABOVE) || kind == Kind::Dock, skip_taskbar: state.contains(&a._NET_WM_STATE_SKIP_TASKBAR), modal: state.contains(&a._NET_WM_STATE_MODAL),
             urgent: false, transient_for, protocols, min_size, resizable, desktop,
             hover: None, pressed: None, ignore_unmaps: 0, snapped: None, mapped_once: false,
             wm_hidden: false, ext: [-1; 4], csd, gravity_static, zones: vec![],
@@ -757,6 +759,7 @@ impl Wm {
         if c.minimized { s.push(a._NET_WM_STATE_HIDDEN); }
         if c.above && c.kind != Kind::Dock { s.push(a._NET_WM_STATE_ABOVE); }
         if c.skip_taskbar { s.push(a._NET_WM_STATE_SKIP_TASKBAR); }
+        if c.modal { s.push(a._NET_WM_STATE_MODAL); }
         if c.urgent { s.push(a._NET_WM_STATE_DEMANDS_ATTENTION); }
         if self.active == w { s.push(a._NET_WM_STATE_FOCUSED); }
         let _ = self.conn.change_property32(PropMode::REPLACE, w, a._NET_WM_STATE, AtomEnum::ATOM, &s);
@@ -1194,6 +1197,10 @@ impl Wm {
 
     pub fn focus(&mut self, w: u32) {
         let Some(c) = self.clients.get(&w) else { return };
+        // a window with a modal dialog up hands the focus to the dialog, like a disabled owner on Windows
+        // (the owner comes up right under it: raise() takes a window's transients along)
+        let modal = self.clients.values().find(|d| d.modal && d.transient_for == w && d.win != w && c.transient_for != d.win && !d.minimized && !d.wm_hidden).map(|d| d.win);
+        if let Some(d) = modal { self.raise(w); return self.focus(d); }
         if c.minimized { self.unminimize(w); }
         // only activating a window that Show desktop hid ends it - not the desktop itself (clicking the
         // empty desktop) or Start/flyouts
@@ -1721,6 +1728,7 @@ impl Wm {
                     else if prop == a._NET_WM_STATE_ABOVE { c.above }
                     else if prop == a._NET_WM_STATE_HIDDEN { c.minimized }
                     else if prop == a._NET_WM_STATE_DEMANDS_ATTENTION { c.urgent }
+                    else if prop == a._NET_WM_STATE_MODAL { c.modal }
                     else if prop == a._NET_WM_STATE_SKIP_TASKBAR { c.skip_taskbar } else { continue };
                 // a toggle of MAXIMIZED_VERT+HORZ must not flip back on the second atom
                 let on = match d[0] { 0 => false, 1 => true, _ => *decided.get_or_insert(!cur) };
@@ -1730,6 +1738,7 @@ impl Wm {
                 else if prop == a._NET_WM_STATE_HIDDEN { if on { self.minimize(w) } else { self.focus(w) } }
                 else if prop == a._NET_WM_STATE_DEMANDS_ATTENTION { self.clients.get_mut(&w).unwrap().urgent = on; }
                 else if prop == a._NET_WM_STATE_SKIP_TASKBAR { self.clients.get_mut(&w).unwrap().skip_taskbar = on; }
+                else if prop == a._NET_WM_STATE_MODAL { self.clients.get_mut(&w).unwrap().modal = on; }
                 if d[2] == d[1] { break; }
             }
             self.update_net_state(w);

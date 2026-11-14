@@ -377,7 +377,15 @@ impl Console {
         cmd.cwd(config::home());
         let mut child = match pair.slave.spawn_command(cmd) {
             Ok(c) => c,
-            Err(e) => { util::error(&format!("'{}' could not be started.", argv[0]), &e.to_string()); return; }
+            Err(e) => {
+                // the message belongs to this window (it kept the focus over a parentless one), and
+                // a console without a program goes with it
+                let d = util::message_box(Some(self.win.upcast_ref()), gtk::MessageType::Error, &format!("'{}' could not be started.", argv[0]), &e.to_string());
+                d.set_modal(true);
+                let w = self.win.clone();
+                d.connect_response(move |_, _| w.close());
+                return;
+            }
         };
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().unwrap();

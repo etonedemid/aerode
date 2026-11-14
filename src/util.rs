@@ -329,7 +329,7 @@ pub fn shellexpand(s: &str) -> String {
 }
 
 pub fn error(title: &str, text: &str) {
-    message_box(None, gtk::MessageType::Error, title, text);
+    let _ = message_box(None, gtk::MessageType::Error, title, text);
 }
 
 /// The name Explorer and the desktop show for a file: Folder Options > "Hide extensions for known
@@ -369,13 +369,14 @@ pub fn message_sound(kind: gtk::MessageType) {
 }
 
 /// A Win7 message box: icon, text, OK, and the icon's sound. Returns at once (non-modal).
-pub fn message_box(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: &str, text: &str) {
+pub fn message_box(parent: Option<&gtk::Window>, kind: gtk::MessageType, title: &str, text: &str) -> gtk::MessageDialog {
     let d = gtk::MessageDialog::new(parent, gtk::DialogFlags::empty(), kind, gtk::ButtonsType::Ok, title);
     if !text.is_empty() { d.set_secondary_text(Some(text)); }
     if parent.is_none() { d.set_keep_above(true); }
     d.connect_response(|d, _| d.close());
     d.show_all();
     if !DIALOG_SOUNDS.load(std::sync::atomic::Ordering::Relaxed) { message_sound(kind); }
+    d
 }
 
 static DIALOG_SOUNDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
