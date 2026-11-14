@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::rc::Rc;
 
 use super::font::{self, RasterFont};
-use super::term::{Color, CursorShape, Term};
+use super::term::{Color, CursorShape, Term, WIDE_TAIL};
 use crate::{config, sounds, util};
 
 /// The Windows 7 console colour table (index order is the Windows one).
@@ -165,14 +165,6 @@ pub fn rgb(c: u32) -> (f64, f64, f64) { (((c >> 16) & 255) as f64 / 255.0, ((c >
 /// ANSI colour index (0-7 = black,red,green,yellow,blue,magenta,cyan,white) → Windows index.
 const ANSI_TO_WIN: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
 
-fn nearest(pal: &[u32; 16], r: u8, g: u8, b: u8) -> u8 {
-    (0..16).min_by_key(|i| {
-        let c = pal[*i];
-        let (dr, dg, db) = (((c >> 16) & 255) as i32 - r as i32, ((c >> 8) & 255) as i32 - g as i32, (c & 255) as i32 - b as i32);
-        dr * dr * 3 + dg * dg * 4 + db * db * 2
-    }).unwrap() as u8
-}
-
 fn xterm256(n: u8) -> (u8, u8, u8) {
     match n {
         16..=231 => { let n = n - 16; let s = |v: u8| if v == 0 { 0 } else { 55 + v * 40 }; (s(n / 36), s((n / 6) % 6), s(n % 6)) }
@@ -291,8 +283,10 @@ impl Console {
             Color::Default => if fg { sfg } else { sbg },
             Color::Idx(n) if n < 8 => ANSI_TO_WIN[n as usize] + if bold && fg { 8 } else { 0 },
             Color::Idx(n) if n < 16 => ANSI_TO_WIN[(n - 8) as usize] + 8,
-            Color::Idx(n) => { let (r, g, b) = xterm256(n); nearest(pal, r, g, b) }
-            Color::Rgb(r, g, b) => nearest(pal, r, g, b),
+            // beyond the console's 16 colours: what the program asked for (vim, htop and other
+            // TUIs are unreadable squeezed into the palette)
+            Color::Idx(n) => { let (r, g, b) = xterm256(n); return (r as u32) << 16 | (g as u32) << 8 | b as u32; }
+            Color::Rgb(r, g, b) => return (r as u32) << 16 | (g as u32) << 8 | b as u32,
         };
         pal[idx as usize & 15]
     }
@@ -443,6 +437,22 @@ impl Console {
         self.follow.set(true);
         self.update_scrollbar();
         self.area.queue_draw();
+    }
+
+    /// Report a mouse event to a program that asked for them (xterm 1000/1002/1003, SGR or legacy
+    /// coordinates). `button`: 0-2, 3 = none (motion), 64/65 = wheel up/down. Shift keeps the mouse
+    /// for the console itself. True if it was sent.
+    fn mouse_report(&self, button: u32, press: bool, motion: bool, pos: (f64, f64), st: gdk::ModifierType) -> bool {
+        let (mode, sgr, vt, rows) = { let t = self.term.borrow(); (t.mouse, t.mouse_sgr, t.vt, t.rows) };
+        if mode == 0 || st.contains(gdk::ModifierType::SHIFT_MASK) || self.sel.get() != Sel::None { return false; }
+        if motion && (mode == 1 || (mode == 2 && button == 3)) { return true; }
+        let (x, y) = self.cell_at(pos.0, pos.1);
+        if y < vt || y >= vt + rows { return true; }
+        let (x, y) = (x + 1, y - vt + 1);
+        let b = button + if motion { 32 } else { 0 } + if st.contains(gdk::ModifierType::MOD1_MASK) { 8 } else { 0 } + if st.contains(gdk::ModifierType::CONTROL_MASK) { 16 } else { 0 };
+        if sgr { self.send(format!("\x1b[<{b};{x};{y}{}", if press { 'M' } else { 'm' }).as_bytes()); }
+        else if x <= 223 && y <= 223 { self.send(&[0x1b, b'[', b'M', (32 + if press { b } else { 3 }) as u8, (32 + x) as u8, (32 + y) as u8]); }
+        true
     }
 
     fn send(&self, bytes: &[u8]) {
@@ -826,6 +836,15 @@ impl Console {
             self.area.connect_scroll_event(move |_, e| {
                 let adj = c.scroll.adjustment();
                 let d = match e.direction() { gdk::ScrollDirection::Up => -3.0, gdk::ScrollDirection::Down => 3.0, _ => e.delta().1 * 3.0 };
+                if d == 0.0 { return glib::Propagation::Stop; }
+                if c.mouse_report(if d < 0.0 { 64 } else { 65 }, true, false, e.position(), e.state()) { return glib::Propagation::Stop; }
+                // full-screen programs (less, vim, man) have nothing to scroll back to: the wheel moves their cursor
+                if c.term.borrow().on_alt_screen() && c.sel.get() == Sel::None {
+                    let app = c.term.borrow().app_cursor;
+                    let k = match (d < 0.0, app) { (true, false) => "\x1b[A", (true, true) => "\x1bOA", (false, false) => "\x1b[B", (false, true) => "\x1bOB" };
+                    c.send(k.repeat(3).as_bytes());
+                    return glib::Propagation::Stop;
+                }
                 adj.set_value((adj.value() + d).clamp(0.0, (adj.upper() - adj.page_size()).max(0.0)));
                 glib::Propagation::Stop
             });
@@ -834,6 +853,8 @@ impl Console {
             let c = self.clone();
             self.area.connect_button_press_event(move |a, e| {
                 a.grab_focus();
+                if e.event_type() == gdk::EventType::ButtonPress && (1..=3).contains(&e.button())
+                    && c.mouse_report([0, 1, 2][e.button() as usize - 1], true, false, e.position(), e.state()) { return glib::Propagation::Stop; }
                 let quick = c.cfg.borrow().quick_edit;
                 let marking = c.sel.get() != Sel::None;
                 let (x, y) = c.cell_at(e.position().0, e.position().1);
@@ -853,7 +874,25 @@ impl Console {
         }
         {
             let c = self.clone();
+            self.area.connect_button_release_event(move |_, e| {
+                if (1..=3).contains(&e.button()) { c.mouse_report([0, 1, 2][e.button() as usize - 1], false, false, e.position(), e.state()); }
+                glib::Propagation::Proceed
+            });
+        }
+        {
+            let c = self.clone();
+            let last = Cell::new((usize::MAX, usize::MAX));
             self.area.connect_motion_notify_event(move |a, e| {
+                if c.term.borrow().mouse >= 2 && c.sel.get() == Sel::None && !e.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                    // one report per cell, not per pixel
+                    let cell = c.cell_at(e.position().0, e.position().1);
+                    if last.replace(cell) != cell {
+                        let st = e.state();
+                        let b = if st.contains(gdk::ModifierType::BUTTON1_MASK) { 0 } else if st.contains(gdk::ModifierType::BUTTON2_MASK) { 1 } else if st.contains(gdk::ModifierType::BUTTON3_MASK) { 2 } else { 3 };
+                        c.mouse_report(b, true, true, e.position(), st);
+                    }
+                    return glib::Propagation::Stop;
+                }
                 if e.state().contains(gdk::ModifierType::BUTTON1_MASK)
                     && let Sel::Marking { ax, ay, .. } = c.sel.get() {
                         // dragging past the edge scrolls the window
@@ -869,8 +908,8 @@ impl Console {
                 glib::Propagation::Stop
             });
         }
-        { let c = self.clone(); self.area.connect_focus_in_event(move |a, _| { c.focused.set(true); a.queue_draw(); glib::Propagation::Proceed }); }
-        { let c = self.clone(); self.area.connect_focus_out_event(move |a, _| { c.focused.set(false); a.queue_draw(); glib::Propagation::Proceed }); }
+        { let c = self.clone(); self.area.connect_focus_in_event(move |a, _| { c.focused.set(true); if c.term.borrow().focus_events { c.send(b"\x1b[I"); } a.queue_draw(); glib::Propagation::Proceed }); }
+        { let c = self.clone(); self.area.connect_focus_out_event(move |a, _| { c.focused.set(false); if c.term.borrow().focus_events { c.send(b"\x1b[O"); } a.queue_draw(); glib::Propagation::Proceed }); }
         // the window menu's Edit/Defaults/Properties (sysmenu.rs writes the chosen id)
         {
             let c = self.clone();
@@ -928,13 +967,25 @@ impl Console {
             l.set_font_description(Some(&ttf_description(&cfg)));
             Some(l)
         } else { None };
+        // characters the raster font (code page 437) doesn't have are drawn with a system font
+        let fallback = if self.raster.borrow().is_some() {
+            let l = pangocairo::functions::create_layout(cr);
+            let mut fd = gtk::pango::FontDescription::from_string("monospace");
+            fd.set_absolute_size((ch * 0.8).round() * gtk::pango::SCALE as f64);
+            l.set_font_description(Some(&fd));
+            Some(l)
+        } else { None };
         for row in 0..rows {
             let y = top + row;
             let Some(line) = t.line(y) else { continue };
             for (x, cell) in line.iter().enumerate().skip(left).take(vis_cols) {
+                if cell.ch == WIDE_TAIL { continue; }
                 let mut fg = self.color_of(cell.fg, true, cell.bold);
                 let mut bg = self.color_of(cell.bg, false, false);
                 if cell.reverse { std::mem::swap(&mut fg, &mut bg); }
+                if cell.dim { fg = ((fg >> 1) & 0x7F7F7F) + ((bg >> 1) & 0x7F7F7F); }
+                let wide = line.get(x + 1).is_some_and(|n| n.ch == WIDE_TAIL);
+                let gw = if wide { cw * 2.0 } else { cw };
                 // selections are shown inverted, like the Windows console
                 let inv = block.is_some_and(|(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) || mark == Some((x, y));
                 if inv { fg ^= 0xFFFFFF; bg ^= 0xFFFFFF; }
@@ -942,26 +993,32 @@ impl Console {
                 if bg != screen_bg {
                     let (r, g, b) = rgb(bg);
                     cr.set_source_rgb(r, g, b);
-                    cr.rectangle(px, py, cw, ch);
+                    cr.rectangle(px, py, gw, ch);
                     cr.fill().ok();
                 }
+                let (r, g, b) = rgb(fg);
+                cr.set_source_rgb(r, g, b);
                 if cell.ch != ' ' {
-                    let (r, g, b) = rgb(fg);
-                    cr.set_source_rgb(r, g, b);
+                    let oem = font::to_cp437(cell.ch);
                     if let Some(l) = &layout {
                         l.set_text(&cell.ch.to_string());
                         cr.move_to(px, py);
                         pangocairo::functions::show_layout(cr, l);
-                    } else if let Some(s) = self.glyph_surface(font::to_cp437(cell.ch)) {
+                    } else if let Some(l) = fallback.as_ref().filter(|_| oem == b'?' && cell.ch != '?') {
+                        l.set_text(&cell.ch.to_string());
+                        let (lw, lh) = l.pixel_size();
+                        cr.save().ok();
+                        cr.rectangle(px, py, gw, ch);
+                        cr.clip();
+                        cr.move_to(px + ((gw - lw as f64) / 2.0).max(0.0).floor(), py + ((ch - lh as f64) / 2.0).floor());
+                        pangocairo::functions::show_layout(cr, l);
+                        cr.restore().ok();
+                    } else if let Some(s) = self.glyph_surface(oem) {
                         cr.mask_surface(&s, px, py).ok();
                     }
                 }
-                if cell.underline {
-                    let (r, g, b) = rgb(fg);
-                    cr.set_source_rgb(r, g, b);
-                    cr.rectangle(px, py + ch - 1.0, cw, 1.0);
-                    cr.fill().ok();
-                }
+                if cell.underline { cr.rectangle(px, py + ch - 1.0, gw, 1.0); cr.fill().ok(); }
+                if cell.strike { cr.rectangle(px, py + (ch / 2.0).floor(), gw, 1.0); cr.fill().ok(); }
             }
         }
         // cursor: Win7 underscore (25%), larger in overwrite mode or when the app asks

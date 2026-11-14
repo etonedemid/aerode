@@ -14,10 +14,28 @@ pub struct Cell {
     pub bold: bool,
     pub reverse: bool,
     pub underline: bool,
+    pub dim: bool,
+    pub strike: bool,
 }
 
 impl Default for Cell {
-    fn default() -> Self { Cell { ch: ' ', fg: Color::Default, bg: Color::Default, bold: false, reverse: false, underline: false } }
+    fn default() -> Self { Cell { ch: ' ', fg: Color::Default, bg: Color::Default, bold: false, reverse: false, underline: false, dim: false, strike: false } }
+}
+
+/// The second cell of a double-width character (never drawn, skipped in copied text).
+pub const WIDE_TAIL: char = '\0';
+
+/// Cells a character takes: 0 for combining marks and joiners, 2 for East Asian wide and emoji.
+pub fn char_width(c: char) -> usize {
+    let u = c as u32;
+    if u < 0x300 { return 1; }
+    if matches!(u, 0x300..=0x36F | 0x200B..=0x200F | 0x2060 | 0x20D0..=0x20FF | 0xFE00..=0xFE0F | 0xFE20..=0xFE2F | 0x1F3FB..=0x1F3FF | 0xE0000..=0xE0FFF) { return 0; }
+    if matches!(u, 0x1100..=0x115F | 0x231A..=0x231B | 0x23E9..=0x23EC | 0x23F0 | 0x23F3 | 0x25FD..=0x25FE | 0x2614..=0x2615 | 0x2648..=0x2653 | 0x267F | 0x2693 | 0x26A1
+        | 0x26AA..=0x26AB | 0x26BD..=0x26BE | 0x26C4..=0x26C5 | 0x26CE | 0x26D4 | 0x26EA | 0x26F2..=0x26F3 | 0x26F5 | 0x26FA | 0x26FD | 0x2705 | 0x270A..=0x270B | 0x2728 | 0x274C
+        | 0x274E | 0x2753..=0x2755 | 0x2757 | 0x2795..=0x2797 | 0x27B0 | 0x27BF | 0x2B1B..=0x2B1C | 0x2B50 | 0x2B55 | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF | 0xA000..=0xA4CF | 0xA960..=0xA97F | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6
+        | 0x1F004 | 0x1F0CF | 0x1F18E | 0x1F191..=0x1F19A | 0x1F200..=0x1F64F | 0x1F680..=0x1F6FF | 0x1F900..=0x1F9FF | 0x1FA70..=0x1FAFF | 0x20000..=0x3FFFD) { return 2; }
+    1
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -39,6 +57,13 @@ pub struct Term {
     pub autowrap: bool,
     pub app_cursor: bool,
     pub bracketed_paste: bool,
+    /// xterm mouse reporting: 0 off, 1 clicks (1000), 2 clicks + drags (1002), 3 all motion (1003)
+    pub mouse: u8,
+    /// SGR (1006) mouse coordinates
+    pub mouse_sgr: bool,
+    /// focus in/out reports (1004)
+    pub focus_events: bool,
+    last_ch: char,
     pub cursor_visible: bool,
     pub cursor_shape: Option<CursorShape>,
     pub title: Option<String>,
@@ -57,7 +82,7 @@ impl Term {
         let mut t = Term {
             cols, rows, buf_height: buf_height.max(rows), lines: VecDeque::new(), vt: 0, cx: 0, cy: 0,
             saved: (0, 0, Cell::default()), pen: Cell::default(), wrap_pending: false, scroll_top: 0, scroll_bot: rows - 1,
-            autowrap: true, app_cursor: false, bracketed_paste: false, cursor_visible: true, cursor_shape: None, title: None,
+            autowrap: true, app_cursor: false, bracketed_paste: false, mouse: 0, mouse_sgr: false, focus_events: false, last_ch: ' ', cursor_visible: true, cursor_shape: None, title: None,
             alt: None, replies: vec![], bell: false, dirty: true, tabs: vec![], snapshot: None, console_color: None,
         };
         t.reset_tabs();
@@ -142,15 +167,29 @@ impl Term {
     }
 
     pub fn put(&mut self, c: char) {
+        let w = char_width(c);
+        if w == 0 { return; } // ponytail: combining marks and joiners are dropped, cells hold one char
         if self.wrap_pending && self.autowrap {
             self.cx = 0;
             self.linefeed();
             self.wrap_pending = false;
         }
-        let (cx, cy) = (self.cx, self.cy);
+        // a wide character that doesn't fit on the rest of the line goes to the next one
+        if w == 2 && self.cx + 1 >= self.cols && self.cols > 1 {
+            if !self.autowrap { return; }
+            self.cx = 0;
+            self.linefeed();
+        }
+        let (cx, cy, cols) = (self.cx, self.cy, self.cols);
         let cell = Cell { ch: c, ..self.pen };
-        self.row_mut(cy)[cx] = cell;
-        if self.cx + 1 >= self.cols { self.wrap_pending = true; } else { self.cx += 1; }
+        let row = self.row_mut(cy);
+        // overwriting half of a wide character leaves no half glyph behind
+        if row[cx].ch == WIDE_TAIL && cx > 0 { row[cx - 1].ch = ' '; }
+        if let Some(n) = row.get_mut(cx + w) && n.ch == WIDE_TAIL { n.ch = ' '; }
+        row[cx] = cell;
+        if w == 2 && cx + 1 < cols { row[cx + 1] = Cell { ch: WIDE_TAIL, ..cell }; }
+        self.last_ch = c;
+        if self.cx + w >= self.cols { self.cx = self.cols - 1; self.wrap_pending = true; } else { self.cx += w; }
         self.dirty = true;
     }
 
@@ -181,7 +220,7 @@ impl Term {
         let mut out = String::new();
         for y in y0..=y1 {
             let line = self.lines.get(y);
-            let s: String = (x0..=x1.min(self.cols - 1)).map(|x| line.and_then(|l| l.get(x)).map(|c| c.ch).unwrap_or(' ')).collect();
+            let s: String = (x0..=x1.min(self.cols - 1)).map(|x| line.and_then(|l| l.get(x)).map(|c| c.ch).unwrap_or(' ')).filter(|c| *c != WIDE_TAIL).collect();
             out.push_str(s.trim_end());
             if y != y1 { out.push('\n'); }
         }
@@ -195,9 +234,13 @@ impl Term {
             match p {
                 0 => { let ch = self.pen.ch; self.pen = Cell::default(); self.pen.ch = ch; }
                 1 => self.pen.bold = true,
+                2 => self.pen.dim = true,
+                9 => self.pen.strike = true,
+                21 => self.pen.underline = true,
+                29 => self.pen.strike = false,
                 4 => self.pen.underline = true,
                 7 => self.pen.reverse = true,
-                22 => self.pen.bold = false,
+                22 => { self.pen.bold = false; self.pen.dim = false; }
                 24 => self.pen.underline = false,
                 27 => self.pen.reverse = false,
                 30..=37 => self.pen.fg = Color::Idx((p - 30) as u8),
@@ -226,6 +269,11 @@ impl Term {
                 (true, 7) => self.autowrap = on,
                 (true, 25) => self.cursor_visible = on,
                 (true, 2004) => self.bracketed_paste = on,
+                (true, 1000) => self.mouse = if on { 1 } else { 0 },
+                (true, 1002) => self.mouse = if on { 2 } else { 0 },
+                (true, 1003) => self.mouse = if on { 3 } else { 0 },
+                (true, 1006) => self.mouse_sgr = on,
+                (true, 1004) => self.focus_events = on,
                 // private: snapshot/restore the screen (cmd's F7/F9 popups draw over text)
                 (true, 7700) => {
                     if on { self.snapshot = Some((self.lines.clone(), self.vt, self.cx, self.cy)); }
@@ -286,7 +334,9 @@ impl vte::Perform for Term {
         let ps: Vec<u16> = params.iter().map(|p| p.first().copied().unwrap_or(0)).collect();
         let private = inter.first() == Some(&b'?');
         let (rows, cols) = (self.rows, self.cols);
-        self.wrap_pending = false;
+        // only moving the cursor or erasing ends a pending wrap: less changes colours at the right
+        // margin and expects its next character on the next line
+        if !matches!(action, 'm' | 'h' | 'l' | 'n' | 'c' | 'q' | 's' | 't' | 'g') { self.wrap_pending = false; }
         match action {
             'A' => self.cy = self.cy.saturating_sub(p0(&ps, 0, 1) as usize).max(if self.cy >= self.scroll_top { self.scroll_top } else { 0 }),
             'B' | 'e' => self.cy = (self.cy + p0(&ps, 0, 1) as usize).min(rows - 1),
@@ -320,9 +370,19 @@ impl vte::Perform for Term {
             }
             'm' if !private && inter.is_empty() => {
                 // vte gives sub-params for 38:2:r:g:b; flatten them
-                let flat: Vec<u16> = params.iter().flat_map(|p| p.iter().copied()).collect();
+                // (38:2::r:g:b has an empty colour space id, 4:0 is "no underline", 4:3 a curly one)
+                let flat: Vec<u16> = params.iter().flat_map(|p| match p {
+                    [c @ (38 | 48), 2, rest @ ..] if rest.len() >= 3 => { let r = &rest[rest.len() - 3..]; vec![*c, 2, r[0], r[1], r[2]] }
+                    [4, 0] => vec![24],
+                    [4, _] => vec![4],
+                    [58, ..] => vec![],
+                    p => p.to_vec(),
+                }).collect();
                 self.sgr(&flat);
             }
+            'b' => { let c = self.last_ch; for _ in 0..p0(&ps, 0, 1).min(cols as u16) { self.put(c); } }
+            'Z' => for _ in 0..p0(&ps, 0, 1) { let mut x = self.cx.saturating_sub(1); while x > 0 && !self.tabs.get(x).copied().unwrap_or(false) { x -= 1; } self.cx = x; },
+            'I' => for _ in 0..p0(&ps, 0, 1) { self.execute(b'\t'); },
             'h' => self.set_mode(private, &ps, true),
             'l' => self.set_mode(private, &ps, false),
             's' if !private => self.saved = (self.cx, self.cy, self.pen),
@@ -419,6 +479,40 @@ mod tests {
         assert_eq!(row(&t, 0), "ab");
         feed(&mut t, "\x1b[2;5HX");
         assert_eq!(row(&t, 1), "    X");
+    }
+
+    #[test]
+    fn wide_and_combining() {
+        let mut t = Term::new(6, 3, 300);
+        feed(&mut t, "a日e\u{301}b");
+        let l = t.line(0).unwrap();
+        assert_eq!((l[0].ch, l[1].ch, l[2].ch, l[3].ch, l[4].ch), ('a', '日', WIDE_TAIL, 'e', 'b'));
+        // no room for a wide character at the last column: it wraps whole
+        feed(&mut t, "\r\n12345語");
+        assert_eq!(row(&t, 1), "12345");
+        assert_eq!(t.line(t.vt + 2).unwrap()[0].ch, '語');
+        // overwriting the first half clears the second
+        feed(&mut t, "\rx");
+        assert_eq!(t.line(t.vt + 2).unwrap()[1].ch, ' ');
+    }
+
+    #[test]
+    fn colon_colours_and_modes() {
+        let mut t = Term::new(20, 5, 300);
+        feed(&mut t, "\x1b[38:2::10:20:30;48:5:200;4:3mX\x1b[?1002;1006h\x1b[3b");
+        let l = t.line(0).unwrap();
+        assert_eq!((l[0].fg, l[0].bg, l[0].underline), (Color::Rgb(10, 20, 30), Color::Idx(200), true));
+        assert_eq!((t.mouse, t.mouse_sgr), (2, true));
+        assert_eq!(row(&t, 0), "XXXX");
+    }
+
+    #[test]
+    fn colour_change_keeps_pending_wrap() {
+        // what less sends for a coloured line that wraps: last column, SGR, space, backspace
+        let mut t = Term::new(5, 3, 300);
+        feed(&mut t, "abcde\x1b[m \x08fg");
+        assert_eq!(row(&t, 0), "abcde");
+        assert_eq!(row(&t, 1), "fg");
     }
 
     #[test]
