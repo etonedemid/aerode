@@ -1819,6 +1819,9 @@ impl Wm {
         }
         let Some(w) = self.frames.get(&e.event).copied() else {
             if e.event == self.root { self.switcher_cancel(); let _ = self.conn.ungrab_keyboard(e.time); }
+            // a window we stopped managing keeps its click grab (OBS's Audio Mixer dock): without
+            // this the pointer stays frozen by that sync grab
+            let _ = self.conn.allow_events(Allow::REPLAY_POINTER, e.time);
             return Ok(());
         };
         if self.active != w { self.focus(w); } else { self.raise(w); }
