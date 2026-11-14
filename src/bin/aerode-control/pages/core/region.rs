@@ -409,7 +409,7 @@ fn copy_settings(cp: &Rc<Cp>, cc: &[(String, String)]) {
     let c = d.content_area();
     let (lang, fmt) = user_locale();
     let kb = config::get().kbd_layouts.join(", ");
-    let kb = if kb.is_empty() { sh(&["setxkbmap", "-query"]).lines().find_map(|l| l.strip_prefix("layout:")).unwrap_or("").trim().to_string() } else { kb };
+    let kb = if kb.is_empty() { sh(&["aerode-setxkbmap", "-query"]).lines().find_map(|l| l.strip_prefix("layout:")).unwrap_or("").trim().to_string() } else { kb };
     let sys = system_locale();
     let x11 = sh(&["localectl", "status"]).lines().find_map(|l| l.trim().strip_prefix("X11 Layout:")).unwrap_or("").trim().to_string();
     let block = |t: &str, rows: Vec<(&str, String)>| { let v = vbox(4); v.pack_start(&bold(t), false, false, 0); v.pack_start(&kv_grid(&rows), false, false, 0); v };

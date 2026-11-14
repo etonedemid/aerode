@@ -1,6 +1,6 @@
 //! Control Panel pages: System (with System Properties), Display, Sound, Date and Time, Power
 //! Options, Mouse, Keyboard – one file each under hw/. Settings that X forgets at logout are saved
-//! where the session re-applies them: ~/.config/aerode/input.sh (mouse and keyboard), displays.sh
+//! where the session re-applies them: ~/.config/aerode/input.json (mouse and keyboard), displays.sh
 //! (screen layout), the xsettings/Xresources written by `desktop::write_xsettings` (text size,
 //! double-click and cursor blink time) and config.json (power plans, read by the shell's watcher).
 use gtk::glib;
@@ -224,31 +224,19 @@ pub(crate) fn slider(min: f64, max: f64, step: f64, value: f64, left: &str, righ
     (h, s)
 }
 
-/// The session's mouse and keyboard settings that X forgets at logout, as a script the session
-/// runs (data/aerode-session); also run now.
+/// Mouse and keyboard settings go to the compositor, which applies them to every device and keeps
+/// them for the next logon (~/.config/aerode/input.json).
 pub(crate) fn write_input_script() {
     let c = config::get().hw;
     let (m, k) = (&c.mouse, &c.keyboard);
-    let mut s = String::from("#!/bin/sh\n# written by aerode (Control Panel > Mouse, Keyboard)\n");
-    // 0 = never set in Keyboard Properties: leave the X server's repeat alone
-    if k.delay > 0 && k.rate > 0 { s += &format!("xset r rate {} {}\n", k.delay, k.rate); }
-    // every pointer libinput drives (mice and touchpads); properties a device lacks are skipped
-    s += "for id in $(xinput list --id-only 2>/dev/null); do\n";
-    s += &format!("  xinput set-prop $id 'libinput Left Handed Enabled' {} 2>/dev/null\n", m.left_handed as u8);
-    s += &format!("  xinput set-prop $id 'libinput Accel Speed' {:.2} 2>/dev/null\n", m.speed.clamp(-1.0, 1.0));
-    // Enhance pointer precision = the adaptive profile, else flat (libinput ≥ 1.23 has a third, custom one)
-    let (a, f) = if m.precision { (1, 0) } else { (0, 1) };
-    s += &format!("  xinput set-prop $id 'libinput Accel Profile Enabled' {a} {f} 0 2>/dev/null || xinput set-prop $id 'libinput Accel Profile Enabled' {a} {f} 2>/dev/null\n");
-    s += &format!("  xinput set-prop $id 'libinput Tapping Drag Lock Enabled' {} 2>/dev/null\n", m.click_lock as u8);
-    s += "done\n";
-    if m.hide_typing {
-        s += "pgrep -u \"$(id -u)\" -x unclutter >/dev/null || { command -v unclutter >/dev/null && unclutter --timeout 0 --jitter 2 --ignore-scrolling --keystroke --fork 2>/dev/null; } || { command -v xbanish >/dev/null && ! pgrep -u \"$(id -u)\" -x xbanish >/dev/null && (xbanish &); }\n";
-    }
-    let dir = config::conf_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join("input.sh");
-    let _ = std::fs::write(&path, s);
-    util::spawn(&["sh", &path.to_string_lossy()]);
+    aerode::wmipc::send(aerode::wmipc::Req::SetInput {
+        // 0 = never set in Keyboard Properties: leave the repeat alone
+        repeat_delay: (k.delay > 0).then_some(k.delay as i32),
+        repeat_rate: (k.rate > 0).then_some(k.rate as i32),
+        pointer_speed: Some(m.speed.clamp(-1.0, 1.0)),
+        left_handed: Some(m.left_handed),
+        natural_scroll: None,
+    });
 }
 
 /// Window of the Control Panel (parent for dialogs).

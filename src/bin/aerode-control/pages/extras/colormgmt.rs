@@ -386,7 +386,8 @@ fn identify() {
     for i in 0..disp.n_monitors() {
         let Some(m) = disp.monitor(i) else { continue };
         let g = m.geometry();
-        let w = gtk::Window::new(gtk::WindowType::Popup);
+        let w = gtk::Window::new(gtk::WindowType::Toplevel);
+        aerode::shellwin::init(&w, gtk_layer_shell::Layer::Overlay, "aerode-identify", gtk_layer_shell::KeyboardMode::None);
         w.set_default_size(160, 160);
         let l = gtk::Label::new(None);
         l.set_markup(&format!("<span font='96' weight='bold' foreground='#ffffff'>{}</span>", i + 1));
@@ -394,7 +395,7 @@ fn identify() {
         bx.pack_start(&l, true, true, 0);
         w.add(&bx);
         w.connect_draw(|_, cr| { cr.set_source_rgb(0.11, 0.24, 0.5); let _ = cr.paint(); glib::Propagation::Proceed });
-        w.move_(g.x() + 40, g.y() + g.height() - 220);
+        aerode::shellwin::place(&w, g.x() + 40, g.y() + g.height() - 220);
         w.show_all();
         glib::timeout_add_seconds_local_once(3, move || w.close());
     }

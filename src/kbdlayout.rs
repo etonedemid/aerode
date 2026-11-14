@@ -1,17 +1,12 @@
 //! Input languages the Windows 7 way: the language indicator ("EN") docked left of the notification
 //! area, a menu to pick the language, one input language per application (Win7 keeps the language per
 //! program, not globally), the switching hot key, and the saved layout list
-//! (~/.config/aerode/keyboard.sh, run by the session).
+//! (~/.config/aerode/keyboard.json, read by the compositor).
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use x11rb::connection::Connection;
-use x11rb::protocol::xkb::{self, ConnectionExt as _};
-use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask};
-use x11rb::protocol::Event;
-use x11rb::rust_connection::RustConnection;
 
 use crate::config;
 
@@ -130,31 +125,19 @@ pub fn ensure() {
     if want != cur || !same_opts { apply_with_options(&want, &opts); }
 }
 
-fn rules_names(conn: &RustConnection, root: u32) -> Vec<String> {
-    let Ok(atom) = conn.intern_atom(false, b"_XKB_RULES_NAMES").map_err(|_| ()).and_then(|c| c.reply().map_err(|_| ())) else { return vec![] };
-    conn.get_property(false, root, atom.atom, AtomEnum::STRING, 0, 1024).ok().and_then(|c| c.reply().ok())
-        .map(|r| r.value.split(|b| *b == 0).map(|s| String::from_utf8_lossy(s).into_owned()).collect()).unwrap_or_default()
-}
-
 fn split_layouts(layouts: &str, variants: &str) -> Vec<Layout> {
     let vs: Vec<&str> = variants.split(',').collect();
     layouts.split(',').filter(|l| !l.trim().is_empty()).enumerate()
         .map(|(i, l)| Layout { layout: l.trim().to_string(), variant: vs.get(i).map(|v| v.trim().to_string()).unwrap_or_default() }).collect()
 }
 
-/// Layouts and XKB options the X server uses now.
+/// Layouts and XKB options in use now.
 pub fn current() -> (Vec<Layout>, Vec<String>) {
-    let Ok((conn, screen)) = x11rb::connect(None) else { return (vec![Layout { layout: "us".into(), variant: String::new() }], vec![]) };
-    let root = conn.setup().roots[screen].root;
-    parse_names(&rules_names(&conn, root))
-}
-
-fn parse_names(n: &[String]) -> (Vec<Layout>, Vec<String>) {
-    let get = |i: usize| n.get(i).cloned().unwrap_or_default();
-    let mut layouts = split_layouts(&get(2), &get(3));
+    let v = crate::wmipc::call(&crate::wmipc::Req::KeyboardState).unwrap_or_default();
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let mut layouts = split_layouts(&get("layout"), &get("variant"));
     if layouts.is_empty() { layouts.push(Layout { layout: "us".into(), variant: String::new() }); }
-    let opts = get(4).split(',').filter(|o| !o.is_empty()).map(String::from).collect();
-    (layouts, opts)
+    (layouts, get("options").split(',').filter(|o| !o.is_empty()).map(String::from).collect())
 }
 
 /// The language-switching option in use ("" = none).
@@ -162,18 +145,13 @@ pub fn hotkey(options: &[String]) -> String {
     options.iter().find(|o| o.starts_with("grp:")).cloned().unwrap_or_default()
 }
 
-fn quote(s: &str) -> String { format!("'{}'", s.replace('\'', "'\\''")) }
-
-/// Apply a layout list with these XKB options now, and save it for the next sessions.
+/// Apply a layout list with these XKB options now; the compositor saves it for the next sessions
+/// (~/.config/aerode/keyboard.json).
 pub fn apply_with_options(layouts: &[Layout], options: &[String]) {
     if layouts.is_empty() { return; }
-    let l = layouts.iter().map(|x| x.layout.as_str()).collect::<Vec<_>>().join(",");
-    let v = layouts.iter().map(|x| x.variant.as_str()).collect::<Vec<_>>().join(",");
-    let o = options.join(",");
-    let _ = std::process::Command::new("setxkbmap").args(["-layout", &l, "-variant", &v, "-option", "", "-option", &o]).status();
-    let _ = std::fs::create_dir_all(config::conf_dir());
-    let script = format!("#!/bin/sh\n# written by aerode (Control Panel > Region and Language)\nsetxkbmap -layout {} -variant {} -option '' -option {}\n", quote(&l), quote(&v), quote(&o));
-    let _ = std::fs::write(config::conf_dir().join("keyboard.sh"), script);
+    let layout = layouts.iter().map(|x| x.layout.as_str()).collect::<Vec<_>>().join(",");
+    let variant = layouts.iter().map(|x| x.variant.as_str()).collect::<Vec<_>>().join(",");
+    crate::wmipc::send(crate::wmipc::Req::SetKeyboard { layout, variant, options: options.join(",") });
 }
 
 /// Apply layouts with a switching hot key ("" = none), keeping the user's other XKB options
@@ -189,7 +167,7 @@ pub fn apply(layouts: &[Layout], hot: &str) {
 
 /// First session: adopt the keyboard layouts set up in Plasma (kxkbrc) – under aerode nothing else applies them.
 pub fn import_plasma() {
-    if config::conf_dir().join("keyboard.sh").exists() { return; }
+    if config::conf_dir().join("keyboard.json").exists() { return; }
     let Ok(txt) = std::fs::read_to_string(gtk::glib::user_config_dir().join("kxkbrc")) else { return };
     let mut kv = HashMap::new();
     let mut in_layout = false;
@@ -211,11 +189,6 @@ pub fn import_plasma() {
 
 // ------------------------------------------------------------------ taskbar indicator
 struct Indicator {
-    conn: RustConnection,
-    root: u32,
-    a_active: u32,
-    a_rules: u32,
-    a_pid: u32,
     layouts: RefCell<Vec<Layout>>,
     group: Cell<u8>,
     /// the active window and the key its language is remembered under (its process, like Win7's per-program language)
@@ -227,26 +200,17 @@ struct Indicator {
 }
 
 impl Indicator {
-    fn atom(conn: &RustConnection, name: &str) -> u32 {
-        conn.intern_atom(false, name.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom).unwrap_or(0)
-    }
-
-    fn prop32(&self, w: u32, atom: u32, ty: impl Into<u32>) -> Option<u32> {
-        self.conn.get_property(false, w, atom, ty.into(), 0, 1).ok()?.reply().ok()?.value32()?.next()
-    }
-
-    fn lock(&self, g: u8) {
-        let none = x11rb::protocol::xproto::ModMask::from(0u16);
-        let _ = self.conn.xkb_latch_lock_state(xkb::ID::USE_CORE_KBD.into(), none, none, true, xkb::Group::from(g), none, false, 0);
-        let _ = self.conn.flush();
-    }
+    fn lock(&self, g: u8) { crate::wmipc::send(crate::wmipc::Req::SetGroup { group: g as u32 }); }
 
     fn reload(&self) {
-        *self.layouts.borrow_mut() = parse_names(&rules_names(&self.conn, self.root)).0;
-        if let Ok(st) = self.conn.xkb_get_state(xkb::ID::USE_CORE_KBD.into()).map_err(|_| ()).and_then(|c| c.reply().map_err(|_| ())) {
-            self.group.set(u8::from(st.group));
-        }
+        *self.layouts.borrow_mut() = current().0;
+        self.read_group();
         self.update();
+    }
+
+    fn read_group(&self) {
+        let g = crate::wmipc::call(&crate::wmipc::Req::KeyboardState).and_then(|v| v.get("group")?.as_u64()).unwrap_or(0) as u8;
+        self.group.set(g);
     }
 
     fn update(&self) {
@@ -261,42 +225,31 @@ impl Indicator {
     }
 
     fn active_changed(&self) {
-        let w = self.prop32(self.root, self.a_active, AtomEnum::WINDOW).unwrap_or(0);
+        let st = crate::wmipc::state();
+        let w = st.active;
         let (old, old_key) = self.active.get();
         if w == old { return; }
         if old != 0 { self.per_app.borrow_mut().insert(old_key, self.group.get()); }
         if w == 0 { self.active.set((0, 0)); return; }
-        let key = self.prop32(w, self.a_pid, AtomEnum::CARDINAL).filter(|p| *p != 0).unwrap_or(w);
+        let key = st.windows.iter().find(|x| x.id == w).map(|x| x.pid).filter(|p| *p != 0).unwrap_or(w);
         self.active.set((w, key));
         // a program seen for the first time starts in the default (first) input language
         let want = self.per_app.borrow().get(&key).copied().unwrap_or(0);
         if want != self.group.get() && (want as usize) < self.layouts.borrow().len() { self.lock(want); }
     }
 
-    fn drain(&self) {
-        while let Ok(Some(ev)) = self.conn.poll_for_event() {
-            if std::env::var("AERODE_KBD_DEBUG").is_ok() { eprintln!("kbd event: {ev:?}"); }
-            match ev {
-                Event::XkbStateNotify(e) => {
-                    let g = u8::from(e.group);
-                    if g != self.group.get() {
-                        self.group.set(g);
-                        let (w, key) = self.active.get();
-                        if w != 0 { self.per_app.borrow_mut().insert(key, g); }
-                        self.update();
-                    }
-                }
-                Event::XkbNewKeyboardNotify(_) => {
-                    self.reload();
-                    if !self.ensure_pending.replace(true) {
-                        let p = self.ensure_pending.clone();
-                        glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || { p.set(false); ensure(); });
-                    }
-                }
-                Event::PropertyNotify(p) if p.window == self.root && p.atom == self.a_rules => self.reload(),
-                Event::PropertyNotify(p) if p.window == self.root && p.atom == self.a_active => self.active_changed(),
-                _ => {}
-            }
+    /// The compositor reports a change of group or of the layout list.
+    fn keyboard_event(&self) {
+        let (was, had) = (self.group.get(), self.layouts.borrow().clone());
+        self.reload();
+        let g = self.group.get();
+        if g != was {
+            let (w, key) = self.active.get();
+            if w != 0 { self.per_app.borrow_mut().insert(key, g); }
+        }
+        if *self.layouts.borrow() != had && !self.ensure_pending.replace(true) {
+            let p = self.ensure_pending.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || { p.set(false); ensure(); });
         }
     }
 
@@ -357,15 +310,6 @@ impl Indicator {
 
 /// Dock the input-language indicator into the taskbar's notification area.
 pub fn attach(tray: &gtk::Box) {
-    let Ok((conn, screen)) = x11rb::connect(None) else { return };
-    let root = conn.setup().roots[screen].root;
-    if conn.xkb_use_extension(1, 0).ok().and_then(|c| c.reply().ok()).map(|r| r.supported).unwrap_or(false) {
-        let _ = conn.xkb_select_events(xkb::ID::USE_CORE_KBD.into(), xkb::EventType::from(0u16),
-            xkb::EventType::STATE_NOTIFY | xkb::EventType::NEW_KEYBOARD_NOTIFY,
-            xkb::MapPart::from(0u16), xkb::MapPart::from(0u16), &xkb::SelectEventsAux::new());
-    }
-    let _ = conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE));
-    let (a_active, a_rules, a_pid) = (Indicator::atom(&conn, "_NET_ACTIVE_WINDOW"), Indicator::atom(&conn, "_XKB_RULES_NAMES"), Indicator::atom(&conn, "_NET_WM_PID"));
     let label = gtk::Label::new(Some("EN"));
     let button = gtk::Button::new();
     button.style_context().add_class("tray");
@@ -375,11 +319,9 @@ pub fn attach(tray: &gtk::Box) {
     label.show();
     tray.pack_end(&button, false, false, 0);
     let ind = Rc::new(Indicator {
-        conn, root, a_active, a_rules, a_pid,
         layouts: RefCell::new(vec![]), group: Cell::new(0), active: Cell::new((0, 0)), per_app: RefCell::new(HashMap::new()),
         ensure_pending: Rc::new(Cell::new(false)), button: button.clone(), label,
     });
-    let _ = ind.conn.flush();
     ind.reload();
     ind.active_changed();
     {
@@ -398,10 +340,10 @@ pub fn attach(tray: &gtk::Box) {
             glib::Propagation::Stop
         });
     }
-    use std::os::fd::AsRawFd;
-    let fd = ind.conn.stream().as_raw_fd();
     let me = ind.clone();
-    glib::source::unix_fd_add_local(fd, glib::IOCondition::IN, move |_, _| { me.drain(); glib::ControlFlow::Continue });
-    // events may already be queued from the requests above
-    ind.drain();
+    crate::wmclient::on_event(move |ev| match ev {
+        "keyboard" => me.keyboard_event(),
+        "state" => me.active_changed(),
+        _ => {}
+    });
 }

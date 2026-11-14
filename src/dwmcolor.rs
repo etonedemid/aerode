@@ -3,7 +3,7 @@
 //! * `Colorization::from_cpl`  = themecpl.dll!CColorCplPage::SetDwmColorizationColor
 //! * `Colorization::realize`   = uDWM!CGlassColorizationParameters::AdjustWindowColorization
 //! * `ShaderConsts::glass`     = the Win7 glass pixel formula (CPU path / tests)
-//! * `ShaderConsts::picom_fit` = best `S + (1-a)*B` imitation for picom's fixed blend
+//! * `ShaderConsts::blur_fit` = best `S + (1-a)*B` imitation for the compositor's fixed blend
 //! * `hsb_to_rgb`              = themecpl.dll!CColorizationColor (colour mixer)
 //!
 //! Sources: github.com/ALTaleX531/OpenGlass, github.com/ALTaleX531/dwm_colorization_calculator.
@@ -125,10 +125,10 @@ impl ShaderConsts {
         std::array::from_fn(|k| (self.blur_balance * b[k] + lum * self.afterglow[k] + self.color[k]).clamp(0.0, 1.0))
     }
 
-    /// picom can only do `S + (1-a) * blur(B)` (premultiplied over). Least-squares (S, a) over
+    /// the blur pass can only do `S + (1-a) * blur(B)` (premultiplied over). Least-squares (S, a) over
     /// `sample` (downscaled blurred wallpaper + white/#F0F0F0/black); S is kept a valid
     /// premultiplied colour (0 <= S <= a) so cairo can paint it. Returns ([S], a).
-    pub fn picom_fit(&self, sample: &[[f64; 3]]) -> ([f64; 3], f64) {
+    pub fn blur_fit(&self, sample: &[[f64; 3]]) -> ([f64; 3], f64) {
         if self.solid { return (self.color, 1.0); }
         let n = sample.len().max(1) as f64;
         let t: Vec<[f64; 3]> = sample.iter().map(|b| self.glass(*b)).collect();
@@ -235,10 +235,10 @@ mod tests {
     }
 
     #[test]
-    fn picom_fit_is_valid_premultiplied() {
+    fn blur_fit_is_valid_premultiplied() {
         let sample = [[1.0, 1.0, 1.0], [0.94, 0.94, 0.94], [0.0, 0.0, 0.0], [0.05, 0.45, 0.8]];
         let k = Colorization::default().realize(true, false, &ThemeGlass::default());
-        let (s, a) = k.picom_fit(&sample);
+        let (s, a) = k.blur_fit(&sample);
         assert!(a > 0.0 && a < 1.0);
         assert!(s.iter().all(|v| *v >= 0.0 && *v <= a));
     }

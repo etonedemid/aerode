@@ -1,9 +1,5 @@
-//! aerode-wm – Windows 7 style window manager.
+//! aerode-wm - the Windows 7 style Wayland compositor. Everything after `--` runs inside it.
 fn main() {
     aerode::util::log_panics("aerode-wm");
-    gtk::init().ok(); // only for the icon theme / pango font setup
-    match aerode::wm::Wm::new() {
-        Ok(mut wm) => { if let Err(e) = wm.run() { eprintln!("aerode-wm: {e}"); std::process::exit(1); } }
-        Err(e) => { eprintln!("aerode-wm: {e:#}"); std::process::exit(1); }
-    }
+    if let Err(e) = aerode::wm::run() { eprintln!("aerode-wm: {e:#}"); std::process::exit(1); }
 }

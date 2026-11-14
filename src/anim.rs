@@ -3,13 +3,12 @@
 //! Win7 fades these in (and balloons out again) itself. The fade runs on the window's opacity, so it
 //! needs a compositor: GTK paints the alpha itself for windows with an RGBA visual (all of aerode's
 //! glass) and sets `_NET_WM_WINDOW_OPACITY` for the others. The window is marked `_AERODE_NO_ANIM`
-//! so that the compositor adds no fade of its own on top (picom 10/11: `fade-exclude`, picom 12: the
-//! rule in `crate::picomconf`).
+//! so that the compositor adds no fade of its own on top.
 //!
 //! Timings (estimates; Microsoft published none): flyouts fade in over 1/6 s – the UX guide's
 //! preferred short duration – and close at once; balloons fade in and out over 200 ms.
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::glib;
 use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
@@ -21,17 +20,7 @@ pub const BALLOON_OUT: Duration = Duration::from_millis(200);
 pub fn effect(key: &str) -> bool { crate::config::get().hw.effect(key) }
 
 /// Tell the compositor that `w` animates itself.
-pub fn self_animated(w: &impl IsA<gtk::Window>) {
-    fn tag(w: &gtk::Window) {
-        if let Some(gw) = w.window() {
-            gdk::property_change(&gw, &gdk::Atom::intern("_AERODE_NO_ANIM"), &gdk::Atom::intern("CARDINAL"), 32,
-                gdk::PropMode::Replace, gdk::ChangeData::ULongs(&[1]));
-        }
-    }
-    let w = w.upcast_ref::<gtk::Window>();
-    if w.is_realized() { tag(w); }
-    w.connect_realize(tag);
-}
+pub fn self_animated(_w: &impl IsA<gtk::Window>) {}
 
 fn composited(w: &gtk::Window) -> bool { WidgetExt::screen(w).map(|s| s.is_composited()).unwrap_or(false) }
 

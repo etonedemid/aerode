@@ -1,10 +1,14 @@
 #!/bin/sh
-# Aerode X session entry point (selected from your display manager).
+# Aerode Wayland session entry point (selected from your display manager).
 export XDG_CURRENT_DESKTOP=Aerode
 export XDG_SESSION_DESKTOP=aerode
+export XDG_SESSION_TYPE=wayland
 export DESKTOP_SESSION=aerode
 export GTK_THEME=Aerode
 export QT_QPA_PLATFORMTHEME=gtk3
+export QT_QPA_PLATFORM="wayland;xcb"
+export MOZ_ENABLE_WAYLAND=1
+export ELECTRON_OZONE_PLATFORM_HINT=auto
 # Chromium/Electron (Brave, Discord, Claude...) only use KWallet when the desktop says KDE; otherwise
 # they read an empty keyring, can't decrypt cookies and drop every login.
 # ponytail: also makes portals/xdg-open treat us as KDE; use per-app --password-store flags if that bites
@@ -15,11 +19,10 @@ mkdir -p "$CONF"
 # names this logon session: a restarted shell (aerode restart, a crash) inherits it and does not
 # replay the logon sound or the Startup programs (src/sounds.rs first_shell_of_session)
 export AERODE_SESSION="$$-$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)-$(date +%s)"
-SHARE=/usr/share/aerode
 # Ease of Access > Make the computer easier to see > High Contrast (GTK's built-in high contrast themes)
 [ -s "$CONF/high-contrast" ] && export GTK_THEME="$(cat "$CONF/high-contrast")"
 # Region and Language: formats and display language (~/.config/locale.conf), which not every
-# display manager reads for X sessions
+# display manager reads
 LOCALECONF="${XDG_CONFIG_HOME:-$HOME/.config}/locale.conf"
 [ -r "$LOCALECONF" ] && { set -a; . "$LOCALECONF"; set +a; }
 # pointer scheme chosen in Control Panel > Mouse > Pointers
@@ -27,7 +30,7 @@ LOCALECONF="${XDG_CONFIG_HOME:-$HOME/.config}/locale.conf"
 # pointer size chosen in Ease of Access > Make the mouse easier to use (Large / Extra Large)
 [ -s "$CONF/cursor-size" ] && export XCURSOR_SIZE="$(cat "$CONF/cursor-size")"
 # user variables from System Properties > Environment Variables (~/.config/environment.d), which
-# display managers don't read for X sessions
+# display managers don't read
 ENVGEN=/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator
 if [ -x "$ENVGEN" ]; then
   ENVD=$("$ENVGEN" 2>/dev/null)
@@ -38,9 +41,18 @@ $ENVD
 EOT
 fi
 
-# GTK/Xsettings for the session only (icons, cursors, fonts)
 ICONS=Papirus; [ -f "$HOME/.local/share/icons/Aerode/index.theme" ] && ICONS=Aerode
-# font smoothing / ClearType and recent-files privacy chosen in Control Panel (Fonts, Taskbar and Start Menu)
+# Native Wayland GTK reads its settings from dconf, not xsettings. A dconf database of our own keeps
+# them for this session only: the same keys in Plasma's or GNOME's database stay untouched.
+printf 'user-db:aerode\n' > "$CONF/dconf-profile"
+export DCONF_PROFILE="$CONF/dconf-profile"
+if command -v gsettings >/dev/null; then
+  gset() { gsettings set org.gnome.desktop.interface "$1" "$2" 2>/dev/null; }
+  gset gtk-theme Aerode; gset icon-theme "$ICONS"; gset font-name "Segoe UI 9"
+  gset cursor-theme "${XCURSOR_THEME:-Adwaita}"; gset cursor-size "${XCURSOR_SIZE:-24}"
+  gset color-scheme default
+fi
+# X11 programs under XWayland still read xsettings (font smoothing / ClearType chosen in Control Panel)
 XFT=$(cat "$CONF/xsettings-cp.conf" 2>/dev/null) || XFT='Xft/Antialias 1
 Xft/Hinting 1
 Xft/HintStyle "hintfull"
@@ -58,46 +70,20 @@ Net/EnableEventSounds 1
 Net/EnableInputFeedbackSounds 0
 $XFT
 EOT
-command -v xsettingsd >/dev/null && xsettingsd -c "$CONF/xsettingsd.conf" &
-xsetroot -cursor_name left_ptr 2>/dev/null
-[ -f "$CONF/Xresources" ] && xrdb -merge "$CONF/Xresources"
-# Ease of Access settings that start each time you log on (Sticky/Filter/Mouse Keys, pointer
-# size and colour, Magnifier/Narrator/On-Screen Keyboard)
+
+# Everything that needs the compositor runs inside it: it exports WAYLAND_DISPLAY and DISPLAY to them.
+cat > "$CONF/session-inner.sh" <<'INNER'
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE KDE_SESSION_VERSION DCONF_PROFILE 2>/dev/null
+command -v xsettingsd >/dev/null && xsettingsd -c "${XDG_CONFIG_HOME:-$HOME/.config}/aerode/xsettingsd.conf" &
+# Ease of Access settings that start each time you log on (pointer size and colour, Magnifier/Narrator/On-Screen Keyboard)
 command -v aerode-control >/dev/null && aerode-control --apply-access &
-
-# settings saved by Control Panel (resolution + refresh rate, keyboard layouts, screen timeout)
-[ -x "$CONF/displays.sh" ] || [ -f "$CONF/displays.sh" ] && sh "$CONF/displays.sh"
-[ -f "$CONF/keyboard.sh" ] && sh "$CONF/keyboard.sh"
-# Mouse and Keyboard Properties (xinput pointer speed/buttons, key repeat)
-[ -f "$CONF/input.sh" ] && sh "$CONF/input.sh"
-# Power Options > Turn off the display (the shell's power watcher keeps it up to date with the plan)
-[ -f "$CONF/display-off" ] && { t=$(cat "$CONF/display-off"); [ "$t" = 0 ] && xset -dpms || xset +dpms dpms 0 0 "$t"; }
-# Screen Saver Settings > Wait (seconds, 0 = no screen saver and no lock); xss-lock below runs it
-[ -f "$CONF/screensaver-wait" ] && { t=$(cat "$CONF/screensaver-wait"); [ "$t" = 0 ] && xset s off || xset s "$t"; }
-
-dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP KDE_SESSION_VERSION 2>/dev/null
-# helpers Plasma would provide (all optional)
 # UAC-style polkit agent (falls back to other agents if ours is missing)
 if command -v aerode-polkit >/dev/null; then aerode-polkit &
 else for agent in /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/lib/lxqt-policykit-agent; do
   [ -x "$agent" ] && { "$agent" & break; }; done; fi
-command -v xss-lock >/dev/null && xss-lock -- aerode screensaver &
-# a copy saved by an older Control Panel lacks newer rules: rebuild it from the shipped one (keeping
-# VSync and window shadows off); `aerode restart` does the same (src/picomconf.rs)
-if [ -f "$CONF/picom.conf" ] && ! grep -q "^# aerode-picom 4" "$CONF/picom.conf"; then
-  VS=; SH=
-  grep -q "vsync = false" "$CONF/picom.conf" && VS='s/vsync = true;/vsync = false;/'
-  grep -q "^shadow = false;" "$CONF/picom.conf" && SH='0,/^shadow = true;/s//shadow = false;/'
-  if [ -n "$VS$SH" ]; then sed -e "${VS:-s/^\$//}" -e "${SH:-s/^\$//}" "$SHARE/picom.conf" > "$CONF/picom.conf"; else rm -f "$CONF/picom.conf"; fi
-fi
-PICOM_CONF="$SHARE/picom.conf"; [ -f "$CONF/picom.conf" ] && PICOM_CONF="$CONF/picom.conf"
-# picom >= 12.3 runs a generated config that includes this one and adds Windows 7's window
-# animations as window rules; older picom (which would ignore them) keeps the plain fades
-RUN_CONF=$(aerode picom-config "$PICOM_CONF" 2>/dev/null) && [ -f "$RUN_CONF" ] && PICOM_CONF="$RUN_CONF"
-# one queued frame: NVIDIA's default queue makes dragged windows trail the cursor (same in src/main.rs)
-command -v picom >/dev/null && [ ! -f "$CONF/no-compositor" ] && __GL_MaxFramesAllowed=1 picom --config "$PICOM_CONF" -b
 # automounting for AutoPlay. Win7 plays Device Connect and opens AutoPlay, with no balloon for the
 # mount: unless the user configured udiskie, keep only its error balloons ("Job failed")
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/aerode"
 UDISKIE=; UDCONF="${XDG_CONFIG_HOME:-$HOME/.config}/udiskie"
 if [ ! -e "$UDCONF/config.yml" ] && [ ! -e "$UDCONF/config.json" ]; then
   printf '%s\n' '{"notifications": {"device_mounted": false, "device_unmounted": false, "device_locked": false,' \
@@ -106,29 +92,19 @@ if [ ! -e "$UDCONF/config.yml" ] && [ ! -e "$UDCONF/config.json" ]; then
 fi
 command -v udiskie >/dev/null && udiskie --no-tray $UDISKIE &
 [ -z "$KWALLET" ] && command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets,ssh 2>/dev/null)" && export SSH_AUTH_SOCK
-
 # the shell (desktop, taskbar, Start): started again if it crashes (a panic in a GTK callback
 # aborts); 'aerode quit' (0) and 'aerode restart' (SIGTERM) end the loop
-(
-  crashes=""
-  while :; do
-    aerode shell; rc=$?
-    case $rc in 101|134|139) ;; *) exit 0 ;; esac
-    now=$(date +%s); crashes="$(for t in $crashes; do [ $((now - t)) -lt 60 ] && echo "$t"; done) $now"
-    [ "$(echo $crashes | wc -w)" -ge 5 ] && exit 0
-    echo "aerode-session: aerode shell crashed ($rc), restarting" >&2
-    sleep 1
-  done
-) &
-# the window manager is the session leader: logging off ends it (SIGTERM). Should it crash
-# (panic 101, abort 134, segfault 139), start it again: the X server hands the windows back and
-# the new instance adopts them. Give up after 5 crashes within a minute.
 crashes=""
 while :; do
-  aerode-wm; rc=$?
-  case $rc in 101|134|139) ;; *) exit $rc ;; esac
+  aerode shell; rc=$?
+  case $rc in 101|134|139) ;; *) exit 0 ;; esac
   now=$(date +%s); crashes="$(for t in $crashes; do [ $((now - t)) -lt 60 ] && echo "$t"; done) $now"
-  [ "$(echo $crashes | wc -w)" -ge 5 ] && exit $rc
-  echo "aerode-session: aerode-wm crashed ($rc), restarting" >&2
+  [ "$(echo $crashes | wc -w)" -ge 5 ] && exit 0
+  echo "aerode-session: aerode shell crashed ($rc), restarting" >&2
   sleep 1
 done
+INNER
+export KWALLET
+# the compositor is the session leader: logging off ends it. If it crashes every program goes with it
+# (their Wayland connection is gone), so there is nothing to come back to: back to the login screen.
+exec aerode-wm -- "sh $CONF/session-inner.sh"

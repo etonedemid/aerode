@@ -861,14 +861,8 @@ fn d_performance(r: &mut Report) {
     r.step("Checking visual effects");
     let gl = sh(&["glxinfo", "-B"]).stdout;
     let software = gl.lines().find_map(|l| l.trim().strip_prefix("OpenGL renderer string:")).map(|s| s.contains("llvmpipe") || s.contains("softpipe")).unwrap_or(false);
-    let composited = sh(&["pgrep", "-x", "picom"]).ok;
-    if software && composited {
-        r.problem("Visual effects slow down this computer", "Aero glass and animations are drawn without a graphics driver, which makes everything slower.",
-            Some(("Turn off desktop composition", Fix::Main(|| {
-                let _ = std::fs::create_dir_all(config::conf_dir());
-                let _ = std::fs::write(config::conf_dir().join("no-compositor"), "");
-                util::spawn(&["aerode", "restart"])
-            }))));
+    if software {
+        r.problem("Visual effects slow down this computer", "Aero glass and animations are drawn without a graphics driver, which makes everything slower.", None);
     } else { r.ok("Visual effects slow down this computer"); }
 }
 
@@ -906,19 +900,10 @@ fn d_homegroup(r: &mut Report) {
 
 fn d_aero(r: &mut Report) {
     r.step("Checking desktop composition");
-    let flag = config::conf_dir().join("no-compositor");
-    if flag.exists() {
-        r.problem("Desktop composition is disabled", "Aero glass, shadows and animations are turned off in Display settings.", Some(("Turn on desktop composition", Fix::Main(|| {
-            let _ = std::fs::remove_file(config::conf_dir().join("no-compositor"));
-            util::spawn(&["aerode", "restart"])
-        }))));
-        return;
-    }
     r.ok("Desktop composition is disabled");
-    if !have("picom") { r.problem("The Desktop Window Manager is not installed", "Aero effects need the picom compositor. Install the picom package.", None); return; }
     r.ok("The Desktop Window Manager is not installed");
-    if !sh(&["pgrep", "-x", "picom"]).ok {
-        r.problem("The Desktop Window Manager is not running", "The compositor that draws Aero glass is not running.", Some(("Restart the Desktop Window Manager", Fix::Main(|| util::spawn(&["aerode", "restart"])))));
+    if !sh(&["pgrep", "-x", "aerode-wm"]).ok {
+        r.problem("The Desktop Window Manager is not running", "The compositor that draws Aero glass is not running. Log off and back on.", None);
     } else { r.ok("The Desktop Window Manager is not running"); }
     r.step("Checking color depth");
     let xd = sh(&["xdpyinfo"]).stdout;
@@ -940,7 +925,7 @@ type XOut = (String, bool, String, f64, String, Vec<(String, Vec<f64>)>);
 
 fn xrandr_outputs() -> Vec<XOut> {
     let mut outs: Vec<XOut> = vec![];
-    for l in sh(&["xrandr", "--query"]).stdout.lines() {
+    for l in sh(&["aerode-xrandr", "--query"]).stdout.lines() {
         if !l.starts_with(' ') {
             if l.contains(" connected") {
                 let name = l.split_whitespace().next().unwrap_or("").to_string();
@@ -969,7 +954,7 @@ fn xrandr_outputs() -> Vec<XOut> {
 
 fn d_display(r: &mut Report) {
     r.step("Checking displays");
-    if !have("xrandr") { r.problem("Display settings can't be read", "The xrandr program is missing (install xorg-xrandr).", None); return; }
+    if !have("aerode-xrandr") { r.problem("Display settings can't be read", "The xrandr program is missing (install xorg-xrandr).", None); return; }
     let outs = xrandr_outputs();
     for o in &outs { r.info(format!("{}: {} at {:.0} Hz (native {})", o.0, if o.2.is_empty() { "off" } else { &o.2 }, o.3, o.4)); }
     let saved = config::conf_dir().join("displays.sh");
@@ -1000,12 +985,12 @@ fn d_display(r: &mut Report) {
         let max = o.5.iter().find(|(m, _)| *m == o.2).map(|(_, rs)| rs.iter().cloned().fold(0.0, f64::max)).unwrap_or(0.0);
         let name = format!("The refresh rate of {} is lower than it supports", o.0);
         if max > o.3 + 1.5 {
-            r.problem(&name, format!("{} runs at {:.0} Hz, but supports {max:.0} Hz at {}.", o.0, o.3, o.2), Some(("Use the highest refresh rate", run1(&["xrandr", "--output", &o.0, "--mode", &o.2, "--rate", &format!("{max:.2}")]))));
+            r.problem(&name, format!("{} runs at {:.0} Hz, but supports {max:.0} Hz at {}.", o.0, o.3, o.2), Some(("Use the highest refresh rate", run1(&["aerode-xrandr", "--output", &o.0, "--mode", &o.2, "--rate", &format!("{max:.2}")]))));
         } else { r.ok(&name); }
         if !o.4.is_empty() && o.4 != o.2 {
             let pr = o.5.iter().find(|(m, _)| *m == o.4).map(|(_, rs)| rs.iter().cloned().fold(0.0, f64::max)).unwrap_or(60.0);
             r.problem(&format!("{} is not at its recommended resolution", o.0), format!("{} is at {}; its native resolution is {}. Text and pictures look sharpest at the native resolution.", o.0, o.2, o.4),
-                Some(("Reset the resolution", run1(&["xrandr", "--output", &o.0, "--mode", &o.4, "--rate", &format!("{pr:.2}")]))));
+                Some(("Reset the resolution", run1(&["aerode-xrandr", "--output", &o.0, "--mode", &o.4, "--rate", &format!("{pr:.2}")]))));
         } else { r.ok(&format!("{} is not at its recommended resolution", o.0)); }
     }
 }
@@ -1049,9 +1034,9 @@ fn d_keyboard(r: &mut Report) {
             Some(("Apply your keyboard layouts again", Fix::Main(|| { aerode::kbdlayout::ensure(); true }))));
     } else { r.ok("The keyboard layouts are not the ones you chose"); }
     r.step("Checking key repeat");
-    let q = sh(&["xset", "q"]).stdout;
+    let q = sh(&["aerode-xset", "q"]).stdout;
     if q.lines().any(|l| l.contains("auto repeat:") && l.contains("off")) {
-        r.problem("Key repeat is turned off", "Holding down a key types it only once.", Some(("Turn on key repeat", run1(&["xset", "r", "on"]))));
+        r.problem("Key repeat is turned off", "Holding down a key types it only once.", Some(("Turn on key repeat", run1(&["aerode-xset", "r", "on"]))));
     } else { r.ok("Key repeat is turned off"); }
 }
 
@@ -1205,11 +1190,11 @@ fn d_power(r: &mut Report) {
         }
     r.step("Checking display and sleep settings");
     let presenting = std::fs::read_to_string(config::conf_dir().join("presentation.json")).map(|s| s.contains("\"active\": true")).unwrap_or(false);
-    let q = sh(&["xset", "q"]).stdout;
+    let q = sh(&["aerode-xset", "q"]).stdout;
     let dpms_off = q.contains("DPMS is Disabled");
     let saver = q.lines().find_map(|l| l.trim().strip_prefix("timeout:")).and_then(|s| s.split_whitespace().next()).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     if !presenting && dpms_off && saver == 0 && !q.is_empty() {
-        r.problem("The display never turns off", "The screen stays on when the computer is not used.", Some(("Turn off the display after 10 minutes", Fix::Run(vec![sv(&["xset", "+dpms", "dpms", "600", "600", "600"]), sv(&["xset", "s", "600"])]))));
+        r.problem("The display never turns off", "The screen stays on when the computer is not used.", Some(("Turn off the display after 10 minutes", Fix::Run(vec![sv(&["aerode-xset", "+dpms", "dpms", "600", "600", "600"]), sv(&["aerode-xset", "s", "600"])]))));
     } else { r.ok("The display never turns off"); }
 }
 

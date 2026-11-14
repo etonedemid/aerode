@@ -198,7 +198,7 @@ pub fn page_screensaver(cp: &Rc<Cp>) -> gtk::Widget {
         // the X screen saver timer fires xss-lock, which runs `aerode screensaver`
         let secs = if name.is_empty() && !lock_on { 0 } else { wait_m * 60 };
         let _ = std::fs::write(config::conf_dir().join("screensaver-wait"), secs.to_string());
-        if secs == 0 { util::spawn(&["xset", "s", "off"]); } else { util::spawn(&["xset", "s", &secs.to_string()]); }
+        if secs == 0 { util::spawn(&["aerode-xset", "s", "off"]); } else { util::spawn(&["aerode-xset", "s", &secs.to_string()]); }
         if !util::which("xss-lock") {
             let m = gtk::MessageDialog::new(Some(&win), gtk::DialogFlags::MODAL, gtk::MessageType::Warning, gtk::ButtonsType::Ok,
                 "The screen saver needs xss-lock, which is not installed.");

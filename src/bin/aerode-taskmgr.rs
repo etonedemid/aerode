@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use aerode::{config, theme, util, x11::Wm};
+use aerode::{config, theme, util, wmclient::Wm};
 
 type PerfBlock<'a> = (&'a str, &'a [(&'a str, &'static str)], i32, i32);
 
@@ -506,7 +506,6 @@ impl Tm {
 
     fn refresh_apps(&self) {
         let Some(wm) = &self.wm else { return };
-        wm.drain();
         let clients = wm.clients();
         let mut have: HashMap<u32, gtk::TreeIter> = HashMap::new();
         if let Some(it) = self.apps.iter_first() {

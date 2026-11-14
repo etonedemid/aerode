@@ -779,7 +779,7 @@ struct Rendered {
 
 struct Daemon {
     tray: gtk::Box,
-    wm: Rc<crate::x11::Wm>,
+    wm: Rc<crate::wmclient::Wm>,
     win: gtk::Window,
     body: gtk::Box,
     close_state: Rc<Cell<usize>>,
@@ -793,13 +793,12 @@ struct Daemon {
     busy: Cell<bool>,
     pressed: Cell<bool>,
     out: async_channel::Sender<Signal>,
-    fullscreen_atom: Cell<u32>,
     /// when the last balloon sound played
     last_sound: Cell<Option<Instant>>,
 }
 
 /// Start serving org.freedesktop.Notifications; balloons point into `tray`.
-pub fn start(tray: &gtk::Box, wm: Rc<crate::x11::Wm>) {
+pub fn start(tray: &gtk::Box, wm: Rc<crate::wmclient::Wm>) {
     let (tx, rx) = async_channel::unbounded::<Msg>();
     let (stx, srx) = async_channel::unbounded::<Signal>();
     if let Err(e) = std::thread::Builder::new().name("aerode-notify".into()).spawn(move || dbus_thread(tx, srx)) {
@@ -818,10 +817,10 @@ pub fn start(tray: &gtk::Box, wm: Rc<crate::x11::Wm>) {
 }
 
 impl Daemon {
-    fn new(tray: gtk::Box, wm: Rc<crate::x11::Wm>, out: async_channel::Sender<Signal>) -> Rc<Daemon> {
-        let win = gtk::Window::new(gtk::WindowType::Popup);
+    fn new(tray: gtk::Box, wm: Rc<crate::wmclient::Wm>, out: async_channel::Sender<Signal>) -> Rc<Daemon> {
+        let win = gtk::Window::new(gtk::WindowType::Toplevel);
         win.set_title("Notification");
-        win.set_type_hint(gdk::WindowTypeHint::Notification);
+        crate::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-balloon", gtk_layer_shell::KeyboardMode::None);
         win.set_app_paintable(true);
         win.set_resizable(false);
         glass::enable_rgba(&win);
@@ -831,20 +830,6 @@ impl Daemon {
         win.style_context().add_class("balloon");
         win.add_events(gdk::EventMask::BUTTON_PRESS_MASK | gdk::EventMask::BUTTON_RELEASE_MASK
             | gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
-        {
-            // the balloon draws its own (Win7-sized) shadow: say so like GTK's client-side
-            // decorations do, which compositors honour (picom: shadow-exclude _GTK_FRAME_EXTENTS)
-            let wm = wm.clone();
-            win.connect_realize(move |w| {
-                use x11rb::connection::Connection;
-                use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
-                use x11rb::wrapper::ConnectionExt as _;
-                let Some(xid) = w.window().and_then(|g| g.downcast::<gdkx11::X11Window>().ok()).map(|x| x.xid() as u32) else { return };
-                let Some(atom) = wm.conn.intern_atom(false, b"_GTK_FRAME_EXTENTS").ok().and_then(|c| c.reply().ok()).map(|r| r.atom) else { return };
-                let _ = wm.conn.change_property32(PropMode::REPLACE, xid, atom, AtomEnum::CARDINAL, &[0, SHADOW as u32, 0, SHADOW as u32]);
-                let _ = wm.conn.flush();
-            });
-        }
         // [icon | title, body, links | close] inside the body, the stem and shadow below/right
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.set_margin_start(11);
@@ -867,7 +852,7 @@ impl Daemon {
         let d = Rc::new(Daemon {
             tray, wm, win: win.clone(), body, close_state: Rc::new(Cell::new(0)), assets: load_assets(),
             bg: RefCell::new(None), anchor: Cell::new((0, 0)), queue: RefCell::new(VecDeque::new()),
-            cur: RefCell::new(None), busy: Cell::new(false), pressed: Cell::new(false), out, fullscreen_atom: Cell::new(0),
+            cur: RefCell::new(None), busy: Cell::new(false), pressed: Cell::new(false), out,
             last_sound: Cell::new(None),
         });
         let weak = Rc::downgrade(&d);
@@ -1034,18 +1019,8 @@ impl Daemon {
 
     /// Win7 holds notifications back while a full-screen program is in front.
     fn fullscreen_in_front(&self) -> bool {
-        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
-        let c = &self.wm.conn;
-        if self.fullscreen_atom.get() == 0 {
-            let a = c.intern_atom(false, b"_NET_WM_STATE_FULLSCREEN").ok().and_then(|r| r.reply().ok()).map(|r| r.atom).unwrap_or(0);
-            self.fullscreen_atom.set(a);
-        }
-        let active = self.wm.active();
-        if active == 0 { return false; }
-        c.get_property(false, active, self.wm.atoms._NET_WM_STATE, AtomEnum::ATOM, 0, 64).ok()
-            .and_then(|r| r.reply().ok())
-            .and_then(|r| r.value32().map(|mut v| v.any(|a| a == self.fullscreen_atom.get())))
-            .unwrap_or(false)
+        let st = self.wm.state();
+        st.windows.iter().find(|w| w.id == st.active).is_some_and(|w| w.fullscreen)
     }
 
     /// Show the next queued notification if nothing is on screen.
@@ -1132,7 +1107,7 @@ impl Daemon {
     fn anchor_of(&self, w: &gtk::Widget) -> (i32, i32) {
         let found = (|| {
             let top = w.toplevel()?;
-            let (_, ox, oy) = top.window()?.origin();
+            let (ox, oy) = top.clone().downcast::<gtk::Window>().ok().map(|t| crate::shellwin::pos(&t))?;
             let (x, _) = w.translate_coordinates(&top, 0, 0)?;
             let a = w.allocation();
             (a.width() > 1).then_some((ox + x + a.width() / 2, oy))
@@ -1267,8 +1242,7 @@ impl Daemon {
             fg
         };
         // without a compositor alpha is ignored: cut the window to the opaque balloon
-        self.win.shape_combine_region(Some(&alpha_region(&surf, if comp { 0 } else { 127 })));
-        self.win.move_(x, y);
+        crate::shellwin::place(&self.win, x, y);
         *self.bg.borrow_mut() = Some(Rendered { size: (ww, wh), anchor, composited: comp, surf, input });
         self.win.queue_draw();
     }

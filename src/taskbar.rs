@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::x11::{Client, Wm};
+use crate::wmclient::{Client, Wm};
 use crate::{config, flyouts, glass, msstyles, shellstyle, util};
 
 type MenuItems = Vec<(String, Option<Rc<dyn Fn()>>)>;
@@ -91,16 +91,12 @@ impl Taskbar {
         let win = gtk::Window::new(gtk::WindowType::Toplevel);
         win.set_application(Some(app));
         win.set_title("Taskbar");
-        win.set_type_hint(gdk::WindowTypeHint::Dock);
+        crate::shellwin::init(&win, gtk_layer_shell::Layer::Top, "aerode-glass-panel", gtk_layer_shell::KeyboardMode::OnDemand);
         win.set_decorated(false);
-        win.set_skip_taskbar_hint(true);
-        win.set_skip_pager_hint(true);
-        win.stick();
-        win.set_keep_above(true);
         win.set_app_paintable(true);
         crate::glass::enable_rgba(&win);
         win.set_size_request(geo.width(), h);
-        win.move_(geo.x(), geo.y() + geo.height() - h);
+        crate::shellwin::dock_bottom(&win, geo.x(), geo.y() + geo.height() - h, h);
         win.style_context().add_class("aerode");
         win.style_context().add_class("taskbar");
         if config::get().taskbar.small_icons { win.style_context().add_class("small"); }
@@ -263,20 +259,11 @@ impl Taskbar {
             let w = win.clone();
             glass::on_change(move || w.queue_draw());
         }
-        {
-            let wm = wm.clone();
-            win.connect_realize(move |w| {
-                let geo = util::primary_geometry();
-                if let Some(x) = w.window().and_then(|g| g.downcast::<gdkx11::X11Window>().ok()) {
-                    wm.set_strut(x.xid() as u32, (h) as u32, geo.x() as u32, (geo.x() + geo.width() - 1) as u32);
-                }
-            });
-        }
         win.show_all();
         tb.refresh();
         {
             let tb2 = tb.clone();
-            crate::x11::watch(wm, move || tb2.refresh());
+            crate::wmclient::watch(wm, move || tb2.refresh());
         }
         tb
     }
@@ -620,10 +607,7 @@ impl Taskbar {
             .and_then(|e| e.downcast::<gtk::EventBox>().ok()).and_then(|e| e.child()) { orb.set_size_request(54, h); }
         self.win.set_size_request(geo.width(), h);
         self.win.resize(geo.width(), h);
-        self.win.move_(geo.x(), geo.y() + geo.height() - h);
-        if let Some(x) = self.win.window().and_then(|g| g.downcast::<gdkx11::X11Window>().ok()) {
-            self.wm.set_strut(x.xid() as u32, h as u32, geo.x() as u32, (geo.x() + geo.width() - 1) as u32);
-        }
+        crate::shellwin::dock_bottom(&self.win, geo.x(), geo.y() + geo.height() - h, h);
         // refresh() rebuilds the button contents at the new icon size
         for g in self.groups.borrow().iter() { if let Some(c) = g.button.child() { g.button.remove(&c); } }
     }

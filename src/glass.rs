@@ -1,7 +1,7 @@
 //! Wallpaper handling and the Aero glass renderer.
 //!
-//! Glass is Windows 7's DWM formula (`dwmcolor`): with a compositor (picom) the surface paints the
-//! translucent colour from `picom_fit` and picom blurs what is behind it; without one the glass is
+//! Glass is Windows 7's DWM formula (`dwmcolor`): with a compositor the surface paints the
+//! translucent colour from `blur_fit` and the compositor blurs what is behind it; without one the glass is
 //! faked from the wallpaper (Win7's sigma-3 blur, then colourised); with "Enable transparency" off
 //! it is a solid colour. The DWM reflection streaks (DWMWindow part 40) go on top.
 //!
@@ -61,7 +61,7 @@ pub fn reload() {
         .unwrap_or_else(|| generated(w, h));
     let blurred = blur(&sharp, 6);
     WP.with(|x| *x.borrow_mut() = Some(Rc::new(Wallpaper { sharp, blurred })));
-    // the glass maths depends on the wallpaper (fake glass, picom fit)
+    // the glass maths depends on the wallpaper (fake glass, blur fit)
     BACKDROP.with(|b| *b.borrow_mut() = None);
     FITS.with(|f| f.borrow_mut().clear());
     LISTENERS.with(|l| l.borrow().iter().for_each(|f| f()));
@@ -202,7 +202,7 @@ pub fn rounded(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
 }
 
 /// True when a compositor is running: glass surfaces then paint translucent
-/// pixels and let the compositor (picom) blur what is behind them.
+/// pixels and let the compositor blur what is behind them.
 pub fn composited() -> bool {
     gtk::gdk::Screen::default().map(|s| s.is_composited()).unwrap_or(false)
 }
@@ -224,16 +224,8 @@ pub fn from_prop(v: &[u32]) -> Option<Colorization> {
     })
 }
 
-/// Our own X connection, only for the root property (its events never mix with GDK's).
-struct Watch {
-    conn: x11rb::rust_connection::RustConnection,
-    root: u32,
-    atom: u32,
-}
-
 thread_local! {
-    static WATCH: RefCell<Option<Rc<Watch>>> = const { RefCell::new(None) };
-    static WATCH_TRIED: Cell<bool> = const { Cell::new(false) };
+    static WATCH_STARTED: Cell<bool> = const { Cell::new(false) };
     static CURRENT: Cell<Option<Colorization>> = const { Cell::new(None) };
     static CHANGE_PENDING: Cell<bool> = const { Cell::new(false) };
     static COLOR_LISTENERS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
@@ -241,79 +233,34 @@ thread_local! {
     static GLASS_WINDOWS: RefCell<Vec<glib::WeakRef<gtk::Window>>> = const { RefCell::new(Vec::new()) };
 }
 
-fn watch() -> Option<Rc<Watch>> {
-    use std::os::fd::AsRawFd;
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask};
-    if let Some(w) = WATCH.with(|w| w.borrow().clone()) { return Some(w); }
-    if WATCH_TRIED.with(|t| t.replace(true)) { return None; }
-    let (conn, screen) = x11rb::connect(None).ok()?;
-    let root = conn.setup().roots[screen].root;
-    let atom = conn.intern_atom(false, COLORIZATION_PROP.as_bytes()).ok()?.reply().ok()?.atom;
-    conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE)).ok()?;
-    conn.flush().ok()?;
-    let fd = conn.stream().as_raw_fd();
-    let w = Rc::new(Watch { conn, root, atom });
-    WATCH.with(|x| *x.borrow_mut() = Some(w.clone()));
-    glib::source::unix_fd_add_local(fd, glib::IOCondition::IN, |_, _| {
-        if pump() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break }
-    });
-    if let Some(s) = gtk::gdk::Screen::default() {
-        // glass is painted differently with and without a compositor
-        s.connect_composited_changed(|_| for_glass_windows(|w| { tag_glass(w); gtk::prelude::WidgetExt::queue_draw(w) }));
-    }
-    Some(w)
-}
-
-/// Handle what arrived on the watch connection (also events queued while waiting for a reply).
-/// False once the connection is gone.
-fn pump() -> bool {
-    use x11rb::connection::Connection;
-    let Some(w) = WATCH.with(|w| w.borrow().clone()) else { return false };
-    let mut hit = false;
-    let alive = loop {
-        match w.conn.poll_for_event() {
-            Ok(Some(x11rb::protocol::Event::PropertyNotify(p))) => hit |= p.atom == w.atom && p.window == w.root,
-            Ok(Some(_)) => {}
-            Ok(None) => break true,
-            Err(_) => break false,
+/// Follow the compositor's colourisation events.
+fn watch() {
+    if WATCH_STARTED.with(|t| t.replace(true)) { return; }
+    crate::wmclient::on_event(|ev| {
+        if ev == "colorization" && !CHANGE_PENDING.with(|p| p.replace(true)) {
+            // a dragged slider writes many values: repaint once per main-loop turn
+            glib::idle_add_local_once(|| {
+                CHANGE_PENDING.with(|p| p.set(false));
+                changed();
+            });
         }
-    };
-    if hit && !CHANGE_PENDING.with(|p| p.replace(true)) {
-        // a dragged slider writes many values: repaint once per main-loop turn
-        glib::idle_add_local_once(|| {
-            CHANGE_PENDING.with(|p| p.set(false));
-            changed();
-        });
-    }
-    alive
+    });
 }
 
-/// The live `_AERODE_COLORIZATION`, if somebody published one.
+/// The live colourisation, if somebody published one.
 pub fn read_property() -> Option<Colorization> {
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
-    let w = watch()?;
-    let reply = w.conn.get_property(false, w.root, w.atom, AtomEnum::CARDINAL, 0, 16).ok().and_then(|c| c.reply().ok());
-    pump();
-    from_prop(&reply?.value32()?.collect::<Vec<u32>>())
+    watch();
+    let v = crate::wmipc::call(&crate::wmipc::Req::GetColorization)?;
+    let list: Vec<u32> = v.get("value")?.as_array()?.iter().filter_map(|x| x.as_u64().map(|x| x as u32)).collect();
+    from_prop(&list)
 }
 
-/// Broadcast a colourisation to every glass painter (all processes, the WM included);
-/// `None` removes the property, which sends everybody back to config.json.
+/// Broadcast a colourisation to every glass painter (all processes, the compositor included);
+/// `None` sends everybody back to config.json.
 pub fn publish(c: Option<&Colorization>) {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
-    use x11rb::wrapper::ConnectionExt as _;
-    let Some(w) = watch() else {
-        // no X connection of our own: at least this process follows
-        apply(c.copied().unwrap_or_else(|| config::get().colorization.dwm()));
-        return;
-    };
-    let _ = match c {
-        Some(c) => w.conn.change_property32(PropMode::REPLACE, w.root, w.atom, AtomEnum::CARDINAL, &to_prop(c)).map(|_| ()),
-        None => w.conn.delete_property(w.root, w.atom).map(|_| ()),
-    };
-    let _ = w.conn.flush();
+    let sent = crate::wmipc::call(&crate::wmipc::Req::SetColorization { value: c.map(to_prop) });
+    // no compositor to tell: at least this process follows
+    if sent.is_none() { apply(c.copied().unwrap_or_else(|| config::get().colorization.dwm())); }
 }
 
 /// The colourisation glass is painted with: the live root property, else the saved one.
@@ -340,7 +287,7 @@ fn changed() {
 
 fn apply(new: Colorization) {
     if CURRENT.with(|c| c.replace(Some(new))) == Some(new) { return; }
-    for_glass_windows(|w| { tag_glass(w); gtk::prelude::WidgetExt::queue_draw(w) });
+    for_glass_windows(|w| gtk::prelude::WidgetExt::queue_draw(w));
     COLOR_LISTENERS.with(|l| l.borrow().iter().for_each(|f| f()));
 }
 
@@ -353,27 +300,11 @@ fn for_glass_windows(f: impl Fn(&gtk::Window)) {
     live.iter().for_each(f);
 }
 
-/// Tag a window as aerode glass (picom blurs behind tagged windows only), or untag it while
-/// "Enable transparency" is off: a solid surface needs no blur behind it.
-fn tag_glass(w: &gtk::Window) {
-    use gtk::prelude::*;
-    let Some(gw) = w.window() else { return };
-    let atom = gtk::gdk::Atom::intern("_AERODE_GLASS");
-    if colorization().opaque {
-        gtk::gdk::property_delete(&gw, &atom);
-    } else {
-        gtk::gdk::property_change(&gw, &atom, &gtk::gdk::Atom::intern("CARDINAL"), 32,
-            gtk::gdk::PropMode::Replace, gtk::gdk::ChangeData::ULongs(&[1]));
-    }
-}
-
-/// Give a toplevel an RGBA visual so it can be truly translucent, tag it as glass, and keep it
+/// Give a toplevel an RGBA visual so it can be truly translucent and keep it
 /// painted with the live colourisation.
 pub fn enable_rgba(w: &gtk::Window) {
     use gtk::prelude::*;
     let _ = colorization(); // starts the watch
-    if w.is_realized() { tag_glass(w); }
-    w.connect_realize(tag_glass);
     if let Some(v) = WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }
     w.connect_screen_changed(|w, _| {
         if let Some(v) = WidgetExt::screen(w).and_then(|s| s.rgba_visual()) { w.set_visual(Some(&v)); }
@@ -404,7 +335,7 @@ thread_local! {
     static REFLECTION: Option<cairo::ImageSurface> = load_reflection();
     /// the wallpaper blurred the way Win7 blurs glass backdrops (no compositor: fake glass)
     static BACKDROP: RefCell<Option<Rc<Backdrop>>> = const { RefCell::new(None) };
-    /// picom_fit results per state, for the current wallpaper
+    /// blur_fit results per state, for the current wallpaper
     static FITS: RefCell<BlurFits> = const { RefCell::new(Vec::new()) };
 }
 
@@ -512,8 +443,8 @@ pub fn win7_blur(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
-/// (S, a) for picom: premultiplied colour + alpha whose `S + (1-a) * blur(B)` best matches Win7.
-fn picom_fit(k: &ShaderConsts) -> ([f64; 3], f64) {
+/// (S, a) for the blur pass: premultiplied colour + alpha whose `S + (1-a) * blur(B)` best matches Win7.
+fn blur_fit(k: &ShaderConsts) -> ([f64; 3], f64) {
     if let Some(r) = FITS.with(|f| f.borrow().iter().find(|(kk, _)| kk == k).map(|(_, r)| *r)) { return r; }
     // the backdrops glass usually covers: the (downscaled) wallpaper, white and grey windows, black
     let mut sample = vec![[1.0, 1.0, 1.0], [0.94, 0.94, 0.94], [0.0, 0.0, 0.0]];
@@ -526,7 +457,7 @@ fn picom_fit(k: &ShaderConsts) -> ([f64; 3], f64) {
             }
         }
     }
-    let r = k.picom_fit(&sample);
+    let r = k.blur_fit(&sample);
     FITS.with(|f| {
         let mut f = f.borrow_mut();
         if f.len() >= 8 { f.remove(0); }
@@ -573,7 +504,7 @@ fn fake_glass(cr: &cairo::Context, k: &ShaderConsts, w: f64, h: f64, sx: f64, sy
 /// surface's distance from the screen centre (parallax). Without a theme: plain diagonal streaks.
 fn paint_reflection(cr: &cairo::Context, opacity: f64, w: f64, h: f64, sx: f64, sy: f64) {
     if opacity <= 0.0 { return; }
-    let screen = gtk::gdk::Screen::default().and_then(|s| s.root_window()).map(|r| (r.width() as f64, r.height() as f64));
+    let screen = { let s = crate::shellwin::screen_size(); Some((s.0 as f64, s.1 as f64)) };
     if let (Some(map), Some((scr_w, scr_h))) = (REFLECTION.with(|r| r.clone()), screen) {
         let shift = ((sx + w / 2.0) - scr_w / 2.0) * 0.13;
         cr.save().ok();
@@ -616,7 +547,7 @@ pub fn paint_glass_fill(cr: &cairo::Context, w: f64, h: f64, sx: f64, sy: f64, a
         cr.set_source_rgb(k.color[0], k.color[1], k.color[2]);
         cr.paint().ok();
     } else if composited() {
-        let (s, a) = picom_fit(&k);
+        let (s, a) = blur_fit(&k);
         if a > 0.0 { cr.set_source_rgba(s[0] / a, s[1] / a, s[2] / a, a); } else { cr.set_source_rgba(0.0, 0.0, 0.0, 0.0); }
         cr.paint().ok();
     } else {
@@ -636,7 +567,7 @@ pub fn paint_widget_glass(widget: &impl gtk::prelude::IsA<gtk::Widget>, cr: &cai
     use gtk::prelude::*;
     let wd = widget.as_ref();
     let a = wd.allocation();
-    let (ox, oy) = wd.window().map(|gw| { let (_, x, y) = gw.origin(); (x, y) }).unwrap_or((0, 0));
+    let (ox, oy) = crate::shellwin::gdk_origin(wd);
     let (sx, sy) = if wd.has_window() { (ox, oy) } else { (ox + a.x(), oy + a.y()) };
     let st = wd.toplevel().and_then(|t| t.window()).map(|gw| gw.state()).unwrap_or(gtk::gdk::WindowState::empty());
     paint_glass_fill(cr, a.width() as f64, a.height() as f64, sx as f64, sy as f64,

@@ -205,6 +205,11 @@ pub struct Console {
     find_text: RefCell<(String, bool, bool)>, // (text, match case, up)
 }
 
+/// Files the window menu reads this process's items from and writes the pick to (see sysmenu.rs).
+fn sysmenu_path(suffix: &str) -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join(format!("aerode-sysmenu-{}{suffix}", std::process::id())))
+}
+
 /// The window menu's console items (see sysmenu.rs): Edit ▸, Defaults, Properties, as in Win7.
 const SYSMENU_ITEMS: &[(&str, &str, &str)] = &[
     ("mark", "_Edit/Mar_k", ""), ("copy", "_Edit/Cop_y", "Enter"), ("paste", "_Edit/_Paste", ""), ("selectall", "_Edit/_Select All", ""),
@@ -495,10 +500,9 @@ impl Console {
 
     /// The window menu items, with Copy greyed unless something is selected.
     fn publish_menu(&self) {
-        let Some(w) = self.win.window() else { return };
         let selecting = matches!(self.sel.get(), Sel::Marking { selecting: true, .. });
         let text: String = SYSMENU_ITEMS.iter().map(|(id, l, s)| format!("{}{id}\t{l}\t{s}\n", if *id == "copy" && !selecting { "!" } else { "" })).collect();
-        gdk::property_change(&w, &gdk::Atom::intern("_AERODE_SYSMENU_ITEMS"), &gdk::Atom::intern("UTF8_STRING"), 8, gdk::PropMode::Replace, gdk::ChangeData::UChars(text.as_bytes()));
+        if let Some(p) = sysmenu_path("") { let _ = std::fs::write(p, text); }
     }
 
     fn set_sel(&self, s: Sel) {
@@ -919,21 +923,22 @@ impl Console {
         { let c = self.clone(); self.area.connect_focus_in_event(move |a, _| { c.focused.set(true); if c.term.borrow().focus_events { c.send(b"\x1b[I"); } a.queue_draw(); glib::Propagation::Proceed }); }
         { let c = self.clone(); self.area.connect_focus_out_event(move |a, _| { c.focused.set(false); if c.term.borrow().focus_events { c.send(b"\x1b[O"); } a.queue_draw(); glib::Propagation::Proceed }); }
         // the window menu's Edit/Defaults/Properties (sysmenu.rs writes the chosen id)
-        {
+        if let Some(p) = sysmenu_path(".cmd") {
+            let _ = std::fs::remove_file(&p);
             let c = self.clone();
-            self.win.connect_property_notify_event(move |w, e| {
-                if e.atom() == gdk::Atom::intern("_AERODE_SYSMENU_CMD") && e.state() == gdk::PropertyState::NewValue
-                    && let Some(gw) = w.window() {
-                        let v = gdk::property_get(&gw, &gdk::Atom::intern("_AERODE_SYSMENU_CMD"), &gdk::Atom::intern("UTF8_STRING"), 0, 256, 1);
-                        if let Some((_, _, data)) = v {
-                            let id = String::from_utf8_lossy(&data).to_string();
-                            let c = c.clone();
-                            // after the menu has gone (its grab would steal a dialog's focus)
-                            glib::idle_add_local_once(move || c.command(&id));
-                        }
-                    }
-                glib::Propagation::Proceed
-            });
+            let file = gtk::gio::File::for_path(&p);
+            if let Ok(mon) = file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+                mon.connect_changed(move |_, _, _, ev| {
+                    if ev != gtk::gio::FileMonitorEvent::ChangesDoneHint && ev != gtk::gio::FileMonitorEvent::Created { return; }
+                    let Ok(id) = std::fs::read_to_string(&p) else { return };
+                    let _ = std::fs::remove_file(&p);
+                    let c = c.clone();
+                    // after the menu has gone (its grab would steal a dialog's focus)
+                    glib::idle_add_local_once(move || c.command(&id));
+                });
+                // alive as long as the window
+                unsafe { self.win.set_data("sysmenu-monitor", mon); }
+            }
         }
         { let c = self.clone(); self.win.connect_realize(move |_| c.publish_menu()); }
         // Win7 cursor blink rate (~530 ms)

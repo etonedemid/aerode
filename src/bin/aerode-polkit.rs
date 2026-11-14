@@ -137,15 +137,8 @@ fn authenticate(user: &str, cookie: &str, password: &str) -> (bool, String) {
 
 /// Capture the current screen, darkened – the UAC "secure desktop" look.
 fn dimmed_backdrop() -> Option<gtk::gdk_pixbuf::Pixbuf> {
-    let root = gdk::Screen::default()?.root_window()?;
-    let (w, h) = (root.width(), root.height());
-    let surf = gtk::cairo::ImageSurface::create(gtk::cairo::Format::Rgb24, w, h).ok()?;
-    {
-        let cr = gtk::cairo::Context::new(&surf).ok()?;
-        cr.set_source_window(&root, 0.0, 0.0);
-        cr.paint().ok()?;
-    }
-    gdk::pixbuf_get_from_surface(&surf, 0, 0, w, h)
+    let surf = aerode::wmipc::call(&aerode::wmipc::Req::Screenshot).and_then(|v| aerode::wmipc::read_image(&v))?;
+    gdk::pixbuf_get_from_surface(&surf, 0, 0, surf.width(), surf.height())
 }
 
 fn program_name(r: &Request) -> String {
@@ -157,10 +150,13 @@ fn program_name(r: &Request) -> String {
 fn show(req: Request, cancel_rx: async_channel::Receiver<String>) {
     let geo = util::primary_geometry();
     let backdrop = dimmed_backdrop();
-    let win = gtk::Window::new(gtk::WindowType::Popup);
+    let win = gtk::Window::new(gtk::WindowType::Toplevel);
+    // ponytail: the secure-desktop dim covers the primary monitor; other monitors stay as they are
+    aerode::shellwin::init(&win, gtk_layer_shell::Layer::Overlay, "aerode-uac", gtk_layer_shell::KeyboardMode::Exclusive);
+    gtk_layer_shell::LayerShell::set_exclusive_zone(&win, -1);
+    aerode::shellwin::place(&win, geo.x(), geo.y());
     win.set_app_paintable(true);
-    win.move_(0, 0);
-    if let Some(root) = gdk::Screen::default().and_then(|s| s.root_window()) { win.set_size_request(root.width(), root.height()); }
+    win.set_size_request(geo.width(), geo.height());
     win.connect_draw(move |_, cr| {
         if let Some(b) = &backdrop { cr.set_source_pixbuf(b, 0.0, 0.0); cr.paint().ok(); }
         cr.set_source_rgba(0.0, 0.0, 0.0, 0.55);

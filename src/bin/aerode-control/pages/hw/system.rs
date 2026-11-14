@@ -724,18 +724,14 @@ pub fn performance(parent: Option<&gtk::Window>) -> gtk::Dialog {
 fn live_effects() -> Vec<(&'static str, bool)> {
     let c = config::get();
     aerode::config::VISUAL_EFFECTS.iter().map(|(k, _)| (*k, match *k {
-        "composition" => !config::conf_dir().join("no-compositor").exists(),
+        "composition" => true,
         "glass" => c.colorization.transparency,
         "aero_peek" => c.taskbar.aero_peek,
         "font_smoothing" => c.fonts.antialias,
-        "window_shadow" => !picom_conf().contains("shadow = false;"),
+        "window_shadow" => true,
         "pointer_shadow" => c.hw.mouse.cursor_shadow && c.hw.effect("pointer_shadow"),
         k => c.hw.effect(k),
     })).collect()
-}
-
-fn picom_conf() -> String {
-    std::fs::read_to_string(config::conf_dir().join("picom.conf")).or_else(|_| std::fs::read_to_string("/usr/share/aerode/picom.conf")).unwrap_or_default()
 }
 
 fn apply_effects(mode: &str, on: &[(&str, bool)], was: &[(&'static str, bool)]) {
@@ -749,25 +745,9 @@ fn apply_effects(mode: &str, on: &[(&str, bool)], was: &[(&'static str, bool)]) 
         c.fonts.antialias = get("font_smoothing");
         c.hw.mouse.cursor_shadow = get("pointer_shadow");
     });
-    let mut restart = false;
-    if changed("composition") {
-        let f = config::conf_dir().join("no-compositor");
-        let _ = std::fs::create_dir_all(config::conf_dir());
-        if get("composition") { let _ = std::fs::remove_file(&f); } else { let _ = std::fs::write(&f, ""); }
-        restart = true;
-    }
-    if changed("window_shadow") {
-        let base = std::fs::read_to_string("/usr/share/aerode/picom.conf").ok().or_else(|| std::fs::read_to_string(config::conf_dir().join("picom.conf")).ok());
-        if let Some(base) = base {
-            let vsync_off = picom_conf().contains("vsync = false;");
-            let mut txt = base.replacen("shadow = true;", if get("window_shadow") { "shadow = true;" } else { "shadow = false;" }, 1);
-            if vsync_off { txt = txt.replace("vsync = true;", "vsync = false;"); }
-            let _ = std::fs::write(config::conf_dir().join("picom.conf"), txt);
-            restart = true;
-        }
-    }
     if changed("font_smoothing") || ["animate_controls", "menu_fade", "tooltip_fade", "combo_slide", "list_smooth"].iter().any(|k| changed(k)) { write_xsettings(); }
-    if restart { util::spawn(&["aerode", "restart"]); } else { reload_shell(); }
+    // the compositor and the shell read the switches from the config
+    reload_shell();
 }
 
 /// Win7 "Virtual Memory" for Linux swap: read-only (changing swap is left to the system tools).

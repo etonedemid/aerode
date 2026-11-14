@@ -1,6 +1,6 @@
 aerode
 
-A Windows 7 desktop for Linux (X11), written in Rust. It aims to look and behave like the
+A Windows 7 desktop for Linux (Wayland), written in Rust. It aims to look and behave like the
 Windows 7 shell as closely as possible while doing what a modern Linux desktop does.
 
 ![Start menu and Explorer](docs/screenshots/start-menu.png)
@@ -8,7 +8,7 @@ Windows 7 shell as closely as possible while doing what a modern Linux desktop d
 What's in it
 
 - aerode: desktop, taskbar, Start menu, notification area and flyouts
-- aerode-wm: window manager with Aero glass frames, Snap, Shake, Peek and Alt+Tab
+- aerode-wm: Wayland compositor with Aero glass frames, Snap, Shake, Peek and Alt+Tab
 - Explorer, Control Panel, Notepad, Calculator, Task Manager, Snipping Tool, Command Prompt
 - Win7 sounds, lock screen, UAC-style polkit prompts, notification balloons
 
@@ -33,4 +33,4 @@ Settings are in ~/.config/aerode, crash logs in ~/.cache/aerode.
 
 Status
 
-Personal project, X11 only for now (Wayland later). Expect rough edges.
+Personal project. Wayland, with XWayland for X11 programs. Expect rough edges.

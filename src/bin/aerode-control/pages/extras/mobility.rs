@@ -281,7 +281,7 @@ fn external(cp: &Rc<Cp>) -> gtk::Widget {
 
 /// Connected xrandr outputs, the laptop's own panel first.
 fn connected_outputs() -> Vec<String> {
-    let q = util::output(&["xrandr", "--query"]).unwrap_or_default();
+    let q = util::output(&["aerode-xrandr", "--query"]).unwrap_or_default();
     let mut v: Vec<(bool, bool, String)> = q.lines().filter(|l| l.contains(" connected")).map(|l| {
         let name = l.split_whitespace().next().unwrap_or("").to_string();
         let internal = ["eDP", "LVDS", "DSI"].iter().any(|p| name.starts_with(p));
@@ -296,7 +296,7 @@ enum Switch { ComputerOnly, Duplicate, Extend, ProjectorOnly }
 
 /// The xrandr command for a display switch mode: the first output is the computer's own screen.
 fn switch_argv(mode: Switch, outs: &[String]) -> Vec<String> {
-    let mut a = sv(&["xrandr"]);
+    let mut a = sv(&["aerode-xrandr"]);
     let Some(main) = outs.first() else { return a };
     let rest = &outs[1..];
     match mode {
@@ -476,7 +476,7 @@ fn load_pres() -> Pres { std::fs::read_to_string(pres_file()).ok().and_then(|s| 
 fn save_pres(p: &Pres) { let _ = std::fs::create_dir_all(config::conf_dir()); let _ = std::fs::write(pres_file(), serde_json::to_string_pretty(p).unwrap_or_default()); }
 
 fn xset_values() -> ((u32, u32), bool, (u32, u32, u32)) {
-    let q = util::output(&["xset", "q"]).unwrap_or_default();
+    let q = util::output(&["aerode-xset", "q"]).unwrap_or_default();
     let num = |key: &str| q.split_whitespace().skip_while(|w| *w != key).nth(1).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
     ((num("timeout:"), num("cycle:")), q.contains("DPMS is Enabled"), (num("Standby:"), num("Suspend:"), num("Off:")))
 }
@@ -488,8 +488,8 @@ fn set_presenting(on: bool) -> Pres {
     if on {
         let (saver, dpms, t) = xset_values();
         p.saver = saver; p.dpms = dpms; p.dpms_t = t;
-        util::spawn(&["xset", "s", "off"]);
-        util::spawn(&["xset", "-dpms"]);
+        util::spawn(&["aerode-xset", "s", "off"]);
+        util::spawn(&["aerode-xset", "-dpms"]);
         if p.set_volume { sys::set_volume(p.volume); }
         // stay awake: no automatic sleep or idle actions until presenting stops
         if util::which("systemd-inhibit")
@@ -502,8 +502,8 @@ fn set_presenting(on: bool) -> Pres {
             util::spawn(&["aerode", "reload"]);
         }
     } else {
-        util::spawn(&["xset", "s", &p.saver.0.to_string(), &p.saver.1.to_string()]);
-        if p.dpms { util::spawn(&["xset", "+dpms", "dpms", &p.dpms_t.0.to_string(), &p.dpms_t.1.to_string(), &p.dpms_t.2.to_string()]); }
+        util::spawn(&["aerode-xset", "s", &p.saver.0.to_string(), &p.saver.1.to_string()]);
+        if p.dpms { util::spawn(&["aerode-xset", "+dpms", "dpms", &p.dpms_t.0.to_string(), &p.dpms_t.1.to_string(), &p.dpms_t.2.to_string()]); }
         if p.inhibit_pid > 0 {
             // only our own systemd-inhibit (the PID may have been reused after a restart)
             let cmd = std::fs::read_to_string(format!("/proc/{}/cmdline", p.inhibit_pid)).unwrap_or_default();
@@ -663,10 +663,10 @@ mod tests {
     #[test]
     fn display_switch_commands() {
         let o = vec!["eDP-1".to_string(), "HDMI-1".to_string()];
-        assert_eq!(switch_argv(Switch::ComputerOnly, &o).join(" "), "xrandr --output eDP-1 --auto --primary --output HDMI-1 --off");
-        assert_eq!(switch_argv(Switch::Duplicate, &o).join(" "), "xrandr --output eDP-1 --auto --primary --output HDMI-1 --auto --same-as eDP-1");
-        assert_eq!(switch_argv(Switch::Extend, &o).join(" "), "xrandr --output eDP-1 --auto --primary --output HDMI-1 --auto --right-of eDP-1");
-        assert_eq!(switch_argv(Switch::ProjectorOnly, &o).join(" "), "xrandr --output HDMI-1 --auto --primary --output eDP-1 --off");
-        assert_eq!(switch_argv(Switch::ProjectorOnly, &o[..1]).join(" "), "xrandr --output eDP-1 --auto");
+        assert_eq!(switch_argv(Switch::ComputerOnly, &o).join(" "), "aerode-xrandr --output eDP-1 --auto --primary --output HDMI-1 --off");
+        assert_eq!(switch_argv(Switch::Duplicate, &o).join(" "), "aerode-xrandr --output eDP-1 --auto --primary --output HDMI-1 --auto --same-as eDP-1");
+        assert_eq!(switch_argv(Switch::Extend, &o).join(" "), "aerode-xrandr --output eDP-1 --auto --primary --output HDMI-1 --auto --right-of eDP-1");
+        assert_eq!(switch_argv(Switch::ProjectorOnly, &o).join(" "), "aerode-xrandr --output HDMI-1 --auto --primary --output eDP-1 --off");
+        assert_eq!(switch_argv(Switch::ProjectorOnly, &o[..1]).join(" "), "aerode-xrandr --output eDP-1 --auto");
     }
 }

@@ -109,7 +109,7 @@ pub fn timers(o: &PowerOptions, plan: &str, battery: bool) -> (u32, u32) {
 /// logon and for the screen saver (~/.config/aerode/display-off, seconds).
 pub fn apply_display(minutes: u32) {
     let secs = (minutes * 60).to_string();
-    if minutes == 0 { util::spawn(&["xset", "-dpms"]); } else { util::spawn(&["xset", "+dpms", "dpms", "0", "0", &secs]); }
+    crate::wmipc::send(crate::wmipc::Req::SetDpmsTimeout { secs: minutes * 60 });
     let _ = std::fs::create_dir_all(config::conf_dir());
     let _ = std::fs::write(config::conf_dir().join("display-off"), &secs);
 }
@@ -137,18 +137,37 @@ fn may_sleep() -> bool {
             .map(|s| s.contains("\"yes\"")).unwrap_or(false)
 }
 
-/// Milliseconds since the last keyboard or mouse input (MIT-SCREEN-SAVER).
-fn idle_ms(conn: &impl x11rb::connection::Connection, root: u32) -> Option<u32> {
-    use x11rb::protocol::screensaver::ConnectionExt;
-    conn.screensaver_query_info(root).ok()?.reply().ok().map(|r| r.ms_since_user_input)
+/// Milliseconds since the last keyboard or mouse input.
+fn idle_ms() -> Option<u64> { crate::wmipc::call(&crate::wmipc::Req::Idle)?.get("ms")?.as_u64() }
+
+/// Lock when logind says so: `loginctl lock-session`, and before any suspend (lid, power button,
+/// `systemctl suspend`) when Power Options requires a password on wakeup.
+// ponytail: no delay inhibitor, so a very fast suspend could beat the lock; take one if that ever shows
+fn watch_logind() {
+    use gtk::gio::{self, prelude::*};
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::System, gio::Cancellable::NONE) else { return };
+    const LOGIN1: &str = "org.freedesktop.login1";
+    bus.signal_subscribe(Some(LOGIN1), Some("org.freedesktop.login1.Manager"), Some("PrepareForSleep"), Some("/org/freedesktop/login1"), None, gio::DBusSignalFlags::NONE,
+        |_, _, _, _, _, params| {
+            if params.get::<(bool,)>() == Some((true,)) && config::get().hw.power.require_password { util::spawn(&["aerode", "lock", "--sleep"]); }
+        });
+    // only our own session's Lock
+    let own = std::env::var("XDG_SESSION_ID").ok().and_then(|id| {
+        let reply = bus.call_sync(Some(LOGIN1), "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "GetSession",
+            Some(&(id,).to_variant()), None, gio::DBusCallFlags::NONE, 2000, gio::Cancellable::NONE).ok()?;
+        reply.child_value(0).str().map(str::to_string)
+    });
+    let Some(path) = own else { return };
+    bus.signal_subscribe(Some(LOGIN1), Some("org.freedesktop.login1.Session"), Some("Lock"), Some(&path), None, gio::DBusSignalFlags::NONE,
+        |_, _, _, _, _, _| { util::spawn(&["aerode", "lock"]); });
 }
 
 /// The shell's power watcher: follows plan and power-source changes (display timer, plan
 /// brightness) and puts the computer to sleep after the plan's idle time.
 pub fn start() {
+    watch_logind();
     std::thread::spawn(|| {
-        use x11rb::connection::Connection;
-        let x = x11rb::connect(None).ok().filter(|_| may_sleep());
+        let can_sleep = may_sleep();
         let mut last_display: Option<u32> = None;
         let mut last_state = String::new();
         // set when we sent the computer to sleep; cleared by new input (the idle time keeps counting
@@ -174,10 +193,9 @@ pub fn start() {
                 }
                 last_state = state;
             }
-            if let Some((conn, screen)) = x.as_ref() {
-                let root = conn.setup().roots[*screen].root;
-                if let Some(idle) = idle_ms(conn, root) {
-                    if sleep > 0 && idle as u64 >= sleep as u64 * 60_000 {
+            if can_sleep {
+                if let Some(idle) = idle_ms() {
+                    if sleep > 0 && idle >= sleep as u64 * 60_000 {
                         if !slept && !inhibited() {
                             slept = true;
                             sys::sleep();

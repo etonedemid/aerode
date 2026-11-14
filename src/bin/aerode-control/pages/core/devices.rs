@@ -67,7 +67,7 @@ pub fn edid_names(e: &[u8]) -> (String, String) {
 
 fn monitors() -> Vec<Device> {
     let mut v = vec![];
-    let out = sh(&["xrandr", "--verbose"]);
+    let out = sh(&["aerode-xrandr", "--verbose"]);
     let (mut cur, mut edid, mut in_edid) = (None::<String>, String::new(), false);
     let flush = |cur: &mut Option<String>, edid: &mut String, v: &mut Vec<Device>| {
         if let Some(o) = cur.take() {

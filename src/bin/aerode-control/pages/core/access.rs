@@ -20,43 +20,9 @@ fn val<'a>(m: &'a Map, k: &str, d: &'a str) -> &'a str { m.get(k).map(|s| s.as_s
 // ---------------------------------------------------------------------------- applying
 
 /// The AccessX controls of the core keyboard.
-pub fn apply_xkb(m: &Map) -> Result<(), String> {
-    use x11rb::protocol::xkb::{self, AXOption, BoolCtrl, Control, ConnectionExt as _};
-    let e = |e: &dyn std::fmt::Display| e.to_string();
-    let (c, _) = x11rb::connect(None).map_err(|x| e(&x))?;
-    c.xkb_use_extension(1, 0).map_err(|x| e(&x))?.reply().map_err(|x| e(&x))?;
-    let dev: xkb::DeviceSpec = xkb::ID::USE_CORE_KBD.into();
-    let cur = c.xkb_get_controls(dev).map_err(|x| e(&x))?.reply().map_err(|x| e(&x))?;
-    let mut en = BoolCtrl::from(0u32);
-    if get(m, "stickykeys") { en |= BoolCtrl::STICKY_KEYS; }
-    if get(m, "mousekeys") { en |= BoolCtrl::MOUSE_KEYS | BoolCtrl::MOUSE_KEYS_ACCEL; }
-    if get(m, "filterkeys") { en |= if val(m, "filter_mode", "bounce") == "bounce" { BoolCtrl::BOUNCE_KEYS } else { BoolCtrl::SLOW_KEYS }; }
-    // keyboard shortcuts (SHIFT five times, hold SHIFT eight seconds) are AccessXKeys
-    if val(m, "sticky_shortcut", "1") == "1" || val(m, "filter_shortcut", "1") == "1" { en |= BoolCtrl::ACCESS_X_KEYS; }
-    let feedback = get(m, "togglekeys") || val(m, "sticky_sound", "1") == "1" && get(m, "stickykeys");
-    if feedback { en |= BoolCtrl::ACCESS_X_FEEDBACK_MASK; }
-    // the X server's AccessX timeout (on by default, 2 minutes) turns Sticky/Filter/Mouse Keys off
-    // again when the keyboard is idle; Win7 keeps them until they are turned off, so it goes
-    let affect = BoolCtrl::STICKY_KEYS | BoolCtrl::MOUSE_KEYS | BoolCtrl::MOUSE_KEYS_ACCEL | BoolCtrl::BOUNCE_KEYS | BoolCtrl::SLOW_KEYS | BoolCtrl::ACCESS_X_KEYS
-        | BoolCtrl::ACCESS_X_FEEDBACK_MASK | BoolCtrl::ACCESS_X_TIMEOUT_MASK;
-    let mut opt = u16::from(cur.access_x_option);
-    let set = |o: &mut u16, f: AXOption, on: bool| { if on { *o |= u16::from(f) } else { *o &= !u16::from(f) } };
-    set(&mut opt, AXOption::INDICATOR_FB, get(m, "togglekeys"));
-    set(&mut opt, AXOption::LATCH_TO_LOCK, val(m, "sticky_lock", "1") == "1");
-    set(&mut opt, AXOption::TWO_KEYS, val(m, "sticky_two", "1") == "1");
-    set(&mut opt, AXOption::STICKY_KEYS_FB, val(m, "sticky_sound", "1") == "1");
-    set(&mut opt, AXOption::SK_ACCEPT_FB, true);
-    let ms = |k: &str, d: u16| m.get(k).and_then(|v| v.parse::<u16>().ok()).unwrap_or(d);
-    // which parameters change: the low bits of the change mask are the BoolCtrl bits
-    let change = Control::CONTROLS_ENABLED | Control::from(u32::from(BoolCtrl::SLOW_KEYS | BoolCtrl::BOUNCE_KEYS | BoolCtrl::MOUSE_KEYS_ACCEL | BoolCtrl::ACCESS_X_FEEDBACK_MASK));
-    c.xkb_set_controls(dev, 0u16.into(), 0u16.into(), 0u16.into(), 0u16.into(), 0u16.into(), 0u16.into(), 0u16.into(), 0u16.into(),
-        cur.mouse_keys_dflt_btn, cur.groups_wrap, AXOption::from(opt), affect, en, change, cur.repeat_delay, cur.repeat_interval,
-        ms("slow_delay", 1000), ms("bounce_delay", 500), cur.mouse_keys_delay.max(10), cur.mouse_keys_interval.max(10),
-        ms("mouse_accel", 100), ms("mouse_speed", 30), cur.mouse_keys_curve, cur.access_x_timeout, cur.access_x_timeout_mask, cur.access_x_timeout_values,
-        cur.access_x_timeout_options_mask, cur.access_x_timeout_options_values, &cur.per_key_repeat).map_err(|x| e(&x))?
-        .check().map_err(|x| e(&x))?;
-    Ok(())
-}
+// ponytail: Sticky/Filter/Mouse Keys were the X server's AccessX; on Wayland the compositor would have
+// to implement them on its own key path. The switches are saved but do nothing until then.
+pub fn apply_xkb(_m: &Map) -> Result<(), String> { Ok(()) }
 
 /// The pointer scheme in use: Mouse > Pointers' choice (~/.config/aerode/cursor-theme, which the
 /// session exports as XCURSOR_THEME).
@@ -115,10 +81,9 @@ pub fn apply_xsettings(m: &Map) {
     // Xcursor for X programs and the window manager's own cursors
     let res = dir.join("Xresources-access");
     let _ = std::fs::write(&res, format!("Xcursor.theme: {theme}\nXcursor.size: {size}\n"));
-    let _ = run(&["xrdb", "-merge", &res.to_string_lossy()]);
     let cs = dir.join("cursor-size");
     if size == 32 { let _ = std::fs::remove_file(&cs); } else { let _ = std::fs::write(&cs, format!("{size}\n")); }
-    util::spawn(&["env", &format!("XCURSOR_THEME={theme}"), &format!("XCURSOR_SIZE={size}"), "xsetroot", "-cursor_name", "left_ptr"]);
+    aerode::wmipc::send(aerode::wmipc::Req::SetCursor { theme: theme.to_string(), size: size.to_string().parse().unwrap_or(24) });
     if let Some(s) = gtk::Settings::default() { s.set_gtk_cursor_theme_size(size); }
     // High Contrast: GTK's theme, chosen by the session at log on (GTK_THEME)
     let hc = dir.join("high-contrast");

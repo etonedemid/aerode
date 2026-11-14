@@ -3,8 +3,8 @@
 #   ./install.sh [/path/to/your/windows7.iso]
 set -e
 cd "$(dirname "$0")"
-DEPS=(gtk3 python cairo pango libx11 libxcb xorg-xsetroot xsettingsd picom
-      7zip wimlib papirus-icon-theme noto-fonts xsecurelock i3lock xss-lock polkit
+DEPS=(gtk3 gtk-layer-shell python cairo pango xorg-xwayland seatd libinput xsettingsd
+      7zip wimlib papirus-icon-theme noto-fonts xsecurelock polkit
       pipewire-pulse libpulse wireplumber pavucontrol networkmanager brightnessctl
       playerctl ddcutil udiskie power-profiles-daemon spectacle rust)
 # KDE users already have KWallet; a second keyring hijacks org.freedesktop.secrets and logs apps out
@@ -26,17 +26,16 @@ sudo rm -f /usr/share/xsessions/aero7.desktop /usr/share/applications/aero7-*.de
 echo ":: building"
 cargo build --release
 echo ":: installing to /usr (sudo)"
-for b in aerode aerode-wm aerode-extract aerode-polkit; do sudo install -Dm755 "target/release/$b" "/usr/bin/$b"; done
+for b in aerode aerode-wm aerode-extract aerode-polkit aerode-xcompat; do sudo install -Dm755 "target/release/$b" "/usr/bin/$b"; done
 for b in target/release/aerode-*; do [ -x "$b" ] && [ -f "$b" ] && sudo install -Dm755 "$b" "/usr/bin/$(basename "$b")"; done
 sudo install -Dm755 data/aerode-session /usr/bin/aerode-session
 # the Win7 locked screen: xsecurelock modules (xsecurelock wants auth_* / saver_* names)
 sudo install -d /usr/lib/aerode
-sudo ln -sf /usr/bin/aerode-lockui /usr/lib/aerode/auth_aerode
-sudo ln -sf /usr/bin/aerode-lockui /usr/lib/aerode/saver_aerode
-sudo install -Dm644 data/picom.conf /usr/share/aerode/picom.conf
 sudo install -Dm644 data/gtk.css /usr/share/themes/Aerode/gtk-3.0/gtk.css
 sudo install -Dm644 -t /usr/share/themes/Aerode/gtk-3.0/assets data/gtk-assets/*.png
-sudo install -Dm644 data/aerode.desktop /usr/share/xsessions/aerode.desktop
+sudo rm -f /usr/share/xsessions/aerode.desktop
+sudo install -Dm644 data/aerode.desktop /usr/share/wayland-sessions/aerode.desktop
+for l in aerode-xrandr aerode-xset aerode-setxkbmap; do sudo ln -sf /usr/bin/aerode-xcompat "/usr/bin/$l"; done
 for f in data/applications/*.desktop; do [ -f "$f" ] && sudo install -Dm644 "$f" "/usr/share/applications/$(basename "$f")"; done
 if [ -n "$1" ]; then
   echo ":: extracting Windows 7 artwork from $1 (stays in your home directory)"
@@ -55,11 +54,5 @@ else
   else
     echo ":: no ISO given – run './install.sh /path/to/windows7.iso' (or aerode-extract) for the real Win7 look"
   fi
-fi
-# window managers built before 2026-11-02 cannot re-exec a replaced binary ("aerode-wm (deleted)"),
-# so 'aerode restart' would leave the old one running: tell the user once
-if pgrep -x aerode-wm >/dev/null; then
-  echo ":: run 'aerode restart' to load the new version – if you updated from a build older than"
-  echo "   2026-11-02 (window titles still glow strongly), log out and back in once instead"
 fi
 echo ":: done. Log out and pick the 'Aerode' session in your login manager."

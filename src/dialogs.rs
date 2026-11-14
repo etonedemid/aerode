@@ -51,8 +51,6 @@ pub fn run_dialog() {
     let browse = d.add_button("Browse...", gtk::ResponseType::Other(1));
     let _ = browse;
     d.set_default_response(gtk::ResponseType::Ok);
-    let g = util::primary_geometry();
-    d.move_(g.x() + 12, g.y() + g.height() - config::get().taskbar_height - 200);
     d.connect_response(move |d, r| match r {
         gtk::ResponseType::Ok => {
             let t = entry.text().to_string();

@@ -20,7 +20,7 @@ fn blink_ms(pos: f64) -> u32 { if pos < 50.0 { 0 } else { (1300.0 - pos).round()
 
 /// (delay ms, rate cps) the X server uses now.
 fn xset_rate() -> Option<(u32, u32)> {
-    let s = util::output(&["xset", "q"])?;
+    let s = util::output(&["aerode-xset", "q"])?;
     let l = s.lines().find(|l| l.contains("auto repeat delay"))?;
     let w: Vec<&str> = l.split_whitespace().collect();
     let d = w.iter().position(|x| *x == "delay:").and_then(|i| w.get(i + 1)?.parse().ok())?;
@@ -91,7 +91,7 @@ pub fn page_tab(cp: &Rc<Cp>, tab: u32) -> gtk::Widget {
     // the test box follows the sliders at once (Cancel puts the old values back)
     let live = { let (delay, rate) = (delay.clone(), rate.clone()); move || {
         let d = ((3.0 - delay.value()) * 250.0 + 250.0) as u32;
-        util::spawn(&["xset", "r", "rate", &d.to_string(), &rate_cps(rate.value()).to_string()]);
+        util::spawn(&["aerode-xset", "r", "rate", &d.to_string(), &rate_cps(rate.value()).to_string()]);
     } };
     { let (l, d) = (live.clone(), sheet.dirty()); delay.connect_value_changed(move |_| { l(); d(); }); }
     { let (l, d) = (live.clone(), sheet.dirty()); rate.connect_value_changed(move |_| { l(); d(); }); }
@@ -111,7 +111,7 @@ pub fn page_tab(cp: &Rc<Cp>, tab: u32) -> gtk::Widget {
             true
         });
         t.connect_destroy(move |_| {
-            if !applied.get() && d0 > 0 && r0 > 0 { util::spawn(&["xset", "r", "rate", &d0.to_string(), &r0.to_string()]); }
+            if !applied.get() && d0 > 0 && r0 > 0 { util::spawn(&["aerode-xset", "r", "rate", &d0.to_string(), &r0.to_string()]); }
         });
     }
     sheet.tab("Speed", &t);

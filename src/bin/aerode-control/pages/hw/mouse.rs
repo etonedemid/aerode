@@ -413,7 +413,7 @@ fn apply_cursor_theme(id: &str) {
     let _ = std::fs::create_dir_all(&d);
     let _ = std::fs::write(d.join("index.theme"), format!("[Icon Theme]\nInherits={id}\n"));
     if let Some(s) = gtk::Settings::default() { s.set_gtk_cursor_theme_name(Some(id)); }
-    util::spawn(&["env", &format!("XCURSOR_THEME={id}"), "xsetroot", "-cursor_name", "left_ptr"]);
+    aerode::wmipc::send(aerode::wmipc::Req::SetCursor { theme: id.to_string(), size: std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(24) });
 }
 
 /// Lines per wheel notch for KDE and Qt programs (kdeglobals [KDE] WheelScrollLines).
