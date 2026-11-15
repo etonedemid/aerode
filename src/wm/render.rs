@@ -78,11 +78,36 @@ pub fn theme_icon(app_id: &str) -> Option<cairo::ImageSurface> {
         "/usr/share/icons/hicolor/48x48/apps".into(), "/usr/share/icons/hicolor/64x64/apps".into(), "/usr/share/pixmaps".into()];
     let id = app_id.to_lowercase();
     let last = id.rsplit('.').next().unwrap_or(&id).to_string();
-    for n in [id.as_str(), last.as_str(), "application-x-executable"] {
+    // the Icon= of the program's .desktop file (aerode-cmd -> utilities-terminal, steam_app_N -> its game)
+    let named = desktop_icon(app_id).unwrap_or_default();
+    for n in [id.as_str(), last.as_str(), named.as_str(), "application-x-executable"] {
+        if n.is_empty() { continue; }
+        if n.starts_with('/') {
+            if let Ok(mut f) = std::fs::File::open(n) && let Ok(img) = cairo::ImageSurface::create_from_png(&mut f) { return Some(img); }
+            continue;
+        }
         for d in &dirs {
             if let Ok(mut f) = std::fs::File::open(format!("{d}/{n}.png")) {
                 if let Ok(img) = cairo::ImageSurface::create_from_png(&mut f) { return Some(img); }
             }
+        }
+    }
+    None
+}
+
+/// Icon= of the .desktop file named after `app_id`, or of the one whose StartupWMClass is it.
+fn desktop_icon(app_id: &str) -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [format!("{home}/.local/share/applications"), "/usr/share/applications".into(), "/var/lib/flatpak/exports/share/applications".into(),
+        format!("{home}/.local/share/flatpak/exports/share/applications")];
+    let icon_of = |text: &str| text.lines().find_map(|l| l.strip_prefix("Icon=")).map(|v| v.trim().to_string());
+    for d in &dirs {
+        if let Ok(t) = std::fs::read_to_string(format!("{d}/{app_id}.desktop")) && let Some(i) = icon_of(&t) { return Some(i); }
+    }
+    for d in &dirs {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let Ok(t) = std::fs::read_to_string(e.path()) else { continue };
+            if t.lines().any(|l| l.strip_prefix("StartupWMClass=").is_some_and(|c| c.trim().eq_ignore_ascii_case(app_id))) { return icon_of(&t); }
         }
     }
     None
