@@ -1901,6 +1901,18 @@ impl Explorer {
             let uri = get_s(it, C_URI);
             let path = path_of_uri(&uri);
             let ct = get_s(it, C_CT);
+            if let Some(id) = uri.strip_prefix("app:") {
+                // Games Explorer's details: genre, last played, description
+                self.info_icon.set_from_pixbuf(pb.as_ref());
+                self.info_name.set_text(&get_s(it, C_NAME));
+                let app = util::app_by_id(id);
+                self.info_sub.set_text(&app.as_ref().map(|a| game_genre(&util::categories(a))).unwrap_or_default());
+                let last = games_played(None).get(id).map(|t| fmt_date(*t)).unwrap_or_else(|| "Never".into());
+                self.add_info_row(0, 0, "Last played:", &last);
+                if let Some(c) = app.as_ref().and_then(|a| a.description()) { self.add_info_row(1, 0, "Description:", &c); }
+                self.update_preview(None);
+                return;
+            }
             let big = path.as_ref().and_then(|p| self.thumb_cache.borrow().iter().find(|((q, _), _)| q == p).map(|(_, v)| v.1.clone()))
                 .map(|t| scale_fit(&t, 56))
                 .or_else(|| {
@@ -2061,7 +2073,7 @@ impl Explorer {
         if uris.len() == 1 {
             let u = &uris[0];
             if let Some(n) = u.strip_prefix("library:") { self.go(Loc::parse(&format!("library:{n}")), true); return; }
-            if let Some(id) = u.strip_prefix("app:") { if let Some(a) = util::app_by_id(id) { util::launch(&a); } return; }
+            if let Some(id) = u.strip_prefix("app:") { if let Some(a) = util::app_by_id(id) { games_played(Some(id)); util::launch(&a); } return; }
             if !u.starts_with("file://") { self.open_network(u); return; }
         }
         if dirs.len() == 1 && uris.len() == 1 {
@@ -3287,6 +3299,27 @@ fn open_drive_child(b: &gtk::EventBox) {
     if let Some(f) = unsafe { b.data::<Rc<dyn Fn()>>("open") } { let f = unsafe { f.as_ref() }.clone(); f(); }
 }
 
+/// When each game was last started from the Games folder (unix seconds); `Some(id)` records it now.
+fn games_played(now: Option<&str>) -> HashMap<String, i64> {
+    let f = config::conf_dir().join("games-played.json");
+    let mut m: HashMap<String, i64> = std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    if let Some(id) = now {
+        m.insert(id.to_string(), chrono::Local::now().timestamp());
+        let _ = std::fs::create_dir_all(config::conf_dir());
+        if let Ok(t) = serde_json::to_string(&m) { let _ = std::fs::write(&f, t); }
+    }
+    m
+}
+
+/// The genre Games Explorer shows, from the freedesktop Game subcategories.
+fn game_genre(cats: &str) -> String {
+    const G: &[(&str, &str)] = &[("ActionGame", "Action"), ("AdventureGame", "Adventure"), ("ArcadeGame", "Arcade"), ("BoardGame", "Board"), ("BlocksGame", "Puzzle"),
+        ("CardGame", "Card"), ("KidsGame", "Kids"), ("LogicGame", "Puzzle"), ("RolePlaying", "Role-playing"), ("Shooter", "Shooter"), ("Simulation", "Simulation"),
+        ("SportsGame", "Sports"), ("StrategyGame", "Strategy")];
+    let v: Vec<&str> = G.iter().filter(|(c, _)| cats.split(';').any(|x| x == *c)).map(|(_, n)| *n).collect();
+    if v.is_empty() { "Game".into() } else { v.join(", ") }
+}
+
 fn load_image_async(p: PathBuf, w: i32, h: i32, cb: impl FnOnce(Option<Pixbuf>) + 'static) {
     let (tx, rx) = async_channel::bounded::<Option<(glib::Bytes, i32, i32, bool, i32)>>(1);
     std::thread::spawn(move || {
@@ -3417,6 +3450,9 @@ mod tests {
         assert_eq!(Loc::parse("library:Pictures"), Loc::Library("Pictures"));
         assert_eq!(Loc::parse("file:///tmp/a%20b"), Loc::Path(PathBuf::from("/tmp/a b")));
         assert_eq!(Loc::parse("libraries:"), Loc::Libraries);
+        assert_eq!(Loc::parse("aerode:games"), Loc::Games);
+        assert_eq!(game_genre("Game;ActionGame;Shooter;"), "Action, Shooter");
+        assert_eq!(game_genre("Game;"), "Game");
     }
 }
 

@@ -111,6 +111,7 @@ impl NavPane {
         let comp = self.add(parent.as_ref(), "computer", "Computer", "computer:///", false);
         self.fill_computer(&comp);
         self.add(parent.as_ref(), "network-workgroup", "Network", "network:///", false);
+        self.add(parent.as_ref(), util::first_icon(&["folder-games", "applications-games"]), "Games", "aerode:games", false);
         if self.all_folders {
             self.add(parent.as_ref(), "preferences-system", "Control Panel", "control:", false);
             self.add(parent.as_ref(), "user-trash", "Recycle Bin", "trash:///", false);
