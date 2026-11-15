@@ -51,6 +51,19 @@ pub fn to_linux(cwd: &Path, w: &str) -> PathBuf {
 
 fn dirs_home() -> PathBuf { std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/")) }
 
+/// `dir /w`: names across in columns as wide as the longest name (16 at least, as cmd), as many as
+/// fit without reaching the console's last column (that would wrap and leave an empty line).
+fn wide_rows(names: &[String], width: usize) -> Vec<String> {
+    let longest = names.iter().map(|n| n.chars().count()).max().unwrap_or(0);
+    let colw = (longest + 2).max(16);
+    let cols = (width.saturating_sub(1 + longest) / colw + 1).max(1);
+    names.chunks(cols).map(|row| {
+        let mut l = String::new();
+        for n in row { l.push_str(&format!("{n:<colw$}")); }
+        l.trim_end().to_string()
+    }).collect()
+}
+
 fn wildcard_match(pat: &str, name: &str) -> bool {
     fn m(p: &[char], n: &[char]) -> bool {
         match (p.first(), n.first()) {
@@ -929,17 +942,14 @@ impl Shell {
                 wl!(o);
                 let dm = std::fs::metadata(&d).ok();
                 let dot_time = dm.and_then(|m| m.modified().ok()).unwrap_or(std::time::SystemTime::now());
+                let mut names: Vec<String> = vec![];
                 if pat == "*" && d != Path::new("/") {
-                    for n in [".", ".."] { if wide { w!(o, "{:<16}", format!("[{n}]")); } else { wl!(o, "{}    <DIR>          {n}", win_date(dot_time)); } nd += 1; }
+                    for n in [".", ".."] { if wide { names.push(format!("[{n}]")); } else { wl!(o, "{}    <DIR>          {n}", win_date(dot_time)); } nd += 1; }
                 }
-                let mut col = 2;
                 for (n, m) in &entries {
                     let t = m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     if wide {
-                        let s = if m.is_dir() { format!("[{n}]") } else { n.clone() };
-                        w!(o, "{:<16}", s);
-                        col += 1;
-                        if col % 5 == 0 { wl!(o); }
+                        names.push(if m.is_dir() { format!("[{n}]") } else { n.clone() });
                     } else if let Ok(target) = std::fs::read_link(d.join(n)) {
                         let tw = if target.is_absolute() { to_win(&target) } else { target.to_string_lossy().replace('/', "\\") };
                         wl!(o, "{}    {:<15}{n} [{tw}]", win_date(t), if m.is_dir() { "<SYMLINKD>" } else { "<SYMLINK>" });
@@ -949,7 +959,7 @@ impl Shell {
                     let link = std::fs::symlink_metadata(d.join(n)).map(|l| l.file_type().is_symlink()).unwrap_or(false);
                     if m.is_dir() { nd += 1; } else { nf += 1; if !link { nb += m.len(); } }
                 }
-                if wide && col % 5 != 0 { wl!(o); }
+                if wide { for l in wide_rows(&names, line::term_size().0) { wl!(o, "{l}"); } }
                 wl!(o, "{:>16} File(s) {:>14} bytes", nf, thousands(nb));
                 if !recurse { wl!(o, "{:>16} Dir(s) {:>15} bytes free", nd, thousands(free_bytes(&d))); }
             }
@@ -1723,6 +1733,19 @@ fn ping(host: &str, n: u32, o: Out, el: &mut i32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dir_wide_columns() {
+        let short: Vec<String> = (0..7).map(|i| format!("f{i}.txt")).collect();
+        let r = super::wide_rows(&short, 80);
+        assert_eq!(r.len(), 2);
+        assert!(r[0].starts_with("f0.txt          f1.txt"));
+        // long names get wider columns and never run into each other or fill the line
+        let long = vec!["2026-11-12 15-38-09.mp4".to_string(), "[aerode]".into(), "[beamng_fixerContracts]".into(), "x".into()];
+        let r = super::wide_rows(&long, 80);
+        assert!(r.iter().all(|l| l.len() < 80));
+        assert!(r[0].contains(".mp4  "));
+    }
+
     use super::*;
     #[test] fn paths() {
         assert_eq!(to_win(Path::new("/home/demid/Documents")), "C:\\Users\\demid\\Documents");
