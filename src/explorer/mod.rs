@@ -34,6 +34,7 @@ pub enum Loc {
     Libraries,
     Library(&'static str),
     Recent,
+    Games,
     Search(PathBuf, String),
 }
 
@@ -45,6 +46,7 @@ impl Loc {
             "network:///" | "network:" | "network://" => Loc::Network,
             "libraries:" | "libraries:///" => Loc::Libraries,
             "recent:" | "recent:///" => Loc::Recent,
+            "aerode:games" | "games:" => Loc::Games,
             s if s.starts_with("file://") => gio::File::for_uri(s).path().map(Loc::Path).unwrap_or(Loc::Computer),
             s if s.starts_with("library:") => match &s[8..] { "Music" => Loc::Library("Music"), "Pictures" => Loc::Library("Pictures"), "Videos" => Loc::Library("Videos"), _ => Loc::Library("Documents") },
             s => Loc::Path(PathBuf::from(util::shellexpand(s))),
@@ -61,6 +63,7 @@ impl Loc {
             Loc::Libraries => "libraries:".into(),
             Loc::Library(n) => format!("library:{n}"),
             Loc::Recent => "recent:".into(),
+            Loc::Games => "aerode:games".into(),
             Loc::Search(..) => String::new(),
         }
     }
@@ -86,6 +89,7 @@ impl Loc {
             Loc::Libraries => "Libraries".into(),
             Loc::Library(n) => n.to_string(),
             Loc::Recent => "Recent Places".into(),
+            Loc::Games => "Games".into(),
             Loc::Search(b, _) => format!("Search Results in {}", Loc::Path(b.clone()).title()),
         }
     }
@@ -98,6 +102,7 @@ impl Loc {
             Loc::Library("Music") => "folder-music", Loc::Library("Pictures") => "folder-pictures",
             Loc::Library("Videos") => "folder-videos", Loc::Library(_) => "folder-documents",
             Loc::Recent => util::first_icon(&["folder-recent", "document-open-recent", "folder"]),
+            Loc::Games => util::first_icon(&["folder-games", "applications-games"]),
             Loc::Search(..) => "system-search",
             Loc::Path(p) => nav::folder_icon(p),
         }
@@ -183,6 +188,7 @@ fn default_view(loc: &Loc) -> View {
     match loc {
         Loc::Search(..) => View::Content,
         Loc::Libraries | Loc::Computer => View::Tiles,
+        Loc::Games => View::Large,
         Loc::Library("Pictures") | Loc::Library("Videos") => View::Large,
         Loc::Path(p) if pics.iter().any(|d| p.starts_with(d)) => View::Large,
         _ => View::Details,
@@ -924,7 +930,7 @@ impl Explorer {
             b.connect_clicked(move |_| e.go(t.clone(), true));
             self.crumbs.pack_start(&b, false, false, 0);
             // the arrow after a crumb lists its subfolders, with the next crumb in bold
-            if matches!(target, Loc::Search(..) | Loc::Trash | Loc::Network | Loc::Recent) { continue; }
+            if matches!(target, Loc::Search(..) | Loc::Trash | Loc::Network | Loc::Recent | Loc::Games) { continue; }
             let next = self.crumb_parts(&loc).get(i + 1).map(|p| p.1.clone());
             if i + 1 == n && target.dir().map(|d| !has_subdirs(&d)).unwrap_or(false) { continue; }
             let a = self.crumb_arrow(Some(target), vec![], next);
@@ -1007,6 +1013,7 @@ impl Explorer {
             "recycle bin" => Loc::Trash,
             "network" => Loc::Network,
             "libraries" => Loc::Libraries,
+            "games" => Loc::Games,
             "documents" | "libraries\\documents" => Loc::Library("Documents"),
             "music" | "libraries\\music" => Loc::Library("Music"),
             "pictures" | "libraries\\pictures" => Loc::Library("Pictures"),
@@ -1233,6 +1240,27 @@ impl Explorer {
             }
             self.set_models(true);
             self.schedule_info();
+            return;
+        }
+        if loc == Loc::Games {
+            // Win7's Games Explorer: every installed program in the Game category
+            self.virtual_rows.set(true);
+            let size = self.view.get().icon_size();
+            let mut games: Vec<gio::AppInfo> = gio::AppInfo::all().into_iter().filter(|a| a.should_show() && util::categories(a).split(';').any(|c| c == "Game")).collect();
+            games.sort_by_cached_key(|a| a.display_name().to_lowercase());
+            for a in games {
+                let Some(id) = a.id() else { continue };
+                let n = a.display_name().to_string();
+                let pb = a.icon().and_then(|i| gtk::IconTheme::default()?.lookup_by_gicon(&i, size, gtk::IconLookupFlags::FORCE_SIZE)?.load_icon().ok())
+                    .or_else(|| util::pixbuf_or("applications-games", size, "application-x-executable"));
+                let esc = glib::markup_escape_text(&n).to_string();
+                let tile = format!("{esc}\n<span foreground='#6d6d6d'>Game</span>");
+                store.insert_with_values(None, &[(C_ICON, &pb), (C_NAME, &n), (C_URI, &format!("app:{id}")), (C_ISDIR, &false), (C_TILE, &tile), (C_CNAME, &esc),
+                    (C_SORT, &n.to_lowercase()), (C_TYPE, &"Game"), (C_SENS, &true), (C_EDIT, &n), (C_CT, &"application/x-desktop")]);
+            }
+            self.set_models(true);
+            self.schedule_info();
+            self.show_empty_message();
             return;
         }
         let so = self.scan_opts();
@@ -2033,6 +2061,7 @@ impl Explorer {
         if uris.len() == 1 {
             let u = &uris[0];
             if let Some(n) = u.strip_prefix("library:") { self.go(Loc::parse(&format!("library:{n}")), true); return; }
+            if let Some(id) = u.strip_prefix("app:") { if let Some(a) = util::app_by_id(id) { util::launch(&a); } return; }
             if !u.starts_with("file://") { self.open_network(u); return; }
         }
         if dirs.len() == 1 && uris.len() == 1 {
