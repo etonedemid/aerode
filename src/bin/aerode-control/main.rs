@@ -33,6 +33,7 @@ struct Cp {
     body: gtk::Box,
     crumb: gtk::Label,
     history: RefCell<Vec<String>>,
+    back: gtk::Button,
 }
 
 fn link(text: &str, f: impl Fn() + 'static) -> gtk::Button {
@@ -253,6 +254,8 @@ impl Cp {
         for c in self.body.children() { self.body.remove(&c); }
         for c in self.side.children() { self.side.remove(&c); }
         self.history.borrow_mut().push(page.to_string());
+        // Back is greyed out on the first page, as in Win7
+        self.back.set_sensitive(self.history.borrow().len() > 1);
         let all = registry::applets();
         let (crumb, w): (String, gtk::Widget) = if page == "personalization" {
             util::spawn(&["aerode", "personalize"]);
@@ -507,7 +510,7 @@ fn build(app: &gtk::Application, page: String) {
     main.pack_start(&body, true, true, 0);
     root.pack_start(&main, true, true, 0);
     win.add(&root);
-    let cp = Rc::new(Cp { win: win.clone(), side, body, crumb, history: RefCell::new(vec![]) });
+    let cp = Rc::new(Cp { win: win.clone(), side, body, crumb, history: RefCell::new(vec![]), back: back.clone() });
     { let c = cp.clone(); back.connect_clicked(move |_| {
         let prev = { let mut h = c.history.borrow_mut(); h.pop(); h.pop() };
         c.open(&prev.unwrap_or_default());
@@ -525,6 +528,8 @@ fn build(app: &gtk::Application, page: String) {
     root.show_all();
     cp.open(&page);
     win.show();
+    // nothing has the focus at first: the search box keeps its "Search Control Panel" hint
+    gtk::prelude::GtkWindowExt::set_focus(&win, None::<&gtk::Widget>);
     let _ = gdk::Display::default();
 }
 
@@ -547,7 +552,7 @@ fn action_center_summary() -> glib::ExitCode {
     // the messages' buttons want a Control Panel to open pages in; this one is never shown
     let cp = Rc::new(Cp {
         win: gtk::ApplicationWindow::new(&app), side: gtk::Box::new(gtk::Orientation::Vertical, 0),
-        body: gtk::Box::new(gtk::Orientation::Vertical, 0), crumb: gtk::Label::new(None), history: RefCell::new(vec![]),
+        body: gtk::Box::new(gtk::Orientation::Vertical, 0), crumb: gtk::Label::new(None), history: RefCell::new(vec![]), back: gtk::Button::new(),
     });
     let s = pages::admin::actioncenter::gather();
     let (sec, mnt) = pages::admin::actioncenter::messages(&cp, &s, Rc::new(|| {}));
