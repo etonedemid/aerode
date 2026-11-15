@@ -15,6 +15,16 @@ window, .background { background-color: #f0f0f0; color: #000; font-family: "Sego
 label { color: inherit; }
 label:disabled { color: #6d6d6d; }
 
+/* message boxes: Win7's MessageBox - white message area, a grey strip with spaced buttons at the
+   bottom right (Adwaita glues them into one bar) */
+messagedialog, messagedialog .dialog-vbox, messagedialog box.horizontal { background-color: #ffffff; }
+messagedialog .dialog-action-box { background-color: #f0f0f0; border-top: 1px solid #dfdfdf; margin: 0; padding: 10px 12px 10px 4px; }
+messagedialog .dialog-action-area button, messagedialog .dialog-action-area button:first-child, messagedialog .dialog-action-area button:last-child {
+  border: 1px solid #707070; border-radius: 3px; padding: 2px 10px; margin: 0 0 0 8px; min-width: 64px;
+}
+messagedialog .dialog-action-area button:hover { border-color: #3c7fb1; }
+messagedialog .dialog-action-area button.default { border-color: #3399ff; }
+
 /* buttons */
 button, button.text-button, combobox button, spinbutton button {
   background-image: linear-gradient(to bottom, #f2f2f2 0%, #ebebeb 49%, #dddddd 50%, #cfcfcf 100%);

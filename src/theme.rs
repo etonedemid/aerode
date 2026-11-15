@@ -35,6 +35,9 @@ pub fn init_app() {
         s.set_gtk_font_name(Some("Segoe UI 9"));
         s.set_property("gtk-menu-images", true);
         s.set_property("gtk-button-images", true);
+        // GDK on Wayland forces this on, so message boxes and file dialogs drew their own title
+        // (no Win7 frame) with the buttons glued together; off, they get the compositor's frame
+        s.set_gtk_dialogs_use_header(false);
     }
     load_css(APP_CSS);
 }
