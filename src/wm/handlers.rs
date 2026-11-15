@@ -336,12 +336,17 @@ impl Wm {
             .or_else(|| self.space.outputs().next()).cloned()
     }
 
-    /// Keep menus on the monitor (GTK's menus flip and slide as the positioner asks).
+    /// Keep menus in the monitor's work area, off the taskbar, like Windows (GTK's menus flip and
+    /// slide as the positioner asks).
     fn unconstrain_popup(&self, popup: &PopupSurface) {
         let kind = PopupKind::Xdg(popup.clone());
         let Ok(root) = find_popup_root_surface(&kind) else { return };
         let Some((loc, o)) = self.root_location(&root) else { return };
-        let Some(mut target) = self.space.output_geometry(&o) else { return };
+        let Some(og) = self.space.output_geometry(&o) else { return };
+        let mut target = layer_map_for_output(&o).non_exclusive_zone();
+        target.loc += og.loc;
+        // the taskbar's own menus open over it, as in Win7
+        if target.size.w <= 0 || target.size.h <= 0 || !target.contains(loc) { target = og; }
         target.loc -= loc;
         target.loc -= get_popup_toplevel_coords(&kind);
         popup.with_pending_state(|s| s.geometry = s.positioner.get_unconstrained_geometry(target));
@@ -581,6 +586,11 @@ impl WlrLayerShellHandler for Wm {
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, output: Option<wl_output::WlOutput>, _l: Layer, namespace: String) {
         let Some(o) = self.layer_output(output.as_ref()) else { surface.send_close(); return };
         let _ = layer_map_for_output(&o).map_layer(&LayerSurface::new(surface, namespace));
+    }
+    /// A shell surface's menu (desktop, taskbar, tray) gets its parent only now: xdg_shell's
+    /// new_popup could not place it yet.
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        self.unconstrain_popup(&popup);
     }
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         let hit = self.outputs().into_iter().find_map(|o| {
