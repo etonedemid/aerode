@@ -242,7 +242,11 @@ fn connected(wm: &mut Wm, c: connector::Info, crtc: crtc::Handle) {
     let mode_id = modes.iter().position(|m| {
         let w = WlMode::from(*m);
         Some(w.size.w as i64) == want.0 && Some(w.size.h as i64) == want.1 && Some(w.refresh as i64) == want.2
-    }).or_else(|| modes.iter().position(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))).unwrap_or(0);
+    }).or_else(|| {
+        // the preferred resolution at its fastest refresh: monitors mark a 60 Hz mode preferred even when they do 165
+        let p = WlMode::from(*modes.iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)).or(modes.first())?);
+        (0..modes.len()).filter(|&i| WlMode::from(modes[i]).size == p.size).max_by_key(|&i| WlMode::from(modes[i]).refresh)
+    }).unwrap_or(0);
     let Some(&drm_mode) = modes.get(mode_id) else { return };
     let wl_mode = WlMode::from(drm_mode);
 
@@ -314,10 +318,10 @@ pub fn apply_output(wm: &mut Wm, name: &str, enabled: Option<bool>, w: Option<i3
     let (Some(w), Some(h)) = (w, h) else { return };
     let (Some(manager), Some(renderer)) = (u.manager.as_mut(), u.renderer.as_mut()) else { return };
     let s = u.surfaces.get_mut(&crtc).unwrap();
-    let mode = s.connector.modes().iter().copied().find(|m| {
+    let mode = s.connector.modes().iter().copied().filter(|m| {
         let wm = WlMode::from(*m);
         wm.size.w == w && wm.size.h == h && refresh.is_none_or(|r| wm.refresh == r)
-    });
+    }).max_by_key(|m| WlMode::from(*m).refresh);
     let Some(mode) = mode else { return };
     let r = manager.use_mode::<_, El>(&crtc, mode, renderer, &DrmOutputRenderElements::default());
     if let Err(e) = r { eprintln!("aerode-wm: mode change on {name}: {e}"); return; }
