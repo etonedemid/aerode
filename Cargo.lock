@@ -27,6 +27,8 @@ dependencies = [
  "smithay",
  "smithay-drm-extras",
  "vte",
+ "wayland-client",
+ "wayland-protocols",
  "xcursor",
  "zbus",
 ]

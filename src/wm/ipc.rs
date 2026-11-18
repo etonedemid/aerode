@@ -73,6 +73,7 @@ impl Wm {
                 can_minimize: c.can_minimize, can_maximize: c.can_maximize, above: c.above,
                 taskbar: !c.skip_taskbar && !matches!(c.kind, super::Kind::Menu | super::Kind::Splash),
                 frame: [f.x, f.y, f.w, f.h], geom: [g.x, g.y, g.w, g.h], dialog: c.kind == super::Kind::Dialog, transient_for: c.transient_for,
+                share_id: self.share_id(c.id),
             }
         }).collect();
         State { windows, active: self.active, showing_desktop: self.showing_desktop, current_desktop: self.current_desktop, num_desktops: self.num_desktops }
@@ -86,6 +87,7 @@ impl Wm {
             Req::Minimize { id } => self.minimize(id),
             Req::Close { id } => self.close(id),
             Req::SetMaximized { id, on } => self.set_maximized(id, on),
+            Req::SetFullscreen { id, on } => self.set_fullscreen(id, on),
             Req::KeyboardMoveResize { id, size } => self.keyboard_moveresize(id, size),
             Req::Place { id, x, y, w, h, outer } => {
                 if let Some(c) = self.wins.get(&id) {

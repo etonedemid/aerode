@@ -1,0 +1,5 @@
+# xdg-desktop-portal-wlr under aerode: the Win7 picker chooses the screen or window to share
+[screencast]
+chooser_type=dmenu
+chooser_cmd=aerode-sharepicker
+max_fps=60

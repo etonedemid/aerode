@@ -23,6 +23,11 @@ gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 xcursor = "0.3"
 smithay-drm-extras = { version = "0.1", default-features = false }
 
+[dev-dependencies]
+# examples/capture.rs, a screen-sharing client for testing aerode-wm
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

@@ -1,3 +1,5 @@
 /target
+# Aerode Media is its own repository (github.com/etonedemid/aerode-media), cloned here by ./install.sh --media
+/media/
 # temporary git worktrees of background agents
 /.claude/worktrees/

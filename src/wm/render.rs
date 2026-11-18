@@ -537,6 +537,7 @@ impl Wm {
     }
 
     pub fn redraw_outputs(&mut self) {
+        self.capture.generation += 1;
         match &self.backend {
             Backend::None => {}
             Backend::Winit(_) => super::winit::redraw(self),
@@ -545,8 +546,8 @@ impl Wm {
     }
 
     // ------------------------------------------------------------- pictures for the shell
-    /// Render elements offscreen and write them to a file for the asking client.
-    fn snapshot(&mut self, size: (i32, i32), elements: impl FnOnce(&mut Wm, &mut GlesRenderer) -> Vec<El>) -> Option<serde_json::Value> {
+    /// Render elements offscreen into ARGB8888 rows (top-down, stride w * 4).
+    fn render_bytes(&mut self, size: (i32, i32), elements: impl FnOnce(&mut Wm, &mut GlesRenderer) -> Vec<El>) -> Option<Vec<u8>> {
         let renderer_ptr: *mut GlesRenderer = self.with_renderer(|r| r as *mut GlesRenderer)?;
         // SAFETY: the renderer lives in self.backend and `elements` only reads window state, never the backend
         let renderer = unsafe { &mut *renderer_ptr };
@@ -557,7 +558,12 @@ impl Wm {
         let mut dt = OutputDamageTracker::new(size, 1.0, Transform::Normal);
         dt.render_output(renderer, &mut fb, 0, &elems, [0.0, 0.0, 0.0, 0.0]).ok()?;
         let map = renderer.copy_framebuffer(&fb, Rectangle::from_size(Size::<i32, smithay::utils::Buffer>::from(size)), Fourcc::Argb8888).ok()?;
-        let bytes = renderer.map_texture(&map).ok()?.to_vec();
+        Some(renderer.map_texture(&map).ok()?.to_vec())
+    }
+
+    /// Render elements offscreen and write them to a file for the asking client.
+    fn snapshot(&mut self, size: (i32, i32), elements: impl FnOnce(&mut Wm, &mut GlesRenderer) -> Vec<El>) -> Option<serde_json::Value> {
+        let bytes = self.render_bytes(size, elements)?;
         let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
         self.snap_seq += 1;
         let path = std::path::PathBuf::from(dir).join(format!("aerode-snap-{}-{}", std::process::id(), self.snap_seq));
@@ -567,6 +573,47 @@ impl Wm {
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).ok()?;
         f.write_all(&bytes).ok()?;
         Some(serde_json::json!({"path": path, "w": size.0, "h": size.1}))
+    }
+
+    /// One output as shown, for screen sharing.
+    pub fn output_pixels(&mut self, o: &Output, cursors: bool) -> Option<Vec<u8>> {
+        let m = o.current_mode()?;
+        self.prepare_frames();
+        let o = o.clone();
+        self.render_bytes((m.size.w, m.size.h), |wm, r| {
+            if cursors { return wm.elements(r, &o); }
+            let saved = wm.frame_cursor.take();
+            let status = std::mem::replace(&mut wm.cursor_status, CursorImageStatus::Hidden);
+            let e = wm.elements(r, &o);
+            wm.frame_cursor = saved;
+            wm.cursor_status = status;
+            e
+        })
+    }
+
+    /// One window with its frame at full size, for screen sharing.
+    pub fn window_pixels(&mut self, id: u32) -> Option<Vec<u8>> {
+        let fr = self.frame_rect(self.wins.get(&id)?);
+        self.prepare_frames();
+        self.render_bytes((fr.w.max(1), fr.h.max(1)), |wm, r| wm.window_shot(r, id, fr, 1.0))
+    }
+
+    /// A window's elements at `k`, its frame's top left at (0, 0); peek's fading is left out.
+    fn window_shot(&mut self, r: &mut GlesRenderer, id: u32, fr: Rect, k: f64) -> Vec<El> {
+        let c = &self.wins[&id];
+        let mut raw = Vec::new();
+        let saved_peek = self.peek.take();
+        self.window_elements(r, c, 1.0, (fr.x, fr.y), &mut raw);
+        self.peek = saved_peek;
+        let mut out = Vec::new();
+        for e in raw {
+            match e {
+                El::Surface(e) => out.push(El::AnimSurface(RelocateRenderElement::from_element(RescaleRenderElement::from_element(e, Point::from((0, 0)), Scale::from(k)), (0, 0), Relocate::Relative))),
+                El::Mem(e) => out.push(El::AnimMem(RelocateRenderElement::from_element(RescaleRenderElement::from_element(e, Point::from((0, 0)), Scale::from(k)), (0, 0), Relocate::Relative))),
+                _ => {}
+            }
+        }
+        out
     }
 
     /// The whole virtual screen, as shown (cursor excluded).
@@ -591,22 +638,7 @@ impl Wm {
         let k = (w as f64 / fr.w.max(1) as f64).min(h as f64 / fr.h.max(1) as f64).min(1.0);
         let size = (((fr.w as f64 * k).round() as i32).max(1), ((fr.h as f64 * k).round() as i32).max(1));
         self.prepare_frames();
-        self.snapshot(size, |wm, r| {
-            let c = &wm.wins[&id];
-            let mut raw = Vec::new();
-            let saved_peek = wm.peek.take();
-            wm.window_elements(r, c, 1.0, (fr.x, fr.y), &mut raw);
-            wm.peek = saved_peek;
-            let mut out = Vec::new();
-            for e in raw {
-                match e {
-                    El::Surface(e) => out.push(El::AnimSurface(RelocateRenderElement::from_element(RescaleRenderElement::from_element(e, Point::from((0, 0)), Scale::from(k)), (0, 0), Relocate::Relative))),
-                    El::Mem(e) => out.push(El::AnimMem(RelocateRenderElement::from_element(RescaleRenderElement::from_element(e, Point::from((0, 0)), Scale::from(k)), (0, 0), Relocate::Relative))),
-                    _ => {}
-                }
-            }
-            out
-        })
+        self.snapshot(size, |wm, r| wm.window_shot(r, id, fr, k))
     }
 }
 

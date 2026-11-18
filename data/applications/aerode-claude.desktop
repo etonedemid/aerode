@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Claude
+Comment=Chat with Claude in a folder, over Claude Code
+Exec=aerode-claude %f
+Icon=internet-chat
+Categories=Network;Chat;Development;

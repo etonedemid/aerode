@@ -74,6 +74,9 @@ EOT
 # Everything that needs the compositor runs inside it: it exports WAYLAND_DISPLAY and DISPLAY to them.
 cat > "$CONF/session-inner.sh" <<'INNER'
 dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE KDE_SESSION_VERSION DCONF_PROFILE 2>/dev/null
+# portals outlive a log off in the user's systemd: ones from the last session have its display and config (screen
+# sharing went to KDE's backend); stopped, they start again on demand with this session's
+systemctl --user stop xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk plasma-xdg-desktop-portal-kde 2>/dev/null
 command -v xsettingsd >/dev/null && xsettingsd -c "${XDG_CONFIG_HOME:-$HOME/.config}/aerode/xsettingsd.conf" &
 # Ease of Access settings that start each time you log on (pointer size and colour, Magnifier/Narrator/On-Screen Keyboard)
 command -v aerode-control >/dev/null && aerode-control --apply-access &

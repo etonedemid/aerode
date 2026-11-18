@@ -49,6 +49,8 @@ const WANTED: &[&str] = &[
     "Windows/System32/charmap.exe", "Windows/System32/winver.exe", "Windows/System32/eventvwr.exe", "Windows/System32/msinfo32.exe",
     "Windows/System32/FirewallControlPanel.dll", "Windows/System32/rstrui.exe", "Windows/System32/WFS.exe", "Windows/System32/fontview.exe",
     "Windows/System32/cleanmgr.exe", "Windows/System32/Narrator.exe", "Windows/System32/dmdskres.dll", "Windows/ehome/ehshell.exe",
+    // Windows Media Center's art, sounds and fonts, for Aerode Media
+    "Windows/ehome/ehres.dll", "Windows/ehome/segmcr.ttf", "Windows/ehome/segmcsb.ttf", "Windows/ehome/segoemcl.ttf",
     "Program Files/Microsoft Games/Chess/Chess.exe", "Program Files/Microsoft Games/Mahjong/Mahjong.exe",
 ];
 
@@ -743,6 +745,33 @@ fn copy_misc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Windows Media Center's look for Aerode Media: every PNG and WAV in ehres.dll into
+/// ~/.local/share/aerode/wmc (lower-case resource names, e.g. common.background.png), and the
+/// Segoe Media Center fonts.
+fn extract_wmc(root: &Path, data: &Path, fonts: &Path) -> Result<()> {
+    let Some(dll) = find_ci(root, "Windows/ehome/ehres.dll") else { return Ok(()) };
+    let pe = crate::pe::Pe::open(&dll)?;
+    let out = data.join("wmc");
+    std::fs::create_dir_all(&out)?;
+    let mut n = 0;
+    for name in pe.names(10u16) {
+        let crate::pe::ResId::Name(ref s) = name else { continue };
+        let lower = s.to_lowercase();
+        if !(lower.ends_with(".png") || lower.ends_with(".wav")) { continue }
+        if let Some(d) = pe.get(10u16, name.clone()) {
+            std::fs::write(out.join(&lower), d)?;
+            n += 1;
+        }
+    }
+    std::fs::create_dir_all(fonts)?;
+    for f in ["segmcr.ttf", "segmcsb.ttf", "segoemcl.ttf"] {
+        if let Some(src) = find_ci(root, &format!("Windows/ehome/{f}")) { std::fs::copy(src, fonts.join(f))?; }
+    }
+    let _ = Command::new("fc-cache").arg("-f").arg(fonts).output();
+    println!("· Media Center art copied ({n} files) and Segoe Media Center fonts installed");
+    Ok(())
+}
+
 /// Keep a copy of the files the icon theme is built from (in your home, like all extracted art), so a
 /// later aerode update can rebuild the theme with new mappings without asking for the ISO again.
 fn cache_sysfiles(root: &Path, cache: &Path) {
@@ -816,6 +845,11 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         return Ok(());
     }
+    // developer aid: aerode-extract <extracted dir> --wmc-only: Media Center art and fonts only
+    if args.iter().any(|a| a == "--wmc-only") {
+        let share = gtk::glib::user_data_dir();
+        return extract_wmc(&src, &share.join("aerode"), &share.join("fonts/aerode"));
+    }
     // developer aid: aerode-extract <extracted dir> --sounds-only <data dir>
     if let Some(i) = args.iter().position(|a| a == "--sounds-only") {
         return copy_sounds(&src, &args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("aerode")));
@@ -846,6 +880,7 @@ pub fn run(args: &[String]) -> Result<()> {
         extract_orb(&root, &data);
         build_cursors(&root, &share.join("icons/Aerode-cursors"))?;
         copy_misc(&root, &data, &share.join("fonts/aerode"))?;
+        extract_wmc(&root, &data, &share.join("fonts/aerode"))?;
         if args.iter().any(|a| a == "--sheet") { icon_sheet(&root, &data.join("iconsheet"))?; }
         Ok(())
     })();

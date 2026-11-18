@@ -17,6 +17,8 @@ pub enum Req {
     Minimize { id: u32 },
     Close { id: u32 },
     SetMaximized { id: u32, on: bool },
+    /// full screen without a frame, as if the program had asked (Aerode Media runs its programs so)
+    SetFullscreen { id: u32, on: bool },
     KeyboardMoveResize { id: u32, size: bool },
     /// the window's visible outer rectangle (frame included); `outer: false` means the client area
     Place { id: u32, x: i32, y: i32, w: i32, h: i32, outer: bool },
@@ -94,6 +96,9 @@ pub struct Win {
     pub geom: [i32; 4],
     pub dialog: bool,
     pub transient_for: u32,
+    /// its ext-foreign-toplevel identifier (screen-sharing pickers name windows by it)
+    #[serde(default)]
+    pub share_id: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

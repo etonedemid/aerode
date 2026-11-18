@@ -1,12 +1,20 @@
 #!/bin/bash
 # Aerode installer for Arch / EndeavourOS.
-#   ./install.sh [/path/to/your/windows7.iso]
+#   ./install.sh [--media] [/path/to/your/windows7.iso]
+# --media also installs Aerode Media (github.com/etonedemid/aerode-media, cloned into media/); it is
+# built anyway once media/ is there.
 set -e
 cd "$(dirname "$0")"
+MEDIA=0
+ARGS=()
+for a in "$@"; do if [ "$a" = --media ]; then MEDIA=1; else ARGS+=("$a"); fi; done
+set -- "${ARGS[@]}"
+[ -d media ] && MEDIA=1
 DEPS=(gtk3 gtk-layer-shell python cairo pango xorg-xwayland seatd libinput xsettingsd
       7zip wimlib papirus-icon-theme noto-fonts xsecurelock polkit
       pipewire-pulse libpulse wireplumber pavucontrol networkmanager brightnessctl
       playerctl ddcutil udiskie power-profiles-daemon spectacle rust)
+[ "$MEDIA" = 1 ] && DEPS+=(mpv ffmpeg)
 # KDE users already have KWallet; a second keyring hijacks org.freedesktop.secrets and logs apps out
 pacman -Q kwallet >/dev/null 2>&1 || DEPS+=(gnome-keyring)
 echo ":: installing dependencies (sudo)"
@@ -28,13 +36,26 @@ cargo build --release
 echo ":: installing to /usr (sudo)"
 for b in aerode aerode-wm aerode-extract aerode-polkit aerode-xcompat; do sudo install -Dm755 "target/release/$b" "/usr/bin/$b"; done
 for b in target/release/aerode-*; do [ -x "$b" ] && [ -f "$b" ] && sudo install -Dm755 "$b" "/usr/bin/$(basename "$b")"; done
+# Aerode Media (Media Center, also for the Xbox 360) is optional and lives in its own repository
+if [ "$MEDIA" = 1 ]; then
+  [ -d media ] || git clone https://github.com/etonedemid/aerode-media media
+  cargo build --release --manifest-path media/Cargo.toml
+  sudo install -Dm755 media/target/release/aerode-media /usr/bin/aerode-media
+else
+  echo ":: Aerode Media (Media Center) is optional: ./install.sh --media adds it"
+fi
 sudo install -Dm755 data/aerode-session /usr/bin/aerode-session
 # the Win7 locked screen: xsecurelock modules (xsecurelock wants auth_* / saver_* names)
 sudo install -d /usr/lib/aerode
 sudo install -Dm644 data/gtk.css /usr/share/themes/Aerode/gtk-3.0/gtk.css
 sudo install -Dm644 -t /usr/share/themes/Aerode/gtk-3.0/assets data/gtk-assets/*.png
+sudo install -Dm644 -t /usr/share/aerode/assistant/crab data/assistant/crab/*.png
 sudo rm -f /usr/share/xsessions/aerode.desktop
 sudo install -Dm644 data/aerode.desktop /usr/share/wayland-sessions/aerode.desktop
+# screen sharing: xdg-desktop-portal-wlr with the aerode-sharepicker chooser
+sudo install -Dm644 data/portal/aerode-portals.conf /usr/share/xdg-desktop-portal/aerode-portals.conf
+sudo install -Dm644 data/portal/xdpw-config /etc/xdg/xdg-desktop-portal-wlr/Aerode
+pacman -Q xdg-desktop-portal-wlr >/dev/null 2>&1 || echo ":: screen sharing needs: sudo pacman -S xdg-desktop-portal-wlr"
 for l in aerode-xrandr aerode-xset aerode-setxkbmap; do sudo ln -sf /usr/bin/aerode-xcompat "/usr/bin/$l"; done
 for f in data/applications/*.desktop; do [ -f "$f" ] && sudo install -Dm644 "$f" "/usr/share/applications/$(basename "$f")"; done
 if [ -n "$1" ]; then

@@ -204,6 +204,9 @@ impl Wm {
             _ => self.place_new(id, parent, w, h),
         };
         let kind = self.wins[&id].kind;
+        let full = self.wins[&id].window.toplevel().is_some_and(|t| {
+            t.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen))
+        });
         let c = self.wins.get_mut(&id).unwrap();
         c.geom = g;
         c.mapped = true;
@@ -215,6 +218,7 @@ impl Wm {
             if self.window_anims() { self.begin_open_anim(id); }
             self.focus(id);
         } else { self.restack(); }
+        if full { self.set_fullscreen(id, true); }
         self.state_changed = true;
     }
 
@@ -541,7 +545,11 @@ impl XdgShellHandler for Wm {
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, _o: Option<wl_output::WlOutput>) {
         if let Some(id) = self.win_of_toplevel(&surface) {
-            if self.wins[&id].mapped { self.set_fullscreen(id, true); } else { surface.send_configure(); }
+            if self.wins[&id].mapped { self.set_fullscreen(id, true); } else {
+                // before the first buffer: say so in the first configure, and keep it once mapped
+                surface.with_pending_state(|s| { s.states.set(xdg_toplevel::State::Fullscreen); });
+                surface.send_configure();
+            }
         }
     }
 

@@ -7,6 +7,7 @@ pub mod glass;
 pub mod keys;
 pub mod switcher;
 mod blur;
+mod capture;
 mod cursor;
 mod handlers;
 mod input;
@@ -205,6 +206,7 @@ pub struct Wm {
     pub xwayland_shell_state: XWaylandShellState,
     pub xwayland_grab_state: XWaylandKeyboardGrabState,
     pub xwm: Option<X11Wm>,
+    pub capture: capture::Capture,
 
     // --- window management
     pub wins: HashMap<u32, Win>,
@@ -324,6 +326,7 @@ pub fn run() -> Result<()> {
     let glass = glass::Glass::new(cfg.colorization.dwm(), theme_glass);
 
     let mut wm = Wm {
+        capture: capture::Capture::new(&dh),
         compositor_state: CompositorState::new::<Wm>(&dh),
         shm_state: ShmState::new::<Wm>(&dh, vec![]),
         dmabuf_state: DmabufState::new(),
@@ -464,7 +467,7 @@ impl Wm {
         self.space.refresh();
         self.popups.cleanup();
         for o in self.space.outputs().cloned().collect::<Vec<_>>() { layer_map_for_output(&o).cleanup(); }
-        if std::mem::take(&mut self.state_changed) { self.publish_state(); }
+        if std::mem::take(&mut self.state_changed) { self.sync_toplevels(); self.publish_state(); }
         if self.needs_redraw { self.redraw_outputs(); }
         let _ = self.dh.flush_clients();
     }
@@ -556,8 +559,12 @@ impl Wm {
         } else if size_changed {
             // frame and buffer change together: the window keeps its place and size until the client answers
             c.pending = Some(g);
-            if let Some(t) = c.window.toplevel() {
+            if let Some(t) = c.window.toplevel().cloned() {
                 t.with_pending_state(|s| s.size = Some(Size::from((g.w, g.h))));
+                // the states go in the same configure: Chromium takes a screen-sized configure
+                // without Fullscreen as its fullscreen request refused (the video drops out of
+                // full screen, then the next configure makes the whole page full screen)
+                self.pending_states(w);
                 t.send_pending_configure();
             }
         } else {
@@ -571,6 +578,22 @@ impl Wm {
 
     /// Tell an xdg toplevel its states (maximized/fullscreen/tiled look).
     pub fn send_states(&mut self, w: u32) {
+        let Some(c) = self.wins.get(&w) else { return };
+        let active = self.active == w;
+        if let Some(t) = c.window.toplevel() {
+            self.pending_states(w);
+            t.send_pending_configure();
+        }
+        if let Some(x) = c.window.x11_surface() {
+            let _ = x.set_maximized(c.maximized);
+            let _ = x.set_fullscreen(c.fullscreen);
+            let _ = x.set_activated(active);
+        }
+        self.state_changed = true;
+    }
+
+    /// An xdg toplevel's states into its next configure, without sending it.
+    fn pending_states(&self, w: u32) {
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as S;
         let Some(c) = self.wins.get(&w) else { return };
         let active = self.active == w;
@@ -586,14 +609,7 @@ impl Wm {
                 set(S::TiledTop, snapped.is_some());
                 set(S::TiledBottom, snapped.is_some());
             });
-            t.send_pending_configure();
         }
-        if let Some(x) = c.window.x11_surface() {
-            let _ = x.set_maximized(c.maximized);
-            let _ = x.set_fullscreen(c.fullscreen);
-            let _ = x.set_activated(active);
-        }
-        self.state_changed = true;
     }
 
     // ---------------------------------------------------------- state changes
